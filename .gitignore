@@ -1,0 +1,12 @@
+build/
+dist/
+installer/installer_output/
+__pycache__/
+*.pyc
+keys/
+private_key.pem
+*.mp3
+*.mp4
+*.wav
+*.pdf
+show*/

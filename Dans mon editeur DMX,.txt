@@ -1,0 +1,238 @@
+** 
+Sur mon AKAI APC MINI virtuel
+Peux-tu me ressérer ma ligne de bouton 
+
+Dans mon plan de feu :
+Tu peux me faire un color picker un peu plus grand en hauteur ? Quand je selectionne plusieurs plusieurs projecteurs, ne pas mettre leur nom mettre 8 projos selec. 
+
+Pour mes cartoucheurs, possible de cliquer droit sur la cartouche et pouvoir régler le volume de l'audio ? La touche F1, envoi la premiere cartouche, le F2 la deuxieme cartouche, et fait ça sur 3 & 4;  
+
+Dans Maestro, convertir les colonnes 5, 6, 7 (AKAI physique + virtuel) en colonnes de mémoires.
+1 pad = 1 mémoire.
+Enregistrement via le système existant du plan de feu (ne rien recréer).
+Fader X contrôle l’intensité des mémoires de sa colonne (5→5, 6→6, 7→7).
+Même logique que les autres colonnes :
+1 seul pad actif par colonne.
+Appui sur un pad → active sa mémoire.
+Appui sur un autre pad de la même colonne → désactive le précédent.
+Feedback LED identique aux autres pads :
+Pad inactif → 10% (physique + virtuel).
+Pad actif → 100% (physique + virtuel).
+
+Couleur :
+Par défaut = couleur dominante du plan de feu enregistré.
+Clic droit → menu contextuel → choix parmi les 7 couleurs définies dans l’accueil.
+
+Machine à fumée :
+Retirée du mapping AKAI.
+Reste activable uniquement via le plan de feu.
+
+Code propre, modulaire, cohérent avec l’architecture actuelle.
+
+
+
+
+
+
+🎨 Bibliothèque d’effets
+
+Ajouter un nouvel effet nommé Bascule sur l’AKAI. Fonctionnement : L’effet agit uniquement sur les couleurs contre & latérales
+Si une couleur bicolore est envoyée (ex : rouge / blanc) : Les projecteurs rouges passent en blanc Les projecteurs blancs passent en rouge
+L’alternance s’inverse à chaque déclenchement
+Si une seule couleur est envoyée : 
+Un projecteur sur deux passe en blanc
+Puis inversion au déclenchement suivant
+L’effet doit fonctionner avec toutes les bicouleurs.
+
+
+
+
+
+Objectif 1 – Vérification de mise à jour (non bloquante)
+À l’ouverture du logiciel :
+Vérifier si une nouvelle version est disponible sur GitHub (repo public, via l’API des Releases)
+Comparer la version locale du logiciel avec la dernière version distante
+Si une mise à jour est disponible :
+afficher un bandeau vert discret en bas de l’application
+
+texte du type :
+“Une nouvelle version est disponible (vX.Y.Z)” Avec une option, "plus tard" qui quand je clique dessus, me rappelle la fonction le lendemain. 
++ bouton : Mettre à jour
+Cette vérification ne doit jamais bloquer le lancement du logiciel
+Quand l’utilisateur clique sur “Mettre à jour” :
+Télécharger le binaire de la dernière release
+Lancer un petit processus de mise à jour (updater externe si nécessaire)
+Fermer le logiciel
+
+Installer la mise à jour
+Redémarrer automatiquement le logiciel
+
+
+Objectif du jour : Rendre le logiciel payant
+Je veux implémenter un système de clé de produit avec abonnement, utilisable sur une seule machine, avec activation en ligne obligatoire UNE SEULE FOIS, puis fonctionnement 100 % offline.
+
+🎯 Règles NON négociables :
+
+L’activation DOIT nécessiter une connexion Internet
+Sans Internet → activation refusée
+Une fois activé → aucune connexion Internet requise
+Aucune revalidation périodique
+Une clé = une seule machine
+
+🔑 Abonnements :
+
+Codes de licence possibles :
+1 mois
+6 mois
+1 an
+Chaque clé contient une date de fin
+Un message d’avertissement à J-7 avant expiration
+
+🧪 États du logiciel et restrictions :
+Logiciel non activé
+❌ Aucune sortie DMX (DMX totalement bloqué) / Griser la fenêtre connexion. 
+⚠️ Sortie vidéo autorisée MAIS :
+Filigrane du logo, dispo visible en permanence (le logo est dispo sur la racine du projet à Mystrow_blanc.png)
+Bandeau en bas de l’écran avec le texte :
+
+“Logiciel non activé”
+
+Si l'Abonnement actif
+
+✅ Sortie DMX pleinement fonctionnelle
+✅ Sortie vidéo sans filigrane
+
+Si l'Abonnement expiré
+
+❌ Sortie DMX bloquée
+⚠️ Sortie vidéo avec filigrane + bandeau
+
+Message clair indiquant que l’abonnement est expiré
+
+⏳ Avertissements :
+À J-7 avant expiration :
+Afficher un message discret au lancement :
+“Votre abonnement expire dans 7 jours” / pareil 2 options : Plus tard / activer ma session
+
+☁️ Backend :
+
+Utilisation de Firebase (Firestore) comme registre d’activation
+Firebase est utilisé uniquement lors de l’activation
+Le logiciel ne contacte jamais Firebase après activation
+
+🧪 OBJECTIF 3 – Implémentation période d’essai 7 jours (sécurisée)
+
+Je souhaite implémenter une période d’essai gratuite de 7 jours dans le logiciel.
+🎯 RÈGLES STRICTES
+Activation Internet obligatoire (une seule fois)
+Sans Internet → activation refusée
+Une seule période d’essai par machine
+Après activation → fonctionnement 100 % offline
+Aucune revalidation périodique
+Le système ne doit PAS être contournable via :
+renommage du PC
+modification simple du registre
+changement de nom utilisateur
+retour arrière de l’horloge Windows
+
+🔐 IDENTIFIANT MACHINE (CRITIQUE)
+
+Le Machine ID ne doit PAS être basé sur le nom du PC.
+Il doit être généré à partir d’un fingerprint matériel composite stable :
+CPU ID
+BIOS serial
+Motherboard serial
+Disk serial physique (pas le volume label)
+SID Windows
+Le logiciel doit :
+machine_id = SHA256(concat(valeurs_hardware_stables))
+Ce machine_id doit rester identique même si :
+le PC est renommé
+l’utilisateur Windows change
+l’adresse MAC change
+
+🔄 PROCESSUS D’ACTIVATION ESSAI
+
+Quand l’utilisateur clique sur :
+“Activer ma période d’essai (7 jours)”
+Le logiciel doit :
+Vérifier connexion Internet
+Générer machine_id
+Envoyer au serveur :
+email utilisateur
+machine_id
+version logiciel
+Côté serveur :
+Vérifier si une période d’essai existe déjà pour ce machine_id
+Si oui → refuser
+
+Si non :
+
+créer entrée
+définir date_fin = now + 7 jours
+générer signature cryptographique via clé privée serveur
+
+retourner :
+
+machine_id
+date_fin
+signature
+
+💾 STOCKAGE LOCAL
+
+Le logiciel doit stocker localement (fichier chiffré ou protégé) :
+machine_id
+date_fin
+signature
+last_launch_date
+
+🔍 VÉRIFICATION À CHAQUE LANCEMENT
+
+Recalculer machine_id
+Vérifier correspondance
+Vérifier signature cryptographique
+Vérifier date actuelle <= date_fin
+Vérifier que date système ≥ last_launch_date
+Si la date système recule → bloquer (tentative fraude)
+Mettre à jour last_launch_date à chaque lancement valide.
+
+⏳ COMPORTEMENT PENDANT ESSAI
+
+Pendant période valide :
+✅ Sortie DMX autorisée
+✅ Sortie vidéo sans watermark
+⚠️ Bandeau discret en bas :
+“Période d’essai – X jours restants”
+
+À J-2 :
+
+Message au lancement :
+“Votre période d’essai expire bientôt”
+Options :
+Plus tard
+Activer une licence
+
+❌ À L’EXPIRATION
+
+Si date > date_fin :
+
+❌ Sortie DMX bloquée
+⚠️ Sortie vidéo avec watermark Mystrow_blanc.png
+⚠️ Bandeau permanent :
+
+“Votre période d’essai est expirée”
+
+🛡️ IMPORTANT
+
+Toute validation doit dépendre d’une signature générée par le serveur (clé privée).
+Aucune logique critique ne doit reposer uniquement sur des données locales non signées.
+
+🎯 Niveau de protection attendu
+
+Protection suffisante pour empêcher :
+reset simple via renommage PC
+suppression fichier local
+manipulation horloge Windows
+duplication de licence
+
+Sans alourdir excessivement le logiciel.

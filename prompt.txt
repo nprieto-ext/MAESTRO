@@ -1,0 +1,23 @@
+Sur ce programme là, je veux que tu me modifie certaine chose. La colonne plan de feu et vidéo est trop petite par défaut. Je veux que tu me la double, à l'ouverture du logiciel. Elle reste bien sur redimensionnable. Enleve moi stp le bouton de lecture continue ou simple. La lecture est en mode continue tout le temps. Je veux que quand je clique sur le bouton plus, j'ai un menu contextuel qui s'affiche, minvitant à ajouter un fichier média (c'est la fonction actuelle) mais aussi, je voudrais pouvoir "ajouter une pause" dans mon séquenceur. En ajoutant une pause, lorsque que le séquenceur arrive dessus, la séquence se met en pause, et le bouton play se met à clignoter toutes les secondes en vert. Au clic sur le bouton vert, je passerai alors au media suivant. 
+
+Toujours sur le séquenceur, si j'ai un MEDIA qui à sont DMX en AUTO, et celui d'après est en Manuel, il faut absolument que tu rebaisse tous les faders à 0 à la fin, de la séquence DMX AUTO
+
+J'aimerais aussi retravailler l'AKAI avec toi. A savoir, la premiere colonne est dédiée à la face, ça on change pas. Ma 2eme colonne sera dédié à une douche, ma 3eme colonne à une autre douche, et ma 4eme une autre douche. Ne change pas les couleurs, c'est parfait. Maintenant, c'est sur ma colonne 5, 6, 7 & 8, qui seront dédiées aux latéraux et au contres (on oublie lat2, contre2, face2, douche 2). Si je monte le fader 5, le fader 6, 7 & 8 sont liées et monte aussi. Je monte le fader 8, le fader 5, 6 & 7 monte en meme temps. Meme logique pour le bouton mute juste au dessus des faders (ils sont tous liées) Ce qui nous intéresse, c'est sur la couleur des pad. Sur ma colonne 5, ne change rien, c'est top, mais sur ma colonne 6, 7, 8 on va faire des mix de couleurs.  Genre Rouge & Blanc, Rouge & Orange, Rouge & Vert. Et ainsi de suite pour toutes les lignes de mes colonnes 6, 7, 8. Ne mix jamais plus de 2 couleurs, et il faut que ces couleurs soient en rapport avec la couleur de sa ligne et il faut que ces couleurs aillent bien ensemble et avec pour référence la couleur de la colonne 5. Ces pad en cliquant dessus, vont actionner les 2 couleurs sur mes projecteurs LAT et CONTRE. Si on part sur la couleur Rouge & Blanc par exemple, tu auras, un projecteur Rouge & un projecteur Blanc, un projecteur rouge, et un blanc... Et ainsi de suite, pour former de jolie tableaux. Il faut que les COULEURS de mes projecteurs soient installés de façon symétrique (par exemple sur un groupe de 4, il faut faire un Rouge, Un Blanc, Un Blanc, Un rouge)  Sur le simulateur de l'Akai, sur les PAD, peux-tu me mettre les 2 couleurs dans le meme carré ? Ne redimensionne par le carré, c'est impec comme ça. Je veux que tu me fasse une diagnale sur le carré, la partie haut à gauche, sur une couleur, la partie bas à droite l'autre couleur. 
+
+Tu peux me disposer mon plan de feu dans l'espace, comme une vue de dessus. Tu vois un peu prêt le plan de feu. Garde bien les cercles qu'on a mis, c'est juste la disposition qui change.  Je m'explique avoir 
+
+x x x x x x x x (8 projecteur en contre)
+
+x             x (2 projecteur sur les latéraux)
+
+  x   x   x    (mes 3 douches)
+ 
+
+x   x   x   x  (mes 4 faces)
+
+ça sera ainsi plus parlant.
+
+Pour revenir sur l'Akai, il faut que tu me rajoute une dernière colonne. Un fader comme sur les autres tranches, mais avec au dessus 9 boutons. Ces boutons seront exactement de la meme taille que les boutons "mute" sauf que eux auront une fonction un peu spéciale. Ce sera 9 boutons d'effet. Le fader aura pour but de controler cet effet. En effet, le premier bouton, ça sera un changement de couleur. J'appui dessus, l'effet se lance. J'appui dessus l'effet s'arrête. 
+
+
+

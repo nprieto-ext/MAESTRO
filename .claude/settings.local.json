@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\nikop\\\\Desktop\\\\Boitier AKAI\\\\maestro.py''\")",
+      "Bash(where:*)",
+      "Bash(pip show:*)",
+      "Bash(python -c:*)",
+      "Bash(pip install:*)",
+      "Bash(python3:*)",
+      "Bash(python3.13:*)",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import miniaudio; print\\(''OK 3.13''\\)\")",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m pip install miniaudio)",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import PySide6; print\\(''PySide6 OK on 3.13''\\)\")",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import miniaudio; print\\(''miniaudio OK on 3.12''\\)\")",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"\nimport sys; sys.stdout.reconfigure\\(encoding=''utf-8''\\)\nfrom light_timeline import LightTrack\nprint\\(''Import OK, HAS_MINIAUDIO ='', end='' ''\\)\nfrom light_timeline import HAS_MINIAUDIO\nprint\\(HAS_MINIAUDIO\\)\n\")",
+      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\":*)",
+      "Bash(for p in \"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\scoop\\\\apps\\\\ffmpeg\\\\current\\\\bin\\\\ffmpeg.exe\")",
+      "Bash(do [ -f \"$p\" ])",
+      "Bash(echo:*)",
+      "Bash(done)"
+    ]
+  }
+}
