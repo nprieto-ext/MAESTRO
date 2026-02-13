@@ -31,7 +31,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "Maestro.py"
-VERSION = "2.5.0"
+VERSION = "2.5.1"
 
 # === MIDI SUPPORT ===
 MIDI_AVAILABLE = False

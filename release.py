@@ -5,34 +5,35 @@ from pathlib import Path
 
 INNO_PATH = r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 ISS_FILE = "installer\\maestro.iss"
-MAIN_FILE = "maestro_new.py"
+CONFIG_FILE = "config.py"
+SETUP_OUTPUT = "installer\\installer_output\\Maestro_Setup.exe"
 
 
-def run(cmd):
+def run(cmd, allow_fail=False):
     print(f"\n>>> {cmd}")
     result = subprocess.run(cmd, shell=True)
-    if result.returncode != 0:
+    if result.returncode != 0 and not allow_fail:
         print("Erreur détectée. Arrêt.")
         sys.exit(1)
 
 
 def get_current_version():
-    content = Path(MAIN_FILE).read_text(encoding="utf-8")
-    match = re.search(r'APP_VERSION\s*=\s*"(.*?)"', content)
+    content = Path(CONFIG_FILE).read_text(encoding="utf-8")
+    match = re.search(r'VERSION\s*=\s*"(.*?)"', content)
     return match.group(1) if match else None
 
 
 def update_version(new_version):
-    # Update Python file
-    content = Path(MAIN_FILE).read_text(encoding="utf-8")
+    # Update config.py
+    content = Path(CONFIG_FILE).read_text(encoding="utf-8")
     content = re.sub(
-        r'APP_VERSION\s*=\s*"(.*?)"',
-        f'APP_VERSION = "{new_version}"',
+        r'VERSION\s*=\s*"(.*?)"',
+        f'VERSION = "{new_version}"',
         content,
     )
-    Path(MAIN_FILE).write_text(content, encoding="utf-8")
+    Path(CONFIG_FILE).write_text(content, encoding="utf-8")
 
-    # Update ISS file
+    # Update installer .iss
     iss_content = Path(ISS_FILE).read_text(encoding="utf-8")
     iss_content = re.sub(
         r'AppVersion=.*',
@@ -53,26 +54,36 @@ if not new_version:
     print("Version invalide.")
     sys.exit(1)
 
-print(f"\nMise à jour vers {new_version}...")
+if new_version == current_version:
+    print("La version est identique. On continue quand même.")
 
+print(f"\nMise à jour vers {new_version}...")
 update_version(new_version)
 
-# Nettoyage
+# Nettoyage build
 if Path("build").exists():
     run("rmdir /s /q build")
 if Path("dist").exists():
     run("rmdir /s /q dist")
 
-# Build exe
+# Build EXE
 run("pyinstaller --onefile --windowed maestro_new.py")
 
-# Build installer
+# Build Installer
 run(f'"{INNO_PATH}" {ISS_FILE}')
 
 # Git commit + tag
 run("git add .")
-run(f'git commit -m "Release {new_version}"')
+run(f'git commit -m "Release {new_version}" --allow-empty', allow_fail=True)
 run(f"git tag v{new_version}")
 run("git push origin main --tags")
 
-print("\n========== RELEASE TERMINE ==========")
+# Create GitHub Release + upload installer
+print("\nCréation GitHub Release...")
+run(
+    f'gh release create v{new_version} "{SETUP_OUTPUT}" '
+    f'--title "Maestro v{new_version}" '
+    f'--notes "Release version {new_version}"'
+)
+
+print("\n========== RELEASE + UPLOAD TERMINE ==========")
