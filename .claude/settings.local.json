@@ -17,7 +17,8 @@
       "Bash(for p in \"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\scoop\\\\apps\\\\ffmpeg\\\\current\\\\bin\\\\ffmpeg.exe\")",
       "Bash(do [ -f \"$p\" ])",
       "Bash(echo:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)"
     ]
   }
 }

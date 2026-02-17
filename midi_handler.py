@@ -103,6 +103,13 @@ class MIDIHandler(QObject):
                 print("⚠️  AKAI non détecté (output)")
                 self.midi_out = None
 
+            # Redemarrer le timer de polling si la connexion est etablie
+            if self.midi_in:
+                if not hasattr(self, 'midi_timer') or not self.midi_timer.isActive():
+                    self.midi_timer = QTimer()
+                    self.midi_timer.timeout.connect(self.poll_midi)
+                    self.midi_timer.start(10)
+
         except Exception as e:
             print(f"❌ Erreur connexion AKAI: {e}")
             self.midi_in = None

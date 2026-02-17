@@ -33,7 +33,7 @@ from artnet_dmx import ArtNetDMX
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
-from plan_de_feu import PlanDeFeu
+from plan_de_feu import PlanDeFeu, ColorPickerBlock
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
@@ -276,6 +276,9 @@ class MainWindow(QMainWindow):
         self.player.playbackStateChanged.connect(self.update_play_icon)
         self.apply_styles()
 
+        # Charger la configuration AKAI sauvegardee automatiquement
+        self._load_akai_config_auto()
+
         # Plein ecran gere par maestro_new.py (apres splash)
 
         # Bloquer la mise en veille Windows
@@ -407,22 +410,25 @@ class MainWindow(QMainWindow):
 
         conn_menu = bar.addMenu("🔗 Connexion")
 
-        akai_menu = conn_menu.addMenu("🎹 Connexion Akai")
+        akai_menu = conn_menu.addMenu("🎹 Entrée Akai")
         akai_menu.addAction("🔍 Tester la connexion", self.test_akai_connection)
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
+        akai_menu.addSeparator()
+        akai_menu.addAction("📥 Importer une configuration...", self.import_akai_config)
+        akai_menu.addAction("📤 Exporter une configuration...", self.export_akai_config)
 
-        self.node_menu = conn_menu.addMenu("🌐 Connexion Node")
+        self.node_menu = conn_menu.addMenu("🌐 Sortie DMX")
         self.node_menu.addAction("🔍 Tester la connexion", self.test_node_connection)
         self.node_menu.addAction("⚙️ Parametrer NODE", self.configure_node)
         if not self._license.dmx_allowed:
             self.node_menu.setEnabled(False)
 
-        audio_menu = conn_menu.addMenu("🔊 Connexion Audio")
+        audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
         audio_menu.addAction("🔉 Envoi un son de test", self.play_test_sound)
         self.audio_output_menu = audio_menu.addMenu("🎧 Sortie Audio")
         self.audio_output_menu.aboutToShow.connect(self._populate_audio_output_menu)
 
-        video_menu = conn_menu.addMenu("🖥️ Connexion Video")
+        video_menu = conn_menu.addMenu("🖥️ Sortie Vidéo")
         self.video_test_action = video_menu.addAction("🖼️ Envoi un logo de test", self.show_test_logo)
         self.video_screen_menu = video_menu.addMenu("🖥️ Diffuser video sur")
         self.video_screen_menu.aboutToShow.connect(self._populate_screen_menu)
@@ -471,7 +477,6 @@ class MainWindow(QMainWindow):
 
         # QStackedWidget pour basculer entre video et image
         self.video_stack = QStackedWidget()
-        self.video_stack.setMinimumHeight(400)
         self.video_stack.setStyleSheet("background: #000; border: 1px solid #2a2a2a; border-radius: 6px;")
 
         # Page 0 : QVideoWidget
@@ -488,6 +493,19 @@ class MainWindow(QMainWindow):
 
         self.video_stack.setCurrentIndex(0)
         vv.addWidget(self.video_stack)
+
+    def _enforce_video_ratio(self):
+        """Ajuste la hauteur video pour maintenir un ratio 16:9"""
+        w = self.video_frame.width()
+        if w > 0:
+            target_h = int(w * 9 / 16) + 40  # +40 pour la barre titre
+            sizes = self._right_splitter.sizes()
+            if len(sizes) == 3:
+                total = sum(sizes)
+                sizes[2] = target_h
+                sizes[0] = total - sizes[1] - sizes[2]
+                if sizes[0] > 50:
+                    self._right_splitter.setSizes(sizes)
 
     def show_image(self, path):
         """Affiche une image dans le preview integre"""
@@ -600,24 +618,43 @@ class MainWindow(QMainWindow):
         plan_scroll = QScrollArea()
         plan_scroll.setWidgetResizable(True)
         self.plan_de_feu = PlanDeFeu(self.projectors, self)
+        if not self._license.dmx_allowed:
+            self.plan_de_feu.set_dmx_blocked()
         plan_scroll.setWidget(self.plan_de_feu)
         plan_scroll.setStyleSheet("QScrollArea { border: none; }")
 
+        self.color_picker_block = ColorPickerBlock(self.plan_de_feu)
+
         right = QSplitter(Qt.Vertical)
         right.setHandleWidth(2)
+        right.setMinimumWidth(320)
         right.addWidget(plan_scroll)
+        right.addWidget(self.color_picker_block)
         right.addWidget(self.video_frame)
-        right.setStretchFactor(0, 5)
-        right.setStretchFactor(1, 2)
+        right.setStretchFactor(0, 2)
+        right.setStretchFactor(1, 0)
+        right.setStretchFactor(2, 3)
+        right.setCollapsible(0, False)
+        right.setCollapsible(1, False)
+        right.setCollapsible(2, False)
+
+        # Forcer ratio 16:9 sur la video
+        self._right_splitter = right
+        self._right_splitter_initialized = False
+        right.splitterMoved.connect(self._enforce_video_ratio)
 
         main_split = QSplitter(Qt.Horizontal)
         main_split.setHandleWidth(2)
         main_split.addWidget(self.akai)
         main_split.addWidget(mid)
         main_split.addWidget(right)
-        main_split.setStretchFactor(0, 1)
+        main_split.setStretchFactor(0, 0)  # AKAI = taille fixe
         main_split.setStretchFactor(1, 3)
         main_split.setStretchFactor(2, 2)
+        main_split.setCollapsible(0, False)
+        main_split.setCollapsible(1, False)
+        main_split.setCollapsible(2, False)
+        self._main_split = main_split
 
         # Barre de mise a jour (cachee par defaut)
         self.update_bar = UpdateBar()
@@ -635,6 +672,41 @@ class MainWindow(QMainWindow):
 
         # Watermark sur le preview video integre
         self._setup_video_watermark()
+
+    def showEvent(self, event):
+        """Au premier affichage, fixer les tailles du splitter droit (ratio 16:9 video)"""
+        super().showEvent(event)
+        if not self._right_splitter_initialized:
+            self._right_splitter_initialized = True
+            QTimer.singleShot(0, self._init_right_splitter_sizes)
+
+    def _init_right_splitter_sizes(self):
+        """Calcule et applique les tailles initiales des splitters"""
+        # Splitter horizontal : AKAI (fixe 370) | Centre | Droite
+        total_w = self._main_split.width()
+        if total_w > 0:
+            akai_w = 370
+            right_w = max(350, int(total_w * 0.3))
+            mid_w = total_w - akai_w - right_w
+            if mid_w < 200:
+                mid_w = 200
+                right_w = total_w - akai_w - mid_w
+            self._main_split.setSizes([akai_w, mid_w, right_w])
+
+        # Splitter vertical droit : Plan de feu | Color Picker | Video 16:9
+        total = self._right_splitter.height()
+        if total <= 0:
+            return
+        video_w = self.video_frame.width()
+        if video_w <= 0:
+            video_w = 400
+        video_h = int(video_w * 9 / 16) + 40  # +40 pour la barre titre
+        picker_h = self.color_picker_block.sizeHint().height()
+        plan_h = total - video_h - picker_h
+        if plan_h < 100:
+            plan_h = 100
+            video_h = total - plan_h - picker_h
+        self._right_splitter.setSizes([plan_h, picker_h, video_h])
 
     def create_akai_panel(self):
         """Cree le panneau AKAI avec 8 colonnes + colonne effets"""
@@ -762,11 +834,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        # Banniere de licence (en bas du panneau AKAI)
-        self.license_banner = LicenseBanner()
-        self.license_banner.activate_clicked.connect(self._open_activation_dialog)
-        self.license_banner.apply_license(self._license)
-        layout.addWidget(self.license_banner)
+        # Banniere de licence supprimee
 
         return frame
 
@@ -974,6 +1042,10 @@ class MainWindow(QMainWindow):
 
     def full_blackout(self):
         """Blackout complet"""
+        # Vider les overrides HTP
+        if hasattr(self, 'plan_de_feu'):
+            self.plan_de_feu.set_htp_overrides(None)
+
         for idx in range(9):
             if idx in self.faders:
                 self.faders[idx].value = 0
@@ -1095,42 +1167,16 @@ class MainWindow(QMainWindow):
             self._update_memory_pad_led(mem_col, row, active=True)
             # Appliquer le snapshot aux projecteurs et rafraichir le plan de feu
             self._apply_memory_to_projectors(mem_col, row)
+        # Sauvegarde auto immediate
+        self._save_akai_config_auto()
 
     def _apply_memory_to_projectors(self, mem_col, row):
-        """Applique un snapshot memoire aux projecteurs, scale par le fader memoire"""
+        """Active une memoire - le merge HTP se fait dans send_dmx_update.
+        Les faders couleur (0-3) ne sont PAS modifies, chaque fader reste independant.
+        Le plan de feu est rafraichi automatiquement par le timer 25fps."""
         mem = self.memories[mem_col][row]
         if not mem:
             return
-
-        col_akai = 4 + mem_col
-        fader_pct = self.faders[col_akai].value if col_akai in self.faders else 100
-        scale = fader_pct / 100.0
-
-        mem_projs = mem["projectors"]
-        for i, proj in enumerate(self.projectors):
-            if i < len(mem_projs):
-                ms = mem_projs[i]
-                proj.base_color = QColor(ms["base_color"])
-                proj.level = int(ms["level"] * scale)
-                brt = proj.level / 100.0
-                proj.color = QColor(
-                    int(proj.base_color.red() * brt),
-                    int(proj.base_color.green() * brt),
-                    int(proj.base_color.blue() * brt))
-
-        # Mettre a jour les faders des colonnes couleur (0-3) pour refleter les niveaux
-        for col_idx, groups in self.FADER_GROUPS.items():
-            if groups is None or col_idx > 3:
-                continue
-            for p in self.projectors:
-                if p.group in groups:
-                    if col_idx in self.faders:
-                        self.faders[col_idx].set_value(p.level)
-                    break
-
-        # Rafraichir le plan de feu
-        if hasattr(self, 'plan_de_feu'):
-            self.plan_de_feu.update()
 
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad memoire"""
@@ -1206,21 +1252,34 @@ class MainWindow(QMainWindow):
         is_active = self.active_memory_pads.get(col_akai) == row
         self._style_memory_pad(mem_col, row, active=is_active)
         self._update_memory_pad_led(mem_col, row, active=is_active)
+        # Sauvegarde auto immediate
+        self._save_akai_config_auto()
 
     def _record_memory(self, mem_col, row):
-        """Capture l'etat de tous les projecteurs dans une memoire"""
+        """Capture l'etat visuel complet (projecteurs + HTP memoires) dans une memoire"""
+        overrides = self._compute_htp_overrides()
         snapshot = []
         for p in self.projectors:
-            snapshot.append({
-                "group": p.group,
-                "base_color": p.base_color.name(),
-                "level": p.level
-            })
+            if overrides and id(p) in overrides:
+                level, color, base = overrides[id(p)]
+                snapshot.append({
+                    "group": p.group,
+                    "base_color": base.name(),
+                    "level": level
+                })
+            else:
+                snapshot.append({
+                    "group": p.group,
+                    "base_color": p.base_color.name(),
+                    "level": p.level
+                })
         self.memories[mem_col][row] = {"projectors": snapshot}
         col_akai = 4 + mem_col
         is_active = self.active_memory_pads.get(col_akai) == row
         self._style_memory_pad(mem_col, row, active=is_active)
         self._update_memory_pad_led(mem_col, row, active=is_active)
+        # Sauvegarde auto immediate
+        self._save_akai_config_auto()
 
     def _show_memory_context_menu(self, pos, mem_col, row, btn):
         """Menu contextuel sur un pad memoire"""
@@ -1279,6 +1338,8 @@ class MainWindow(QMainWindow):
             del self.active_memory_pads[col_akai]
         self._style_memory_pad(mem_col, row, active=False)
         self._update_memory_pad_led(mem_col, row, active=False)
+        # Sauvegarde auto immediate
+        self._save_akai_config_auto()
 
     def set_proj_level(self, index, value):
         """Gere les faders - chaque fader est independant"""
@@ -1843,13 +1904,49 @@ class MainWindow(QMainWindow):
         # Serialiser les pads actifs {col_akai_str: row}
         active_pads_serial = {str(k): v for k, v in self.active_memory_pads.items()}
 
+        # Sauvegarder l'etat complet du plan de feu (avec HTP applique)
+        overrides = self._compute_htp_overrides()
+        plan_de_feu_state = []
+        for proj in self.projectors:
+            # Utiliser l'override HTP si present, sinon l'etat direct
+            if overrides and id(proj) in overrides:
+                level, color, base = overrides[id(proj)]
+                plan_de_feu_state.append({
+                    "group": proj.group,
+                    "level": level,
+                    "base_color": base.name(),
+                    "muted": proj.muted
+                })
+            else:
+                plan_de_feu_state.append({
+                    "group": proj.group,
+                    "level": proj.level,
+                    "base_color": proj.base_color.name(),
+                    "muted": proj.muted
+                })
+
+        # Sauvegarder l'etat des faders
+        faders_state = {}
+        for idx, fader in self.faders.items():
+            faders_state[str(idx)] = fader.value
+
+        # Sauvegarder les pads couleur actifs (colonnes 0-3)
+        active_color_pads = {}
+        for col_idx, btn in self.active_pads.items():
+            base_color = btn.property("base_color")
+            if base_color:
+                active_color_pads[str(col_idx)] = base_color.name()
+
         save_data = {
-            "version": 4,
+            "version": 5,
             "sequence": data,
             "cartouches": cart_data,
             "memories": self.memories,
             "memory_custom_colors": custom_colors_serial,
-            "active_memory_pads": active_pads_serial
+            "active_memory_pads": active_pads_serial,
+            "plan_de_feu": plan_de_feu_state,
+            "faders": faders_state,
+            "active_color_pads": active_color_pads
         }
 
         try:
@@ -1859,6 +1956,9 @@ class MainWindow(QMainWindow):
             self.current_show_path = path
             self.add_recent_file(path)
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(path)}")
+            # Clear total apres sauvegarde
+            self.full_blackout()
+            self.plan_de_feu.refresh()
             return True
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Impossible de sauvegarder: {e}")
@@ -2035,6 +2135,53 @@ class MainWindow(QMainWindow):
                     is_active = self.active_memory_pads.get(col_akai) == mr
                     self._style_memory_pad(mc, mr, active=is_active)
 
+            # Restaurer l'etat du plan de feu (v5+)
+            if isinstance(raw, dict):
+                plan_de_feu_data = raw.get("plan_de_feu")
+                faders_data = raw.get("faders")
+                active_color_pads_data = raw.get("active_color_pads")
+
+                # Restaurer les faders
+                if faders_data and isinstance(faders_data, dict):
+                    for idx_str, value in faders_data.items():
+                        idx = int(idx_str)
+                        if idx in self.faders:
+                            self.faders[idx].value = int(value)
+                            self.faders[idx].update()
+
+                # Restaurer les pads couleur actifs (colonnes 0-3)
+                if active_color_pads_data and isinstance(active_color_pads_data, dict):
+                    for col_str, color_name in active_color_pads_data.items():
+                        col_idx = int(col_str)
+                        target_color = QColor(color_name)
+                        # Chercher le pad qui correspond a cette couleur
+                        for row in range(8):
+                            pad = self.pads.get((row, col_idx))
+                            if pad:
+                                pad_color = pad.property("base_color")
+                                if pad_color and pad_color.name() == target_color.name():
+                                    self.activate_pad(pad, col_idx)
+                                    break
+
+                # Restaurer l'etat des projecteurs
+                if plan_de_feu_data and isinstance(plan_de_feu_data, list):
+                    for i, pstate in enumerate(plan_de_feu_data):
+                        if i < len(self.projectors):
+                            proj = self.projectors[i]
+                            proj.level = pstate.get("level", 0)
+                            proj.base_color = QColor(pstate.get("base_color", "#000000"))
+                            proj.muted = pstate.get("muted", False)
+                            if proj.level > 0:
+                                brt = proj.level / 100.0
+                                proj.color = QColor(
+                                    int(proj.base_color.red() * brt),
+                                    int(proj.base_color.green() * brt),
+                                    int(proj.base_color.blue() * brt))
+                            else:
+                                proj.color = QColor(0, 0, 0)
+
+                self.plan_de_feu.refresh()
+
             self.seq.is_dirty = False
             self.current_show_path = path
             self.add_recent_file(path)
@@ -2078,6 +2225,115 @@ class MainWindow(QMainWindow):
                 f"{len(missing)} fichier(s) introuvable(s) :\n\n"
                 f"{details}\n\n"
                 f"Ces medias ont ete deplaces, supprimes ou renommes.")
+
+    # ==================== CONFIG AKAI (sauvegarde/chargement memoires) ====================
+
+    _AKAI_CONFIG_PATH = str(Path.home() / '.maestro_akai_config.json')
+
+    def _serialize_akai_config(self):
+        """Serialise les memoires AKAI en dict JSON"""
+        custom_colors_serial = []
+        for mc in range(4):
+            col_colors = []
+            for mr in range(8):
+                c = self.memory_custom_colors[mc][mr]
+                col_colors.append(c.name() if c else None)
+            custom_colors_serial.append(col_colors)
+
+        active_pads_serial = {str(k): v for k, v in self.active_memory_pads.items()}
+
+        return {
+            "memories": self.memories,
+            "memory_custom_colors": custom_colors_serial,
+            "active_memory_pads": active_pads_serial
+        }
+
+    def _apply_akai_config(self, config):
+        """Applique une config AKAI (memoires) depuis un dict"""
+        mem_data = config.get("memories")
+        custom_colors_data = config.get("memory_custom_colors")
+        active_pads_data = config.get("active_memory_pads")
+
+        self.memories = [[None]*8, [None]*8, [None]*8, [None]*8]
+        self.memory_custom_colors = [[None]*8, [None]*8, [None]*8, [None]*8]
+        self.active_memory_pads = {}
+
+        if mem_data and isinstance(mem_data, list):
+            if len(mem_data) >= 1 and isinstance(mem_data[0], list):
+                for mc in range(min(4, len(mem_data))):
+                    for mr in range(min(8, len(mem_data[mc]))):
+                        self.memories[mc][mr] = mem_data[mc][mr]
+
+        if custom_colors_data and isinstance(custom_colors_data, list):
+            for mc in range(min(4, len(custom_colors_data))):
+                for mr in range(min(8, len(custom_colors_data[mc]))):
+                    c = custom_colors_data[mc][mr]
+                    self.memory_custom_colors[mc][mr] = QColor(c) if c else None
+
+        if active_pads_data and isinstance(active_pads_data, dict):
+            for k, v in active_pads_data.items():
+                self.active_memory_pads[int(k)] = v
+
+        # Rafraichir l'affichage des pads memoire
+        for mc in range(4):
+            col_akai = 4 + mc
+            for mr in range(8):
+                is_active = self.active_memory_pads.get(col_akai) == mr
+                self._style_memory_pad(mc, mr, active=is_active)
+
+    def _save_akai_config_auto(self):
+        """Sauvegarde automatique de la config AKAI a la fermeture"""
+        try:
+            config = self._serialize_akai_config()
+            with open(self._AKAI_CONFIG_PATH, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Erreur sauvegarde config AKAI: {e}")
+
+    def _load_akai_config_auto(self):
+        """Charge automatique de la config AKAI au demarrage"""
+        try:
+            if not os.path.exists(self._AKAI_CONFIG_PATH):
+                return
+            with open(self._AKAI_CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+            self._apply_akai_config(config)
+        except Exception as e:
+            print(f"Erreur chargement config AKAI: {e}")
+
+    def export_akai_config(self):
+        """Exporte la configuration AKAI dans un fichier"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exporter configuration AKAI", "",
+            "Configuration AKAI (*.akai.json)")
+        if not path:
+            return
+        if not path.endswith('.akai.json'):
+            path += '.akai.json'
+        try:
+            config = self._serialize_akai_config()
+            with open(path, 'w') as f:
+                json.dump(config, f, indent=2)
+            QMessageBox.information(self, "Export", "Configuration AKAI exportee avec succes.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible d'exporter: {e}")
+
+    def import_akai_config(self):
+        """Importe une configuration AKAI depuis un fichier"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importer configuration AKAI", "",
+            "Configuration AKAI (*.akai.json);;Tous les fichiers (*)")
+        if not path:
+            return
+        try:
+            with open(path, 'r') as f:
+                config = json.load(f)
+            self._apply_akai_config(config)
+            QMessageBox.information(self, "Import", "Configuration AKAI importee avec succes.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible d'importer: {e}")
+
+    # ==================== FIN CONFIG AKAI ====================
 
     def load_recent_files(self):
         """Charge la liste des fichiers recents"""
@@ -2141,6 +2397,7 @@ class MainWindow(QMainWindow):
             if self.midi_handler.midi_in and self.midi_handler.midi_out:
                 QTimer.singleShot(200, self.activate_default_white_pads)
                 QTimer.singleShot(300, self.turn_off_all_effects)
+                QTimer.singleShot(400, self._sync_faders_to_projectors)
                 QMessageBox.information(self, "Reconnexion reussie",
                     "AKAI APC mini reconnecte avec succes !")
         except Exception as e:
@@ -2296,7 +2553,7 @@ class MainWindow(QMainWindow):
 
     def _open_activation_dialog(self):
         """Ouvre le dialogue d'activation de licence"""
-        dlg = ActivationDialog(self)
+        dlg = ActivationDialog(self, license_result=self._license)
         dlg.activation_success.connect(self._on_activation_success)
         dlg.exec()
 
@@ -2305,14 +2562,15 @@ class MainWindow(QMainWindow):
         new_result = verify_license()
         self._license = new_result
 
-        # Mettre a jour la banniere
-        self.license_banner.apply_license(self._license)
+        # Banniere supprimee
 
         # Activer/desactiver DMX
-        if self._license.dmx_allowed and not self.dmx.connected:
-            self.test_dmx_on_startup()
-        elif not self._license.dmx_allowed:
+        if self._license.dmx_allowed:
+            if not self.dmx.connected:
+                self.test_dmx_on_startup()
+        else:
             self.dmx.connected = False
+            self.plan_de_feu.set_dmx_blocked()
 
         # Activer/desactiver menu Node
         if hasattr(self, 'node_menu'):
@@ -2393,6 +2651,20 @@ class MainWindow(QMainWindow):
                 velocity = 3 if btn.active else 0
                 self.midi_handler.midi_out.send_message([0x90, note, velocity])
 
+    # Mapping raccourcis clavier -> couleurs
+    COLOR_SHORTCUTS = {
+        Qt.Key_R: QColor(255, 0, 0),
+        Qt.Key_G: QColor(0, 255, 0),
+        Qt.Key_B: QColor(0, 0, 255),
+        Qt.Key_C: QColor(0, 255, 255),
+        Qt.Key_M: QColor(255, 0, 255),
+        Qt.Key_Y: QColor(255, 255, 0),
+        Qt.Key_W: QColor(255, 255, 255),
+        Qt.Key_K: QColor(0, 0, 0),
+        Qt.Key_O: QColor(255, 128, 0),
+        Qt.Key_P: QColor(255, 105, 180),
+    }
+
     def keyPressEvent(self, event):
         """Gere les raccourcis clavier"""
         key = event.key()
@@ -2411,8 +2683,28 @@ class MainWindow(QMainWindow):
             if cart_index < len(self.cartouches):
                 self.on_cartouche_clicked(cart_index)
             event.accept()
+        elif key in self.COLOR_SHORTCUTS:
+            self._apply_color_shortcut(self.COLOR_SHORTCUTS[key])
+            event.accept()
         else:
             super().keyPressEvent(event)
+
+    def _apply_color_shortcut(self, color):
+        """Applique une couleur raccourci aux projecteurs selectionnes"""
+        if not self.plan_de_feu.selected_lamps:
+            return
+        targets = []
+        for g, i in self.plan_de_feu.selected_lamps:
+            projs = [p for p in self.projectors if p.group == g]
+            if i < len(projs):
+                targets.append(projs[i])
+        for proj in targets:
+            proj.base_color = color
+            proj.level = 100
+            proj.color = QColor(color.red(), color.green(), color.blue())
+        if self.dmx:
+            self.dmx.update_from_projectors(self.projectors)
+        self.plan_de_feu.refresh()
 
     def next_media(self):
         """Passe au media suivant"""
@@ -2625,6 +2917,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         """Gere la fermeture de la fenetre"""
+        # Sauvegarder automatiquement la config AKAI
+        self._save_akai_config_auto()
+
         # Fermer la fenetre de sortie video
         if self.video_output_window:
             self.video_output_window.close()
@@ -2706,51 +3001,108 @@ class MainWindow(QMainWindow):
     def show_dmx_patch_config(self):
         """Interface de configuration DMX"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Configuration du Mode DMX")
-        dialog.setMinimumSize(800, 600)
+        dialog.setWindowTitle("Patch DMX")
+        dialog.setMinimumSize(700, 500)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; color: #e0e0e0; }
+            QLabel { color: #e0e0e0; }
+            QScrollArea { border: none; background: #1a1a1a; }
+            QWidget#scroll_content { background: #1a1a1a; }
+            QComboBox {
+                background: #2a2a2a; color: #ffffff;
+                border: 1px solid #4a4a4a; border-radius: 4px;
+                padding: 6px 12px; min-width: 80px;
+                font-weight: bold; font-size: 13px;
+            }
+            QComboBox:hover { border: 1px solid #00d4ff; }
+            QComboBox::drop-down {
+                border: none; width: 24px;
+            }
+            QComboBox::down-arrow {
+                image: none; border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #888; margin-right: 6px;
+            }
+            QComboBox QAbstractItemView {
+                background: #2a2a2a; color: #ffffff;
+                border: 1px solid #4a4a4a; selection-background-color: #00d4ff;
+                selection-color: #000000; outline: none;
+            }
+        """)
 
         layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel("Configuration du Mode DMX")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title = QLabel("Patch DMX")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #ffffff; padding-bottom: 4px;")
         layout.addWidget(title)
 
-        info = QLabel("Les projecteurs sont adresses automatiquement : DMX 1, 11, 21, 31...")
+        info = QLabel("Adressage auto : 1, 11, 21, 31...")
         info.setAlignment(Qt.AlignCenter)
-        info.setStyleSheet("color: #888; padding: 10px;")
+        info.setStyleSheet("color: #666; font-size: 12px; padding-bottom: 8px;")
         layout.addWidget(info)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_content = QWidget()
+        scroll_content.setObjectName("scroll_content")
         scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(4)
 
         self.mode_inputs = {}
 
+        # Grouper par type pour un affichage plus lisible
+        current_group = None
         for i, proj in enumerate(self.projectors):
+            # Separateur de groupe
+            if proj.group != current_group:
+                current_group = proj.group
+                group_label = QLabel(f"  {current_group.upper()}")
+                group_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
+                group_label.setStyleSheet("color: #00d4ff; padding: 8px 0 2px 0;")
+                scroll_layout.addWidget(group_label)
+
             proj_frame = QFrame()
-            proj_frame.setStyleSheet("QFrame { background: #2a2a2a; padding: 10px; margin: 5px; }")
+            proj_frame.setStyleSheet("""
+                QFrame {
+                    background: #222222; border-radius: 6px;
+                    padding: 6px 12px; margin: 1px 0;
+                }
+                QFrame:hover { background: #2a2a2a; }
+            """)
             proj_layout = QHBoxLayout(proj_frame)
+            proj_layout.setContentsMargins(8, 4, 8, 4)
+
+            # Pastille couleur indicatrice
+            dot = QLabel("\u25cf")
+            dot.setFixedWidth(16)
+            dot.setStyleSheet("color: #00d4ff; font-size: 14px;")
+            proj_layout.addWidget(dot)
 
             proj_name = f"{proj.group.capitalize()} #{i+1}"
             name_label = QLabel(proj_name)
-            name_label.setMinimumWidth(150)
+            name_label.setMinimumWidth(140)
+            name_label.setStyleSheet("color: #cccccc; font-size: 13px;")
             proj_layout.addWidget(name_label)
 
             dmx_addr = (i * 10) + 1
-            addr_label = QLabel(f"DMX {dmx_addr}")
-            addr_label.setMinimumWidth(80)
-            addr_label.setStyleSheet("color: #4a8aaa; font-weight: bold;")
+            addr_label = QLabel(f"CH {dmx_addr}")
+            addr_label.setMinimumWidth(70)
+            addr_label.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 13px;")
             proj_layout.addWidget(addr_label)
+
+            proj_layout.addStretch()
 
             proj_key = f"{proj.group}_{i}"
             current_mode = self.dmx.projector_modes.get(proj_key, "5CH")
 
             mode_combo = QComboBox()
-            mode_combo.addItem("5CH", "5CH")
-            mode_combo.addItem("4CH", "4CH")
             mode_combo.addItem("3CH", "3CH")
+            mode_combo.addItem("4CH", "4CH")
+            mode_combo.addItem("5CH", "5CH")
             mode_combo.addItem("6CH", "6CH")
 
             index = mode_combo.findData(current_mode)
@@ -2758,7 +3110,6 @@ class MainWindow(QMainWindow):
                 mode_combo.setCurrentIndex(index)
 
             proj_layout.addWidget(mode_combo)
-            proj_layout.addStretch()
 
             scroll_layout.addWidget(proj_frame)
             self.mode_inputs[i] = mode_combo
@@ -2768,14 +3119,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(scroll)
 
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
 
-        apply_btn = QPushButton("✅ Appliquer")
-        apply_btn.setStyleSheet("QPushButton { background: #2a5a2a; padding: 10px 30px; }")
+        apply_btn = QPushButton("Appliquer")
+        apply_btn.setStyleSheet("""
+            QPushButton {
+                background: #00d4ff; color: #000000; font-weight: bold;
+                padding: 10px 30px; border-radius: 6px; font-size: 13px;
+            }
+            QPushButton:hover { background: #33ddff; }
+        """)
         apply_btn.clicked.connect(lambda: self.apply_dmx_modes(dialog))
         btn_layout.addWidget(apply_btn)
 
-        cancel_btn = QPushButton("❌ Annuler")
-        cancel_btn.setStyleSheet("QPushButton { background: #3a3a3a; padding: 10px 30px; }")
+        cancel_btn = QPushButton("Annuler")
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: #333333; color: #aaaaaa;
+                padding: 10px 30px; border-radius: 6px; font-size: 13px;
+                border: 1px solid #4a4a4a;
+            }
+            QPushButton:hover { background: #3a3a3a; color: #ffffff; }
+        """)
         cancel_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel_btn)
 
@@ -3003,7 +3368,7 @@ class MainWindow(QMainWindow):
     # ==================== MENU CONNEXION ====================
 
     def test_akai_connection(self):
-        """Teste la connexion AKAI APC mini"""
+        """Teste la connexion AKAI APC mini, tente la reconnexion si deconnecte"""
         if not MIDI_AVAILABLE:
             QMessageBox.warning(self, "AKAI",
                 "Module MIDI non installe.\n\nInstallez avec: py -m pip install rtmidi2")
@@ -3019,29 +3384,63 @@ class MainWindow(QMainWindow):
         if connected:
             QMessageBox.information(self, "AKAI", "AKAI APC mini connecte et operationnel !")
         else:
-            QMessageBox.warning(self, "AKAI",
-                "AKAI APC mini non detecte.\n\n"
-                "Verifiez que le controleur est branche en USB.")
+            # Tenter la reconnexion automatique
+            self.midi_handler.connect_akai()
+            reconnected = False
+            if self.midi_handler.midi_in and self.midi_handler.midi_out:
+                try:
+                    reconnected = self.midi_handler.midi_in.is_port_open() and self.midi_handler.midi_out.is_port_open()
+                except:
+                    pass
+
+            if reconnected:
+                QTimer.singleShot(200, self.activate_default_white_pads)
+                QTimer.singleShot(300, self.turn_off_all_effects)
+                QTimer.singleShot(400, self._sync_faders_to_projectors)
+                QMessageBox.information(self, "AKAI",
+                    "AKAI APC mini detecte et reconnecte avec succes !")
+            else:
+                QMessageBox.warning(self, "AKAI",
+                    "AKAI APC mini non detecte.\n\n"
+                    "Verifiez que le controleur est branche en USB.")
 
     def reset_akai(self):
-        """Reinitialise la connexion et les LEDs de l'AKAI"""
+        """Reinitialise la connexion, les LEDs et les faders de l'AKAI"""
         if not MIDI_AVAILABLE:
             QMessageBox.warning(self, "AKAI", "Module MIDI non installe.")
             return
 
         try:
             self.midi_handler.connect_akai()
-            QTimer.singleShot(200, self.activate_default_white_pads)
-            QTimer.singleShot(300, self.turn_off_all_effects)
-            QMessageBox.information(self, "AKAI", "AKAI reinitialise avec succes !")
+            if self.midi_handler.midi_in and self.midi_handler.midi_out:
+                QTimer.singleShot(200, self.activate_default_white_pads)
+                QTimer.singleShot(300, self.turn_off_all_effects)
+                # Synchroniser les faders UI avec les niveaux actuels des projecteurs
+                QTimer.singleShot(400, self._sync_faders_to_projectors)
+                QMessageBox.information(self, "AKAI", "AKAI reinitialise avec succes !")
+            else:
+                QMessageBox.warning(self, "AKAI",
+                    "AKAI APC mini non detecte.\n\n"
+                    "Verifiez que le controleur est branche en USB.")
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur reinitialisation AKAI: {e}")
+
+    def _sync_faders_to_projectors(self):
+        """Synchronise les faders UI avec les niveaux actuels des projecteurs"""
+        for col_idx, groups in self.FADER_GROUPS.items():
+            if groups is None or col_idx > 3:
+                continue
+            for p in self.projectors:
+                if p.group in groups:
+                    if col_idx in self.faders:
+                        self.faders[col_idx].set_value(p.level)
+                    break
 
     def test_node_connection(self):
         """Teste la connexion au Node DMX par ping"""
         if not self._license.dmx_allowed:
-            QMessageBox.warning(self, "NODE",
-                "Connexion DMX non disponible.\nActivez une licence pour utiliser le DMX.")
+            QMessageBox.warning(self, "Sortie DMX",
+                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\nActivez une licence pour utiliser la sortie Art-Net.")
             return
 
         import subprocess
@@ -3068,8 +3467,8 @@ class MainWindow(QMainWindow):
     def configure_node(self):
         """Configure les parametres du Node DMX"""
         if not self._license.dmx_allowed:
-            QMessageBox.warning(self, "NODE",
-                "Configuration DMX non disponible.\nActivez une licence pour utiliser le DMX.")
+            QMessageBox.warning(self, "Sortie DMX",
+                "Votre periode d'essai est terminee ou le logiciel n'est pas active.\nActivez une licence pour utiliser la sortie Art-Net.")
             return
 
         dialog = QDialog(self)
@@ -3263,47 +3662,74 @@ class MainWindow(QMainWindow):
         else:
             self.video_menu_toggle.setText("🔴 Activer sortie video")
 
+    def _compute_htp_overrides(self):
+        """Calcule les valeurs HTP des memoires SANS modifier les projecteurs.
+        Retourne un dict {id(proj): (level, QColor_display, QColor_base)} pour l'affichage."""
+        overrides = {}
+
+        for mem_col in range(4):
+            col_akai = 4 + mem_col
+            fv = self.faders[col_akai].value if col_akai in self.faders else 0
+            active_row = self.active_memory_pads.get(col_akai)
+            if fv > 0 and active_row is not None and self.memories[mem_col][active_row]:
+                mem_projs = self.memories[mem_col][active_row]["projectors"]
+                for i, proj in enumerate(self.projectors):
+                    if i < len(mem_projs):
+                        ms = mem_projs[i]
+                        mem_level = int(ms["level"] * fv / 100.0)
+                        # HTP: comparer avec le niveau actuel du projecteur ou override precedent
+                        current_level = overrides[id(proj)][0] if id(proj) in overrides else proj.level
+                        if mem_level > current_level:
+                            base = QColor(ms["base_color"])
+                            brt = mem_level / 100.0
+                            color = QColor(
+                                int(base.red() * brt),
+                                int(base.green() * brt),
+                                int(base.blue() * brt))
+                            overrides[id(proj)] = (mem_level, color, base)
+
+        return overrides
+
+    def _apply_htp_to_projectors(self, overrides):
+        """Applique temporairement les overrides HTP sur les projecteurs pour envoi DMX.
+        Retourne la liste des etats sauvegardes pour restauration."""
+        saved = []
+        for proj in self.projectors:
+            saved.append((proj.level, QColor(proj.color), QColor(proj.base_color)))
+            if id(proj) in overrides:
+                level, color, base = overrides[id(proj)]
+                proj.level = level
+                proj.color = color
+                proj.base_color = base
+        return saved
+
     def send_dmx_update(self):
-        """Envoie les donnees DMX (pas en mode Manuel) avec HTP memoires"""
-        if not self.plan_de_feu.is_dmx_enabled():
-            return
-        if self.dmx.connected:
+        """Envoie les donnees DMX avec HTP memoires + refresh plan de feu sans flicker"""
+        # Calculer les overrides HTP sans modifier les projecteurs
+        overrides = self._compute_htp_overrides()
+
+        # Stocker les overrides sur le plan de feu (utilise par TOUS les appels a refresh)
+        self.plan_de_feu.set_htp_overrides(overrides if overrides else None)
+
+        if self.plan_de_feu.is_dmx_enabled() and self.dmx.connected:
             # Mode Manuel = pas d'envoi DMX
             if self.seq.current_row >= 0:
                 dmx_mode = self.seq.get_dmx_mode(self.seq.current_row)
                 if dmx_mode == "Manuel":
                     return
 
-            # Sauvegarder etat direct
-            saved = [(p.level, QColor(p.color), QColor(p.base_color)) for p in self.projectors]
-
-            # Appliquer HTP memoires (faders 4-7) - uniquement le pad ACTIF par colonne
-            for mem_col in range(4):
-                col_akai = 4 + mem_col
-                fv = self.faders[col_akai].value if col_akai in self.faders else 0
-                active_row = self.active_memory_pads.get(col_akai)
-                if fv > 0 and active_row is not None and self.memories[mem_col][active_row]:
-                    mem_projs = self.memories[mem_col][active_row]["projectors"]
-                    for i, proj in enumerate(self.projectors):
-                        if i < len(mem_projs):
-                            ms = mem_projs[i]
-                            mem_level = int(ms["level"] * fv / 100.0)
-                            if mem_level > proj.level:
-                                proj.level = mem_level
-                                proj.base_color = QColor(ms["base_color"])
-                                brt = mem_level / 100.0
-                                proj.color = QColor(
-                                    int(proj.base_color.red() * brt),
-                                    int(proj.base_color.green() * brt),
-                                    int(proj.base_color.blue() * brt))
+            # Appliquer temporairement HTP pour l'envoi DMX
+            if overrides:
+                saved = self._apply_htp_to_projectors(overrides)
 
             # Envoyer DMX
             self.dmx.update_from_projectors(self.projectors, self.effect_speed)
             self.dmx.send_dmx()
 
             # Restaurer etat direct
-            for i, proj in enumerate(self.projectors):
-                proj.level, proj.color, proj.base_color = saved[i]
+            if overrides:
+                for i, proj in enumerate(self.projectors):
+                    proj.level, proj.color, proj.base_color = saved[i]
 
     def stop_recording(self):
         """Arrete l'enregistrement"""

@@ -53,7 +53,7 @@ def _deobfuscate_private_key():
 
 # === Constantes ===
 LICENSE_FILE = os.path.join(os.path.expanduser("~"), ".maestro_license.dat")
-TRIAL_DURATION_DAYS = 7
+TRIAL_DURATION_DAYS = 15
 ACTIVATION_SERVER_URL = "https://api.maestro-light.com/license"
 
 # Empreinte cachee anti-reset (AppData)
@@ -557,7 +557,7 @@ def verify_license():
 
 def activate_trial(email=""):
     """
-    Active un essai gratuit de 7 jours.
+    Active un essai gratuit de 15 jours.
     Entierement offline : signe localement avec la cle embarquee.
     Non reinitalisable : une empreinte cachee empeche un second essai.
     Retourne (success: bool, message: str)
@@ -606,7 +606,7 @@ def activate_trial(email=""):
     # Sauvegarder l'empreinte anti-reset (irreversible)
     _save_trial_fingerprint(machine_id)
 
-    return True, "Essai de 7 jours active !"
+    return True, "Essai de 15 jours active !"
 
 
 # ============================================================

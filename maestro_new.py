@@ -35,12 +35,14 @@ if BASE_DIR not in sys.path:
 # ------------------------------------------------------------------
 # IMPORTS APPLICATION
 # ------------------------------------------------------------------
-from config import APP_NAME, VERSION
+import socket
+
+from config import APP_NAME, VERSION, MIDI_AVAILABLE
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QEventLoop, QTimer
 from updater import SplashScreen, UpdateChecker
 from main_window import MainWindow
-from license_manager import verify_license, check_exe_integrity
+from license_manager import verify_license, check_exe_integrity, LicenseState
 
 # ------------------------------------------------------------------
 # MAIN
@@ -79,6 +81,70 @@ def main():
         sys.exit(1)
 
     # ------------------------------------------------------------------
+    # DETECTION AKAI APC mini
+    # ------------------------------------------------------------------
+    splash.set_status("Detection AKAI...")
+    app.processEvents()
+
+    akai_found = False
+    if MIDI_AVAILABLE:
+        try:
+            import rtmidi as _rt
+        except ImportError:
+            try:
+                import rtmidi2 as _rt
+            except ImportError:
+                _rt = None
+        if _rt:
+            try:
+                _mi = _rt.MidiIn()
+                for name in _mi.get_ports():
+                    if 'APC' in name.upper() or 'MINI' in name.upper():
+                        akai_found = True
+                        break
+                del _mi
+            except Exception:
+                pass
+
+    if akai_found:
+        splash.set_hw_status("akai", "Connecte", True)
+    else:
+        splash.set_hw_status("akai", "Non detecte", False)
+    app.processEvents()
+
+    # ------------------------------------------------------------------
+    # VERIFICATION NODE ART-NET (ping UDP 2.0.0.15)
+    # ------------------------------------------------------------------
+    splash.set_status("Verification Node Art-Net...")
+    app.processEvents()
+
+    node_ok = False
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.5)
+        # Envoyer un ArtPoll pour detecter le node
+        art_poll = bytearray(b'Art-Net\x00')
+        art_poll.extend(b'\x00\x20')  # OpCode ArtPoll (0x2000 little-endian)
+        art_poll.extend(b'\x00\x0e')  # Protocol version 14
+        art_poll.extend(b'\x00\x00')  # TalkToMe + Priority
+        sock.sendto(art_poll, ("2.0.0.15", 6454))
+        try:
+            data, addr = sock.recvfrom(1024)
+            if data[:8] == b'Art-Net\x00':
+                node_ok = True
+        except socket.timeout:
+            pass
+        sock.close()
+    except Exception:
+        pass
+
+    if node_ok:
+        splash.set_hw_status("node", "2.0.0.15 - OK", True)
+    else:
+        splash.set_hw_status("node", "2.0.0.15 - Hors ligne", False)
+    app.processEvents()
+
+    # ------------------------------------------------------------------
     # VERIFICATION DE LA LICENCE (une seule fois, resultat cache)
     # ------------------------------------------------------------------
     splash.set_status("Verification de la licence...")
@@ -86,6 +152,20 @@ def main():
 
     license_result = verify_license()
     print(f"Licence: {license_result}")
+
+    # Afficher le statut licence sur le splash
+    _license_labels = {
+        LicenseState.LICENSE_ACTIVE: ("Active", True),
+        LicenseState.TRIAL_ACTIVE: (f"Essai - {license_result.days_remaining}j restants", True),
+        LicenseState.NOT_ACTIVATED: ("Non activee", False),
+        LicenseState.TRIAL_EXPIRED: ("Essai expire", False),
+        LicenseState.LICENSE_EXPIRED: ("Expiree", False),
+        LicenseState.INVALID: ("Invalide", False),
+        LicenseState.FRAUD_CLOCK: ("Erreur horloge", False),
+    }
+    lic_text, lic_ok = _license_labels.get(license_result.state, ("Inconnue", False))
+    splash.set_hw_status("license", lic_text, lic_ok)
+    app.processEvents()
 
     # Initialiser la fenetre principale avec le resultat de licence
     splash.set_status("Initialisation...")
@@ -96,9 +176,9 @@ def main():
     update_checker.update_available.connect(window.on_update_available)
     window._update_checker = update_checker
 
-    # Garantir un affichage minimum de 2 secondes
+    # Garantir un affichage minimum de 3 secondes
     elapsed = time.time() - start_time
-    remaining_ms = max(0, int((2.0 - elapsed) * 1000))
+    remaining_ms = max(0, int((5.0 - elapsed) * 1000))
     if remaining_ms > 0:
         splash.set_status("Pret !")
         app.processEvents()

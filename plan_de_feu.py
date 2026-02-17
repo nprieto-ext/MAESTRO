@@ -76,15 +76,94 @@ class ColorPickerWidget(QWidget):
         self.update()
 
 
+# Couleurs predefinies = meme ordre que les pads AKAI (sans noir)
+PRESET_COLORS = [
+    ("Blanc", QColor(255, 255, 255)),
+    ("Rouge", QColor(255, 0, 0)),
+    ("Orange", QColor(255, 136, 0)),
+    ("Jaune", QColor(255, 221, 0)),
+    ("Vert", QColor(0, 255, 0)),
+    ("Cyan", QColor(0, 221, 221)),
+    ("Bleu", QColor(0, 0, 255)),
+    ("Magenta", QColor(255, 0, 255)),
+]
+
+
+class ColorPickerBlock(QFrame):
+    """Bloc color picker compact entre Plan de Feu et Video"""
+
+    def __init__(self, plan_de_feu, parent=None):
+        super().__init__(parent)
+        self.plan_de_feu = plan_de_feu
+
+        self.setStyleSheet("ColorPickerBlock { border: none; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(4)
+
+        title = QLabel("Color Picker")
+        title.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        title.setStyleSheet("color: #ccc;")
+        layout.addWidget(title)
+
+        self.picker = ColorPickerWidget(0, 100)
+        self.picker.setFixedHeight(100)
+        self.picker.setMinimumWidth(100)
+        self.picker.colorSelected.connect(self._on_color_picked)
+        layout.addWidget(self.picker)
+
+        self.msg_label = QLabel()
+        self.msg_label.setFont(QFont("Segoe UI", 9))
+        self.msg_label.setStyleSheet("color: #f44336;")
+        self.msg_label.setAlignment(Qt.AlignCenter)
+        self.msg_label.hide()
+        layout.addWidget(self.msg_label)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width() - 20
+        if w > 0 and w != self.picker.width():
+            self.picker.setFixedSize(w, 100)
+            self.picker._generate_gradient()
+            self.picker.update()
+
+    def _on_color_picked(self, color):
+        pdf = self.plan_de_feu
+        if not pdf.selected_lamps:
+            self.msg_label.setText("Merci de selectionner vos projecteurs")
+            self.msg_label.show()
+            QTimer.singleShot(2000, self.msg_label.hide)
+            return
+
+        targets = []
+        for g, i in pdf.selected_lamps:
+            projs = [p for p in pdf.projectors if p.group == g]
+            if i < len(projs):
+                targets.append((projs[i], g, i))
+
+        for proj, g, i in targets:
+            proj.base_color = color
+            proj.level = 100
+            proj.color = QColor(color.red(), color.green(), color.blue())
+
+        if pdf.main_window and hasattr(pdf.main_window, 'dmx') and pdf.main_window.dmx:
+            pdf.main_window.dmx.update_from_projectors(pdf.projectors)
+
+        pdf.refresh()
+
+
 class PlanDeFeu(QFrame):
     """Visualisation du plan de feu avec les projecteurs"""
 
     def __init__(self, projectors, main_window=None):
         super().__init__()
+        self.setFocusPolicy(Qt.ClickFocus)
         self.projectors = projectors
         self.main_window = main_window
         self.lamps = []
         self.selected_lamps = set()  # set of (group, idx)
+        self._htp_overrides = None  # dict {id(proj): (level, QColor)} pour affichage HTP
         self._rubber_band = None
         self._rubber_band_origin = None
         self._rubber_band_active = False
@@ -236,7 +315,7 @@ class PlanDeFeu(QFrame):
         return super().eventFilter(obj, event)
 
     def mousePressEvent(self, event):
-        """Debut du rectangle de selection (clic gauche sur fond)"""
+        """Debut du rectangle de selection (clic gauche sur fond) / menu contextuel (clic droit)"""
         if event.button() == Qt.LeftButton:
             self._rubber_band_origin = event.pos()
             self._rubber_band_active = False
@@ -245,6 +324,9 @@ class PlanDeFeu(QFrame):
             if not (event.modifiers() & Qt.ControlModifier):
                 self.selected_lamps.clear()
                 self.refresh()
+        elif event.button() == Qt.RightButton:
+            self._show_background_context_menu(event.globalPos())
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -280,6 +362,177 @@ class PlanDeFeu(QFrame):
             self._rubber_band_active = False
         super().mouseReleaseEvent(event)
 
+    # ── Raccourcis clavier ──────────────────────────────────────────
+
+    def keyPressEvent(self, event):
+        """Raccourcis clavier du plan de feu"""
+        import time as _time
+        now = _time.time()
+        if event.key() == Qt.Key_Escape:
+            # Triple Echap = Clear
+            if not hasattr(self, '_esc_times'):
+                self._esc_times = []
+            self._esc_times.append(now)
+            # Garder seulement les appuis des 1.5 dernières secondes
+            self._esc_times = [t for t in self._esc_times if now - t < 1.5]
+            if len(self._esc_times) >= 3:
+                self._esc_times.clear()
+                self._clear_all_projectors()
+            else:
+                self._deselect_all()
+        elif event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            self._select_all()
+        elif event.key() == Qt.Key_1:
+            self._select_group("pairs_lat_contre")
+        elif event.key() == Qt.Key_2:
+            self._select_group("impairs_lat_contre")
+        elif event.key() == Qt.Key_3:
+            self._select_group("all_lat_contre")
+        elif event.key() == Qt.Key_F:
+            self._select_group("face")
+        elif event.key() == Qt.Key_4:
+            self._select_group("douche1")
+        elif event.key() == Qt.Key_5:
+            self._select_group("douche2")
+        elif event.key() == Qt.Key_6:
+            self._select_group("douche3")
+        else:
+            super().keyPressEvent(event)
+
+    def _show_background_context_menu(self, global_pos):
+        """Menu contextuel clic droit dans le vide"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #1e1e1e;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
+                padding: 6px;
+                color: white;
+                font-size: 11px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 3px;
+            }
+            QMenu::item:selected {
+                background: #333;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #3a3a3a;
+                margin: 4px 8px;
+            }
+        """)
+
+        act_deselect = menu.addAction("Deselectionner tout")
+        act_deselect.setShortcut("Escape")
+        act_deselect.triggered.connect(self._deselect_all)
+
+        act_select = menu.addAction("Selectionner tout")
+        act_select.setShortcut("Ctrl+A")
+        act_select.triggered.connect(self._select_all)
+
+        menu.addSeparator()
+
+        act_clear = menu.addAction("Clear (tout a 0)")
+        act_clear.setShortcut("Esc, Esc, Esc")
+        act_clear.triggered.connect(self._clear_all_projectors)
+
+        menu.addSeparator()
+
+        act_p = menu.addAction("Contre + Lat pairs")
+        act_p.setShortcut("1")
+        act_p.triggered.connect(lambda: self._select_group("pairs_lat_contre"))
+
+        act_i = menu.addAction("Contre + Lat impairs")
+        act_i.setShortcut("2")
+        act_i.triggered.connect(lambda: self._select_group("impairs_lat_contre"))
+
+        act_all_cl = menu.addAction("Tous Contre + Lat")
+        act_all_cl.setShortcut("3")
+        act_all_cl.triggered.connect(lambda: self._select_group("all_lat_contre"))
+
+        menu.addSeparator()
+
+        act_f = menu.addAction("Faces")
+        act_f.setShortcut("F")
+        act_f.triggered.connect(lambda: self._select_group("face"))
+
+        act_d1 = menu.addAction("Douche 1")
+        act_d1.setShortcut("4")
+        act_d1.triggered.connect(lambda: self._select_group("douche1"))
+
+        act_d2 = menu.addAction("Douche 2")
+        act_d2.setShortcut("5")
+        act_d2.triggered.connect(lambda: self._select_group("douche2"))
+
+        act_d3 = menu.addAction("Douche 3")
+        act_d3.setShortcut("6")
+        act_d3.triggered.connect(lambda: self._select_group("douche3"))
+
+        menu.exec(global_pos)
+
+    def _deselect_all(self):
+        """Deselectionne tous les projecteurs"""
+        self.selected_lamps.clear()
+        self.refresh()
+
+    def _select_all(self):
+        """Selectionne tous les projecteurs"""
+        self.selected_lamps.clear()
+        for group, idx, lamp in self.lamps:
+            self.selected_lamps.add((group, idx))
+        self.refresh()
+
+    def _clear_all_projectors(self):
+        """Passe tous les projecteurs a 0 et enleve les couleurs"""
+        for proj in self.projectors:
+            proj.level = 0
+            proj.base_color = QColor(0, 0, 0)
+            proj.color = QColor(0, 0, 0)
+        self.selected_lamps.clear()
+        self.refresh()
+
+    def _select_group(self, selection):
+        """Selectionne un groupe de projecteurs par nom.
+        Contre(6): 1-2-1-1-2-1 → pairs=indices 1,4 / impairs=indices 0,2,3,5
+        Lat(2): pairs = les deux
+        """
+        self.selected_lamps.clear()
+
+        if selection == "pairs_lat_contre":
+            # Contre pairs (symetrie: indices 1,4) + Lat (les 2)
+            for group, idx, lamp in self.lamps:
+                if group == "contre" and idx in (1, 4):
+                    self.selected_lamps.add((group, idx))
+                elif group == "lat":
+                    self.selected_lamps.add((group, idx))
+
+        elif selection == "impairs_lat_contre":
+            # Contre impairs (symetrie: indices 0,2,3,5)
+            for group, idx, lamp in self.lamps:
+                if group == "contre" and idx in (0, 2, 3, 5):
+                    self.selected_lamps.add((group, idx))
+
+        elif selection == "all_lat_contre":
+            # Tous les contres + tous les lat
+            for group, idx, lamp in self.lamps:
+                if group in ("contre", "lat"):
+                    self.selected_lamps.add((group, idx))
+
+        elif selection == "face":
+            for group, idx, lamp in self.lamps:
+                if group == "face":
+                    self.selected_lamps.add((group, idx))
+
+        elif selection in ("douche1", "douche2", "douche3"):
+            for group, idx, lamp in self.lamps:
+                if group == selection:
+                    self.selected_lamps.add((group, idx))
+
+        self.refresh()
+
     # ── Projecteurs cibles ───────────────────────────────────────────
 
     def _get_target_projectors(self, group, idx):
@@ -298,10 +551,31 @@ class PlanDeFeu(QFrame):
     # ── DMX toggle ───────────────────────────────────────────────────
 
     def _toggle_dmx_output(self):
+        # Bloquer si licence non autorisee
+        if self.main_window and hasattr(self.main_window, '_license'):
+            if not self.main_window._license.dmx_allowed:
+                self.dmx_toggle_btn.setChecked(False)
+                self.dmx_toggle_btn.setText("OFF")
+                from PySide6.QtWidgets import QMessageBox
+                state = self.main_window._license.state
+                from license_manager import LicenseState
+                if state == LicenseState.TRIAL_EXPIRED:
+                    msg = "Votre periode d'essai est terminee.\nActivez une licence pour utiliser la sortie Art-Net."
+                elif state == LicenseState.LICENSE_EXPIRED:
+                    msg = "Votre licence a expire.\nRenouvelez votre licence pour utiliser la sortie Art-Net."
+                else:
+                    msg = "Logiciel non active.\nActivez une licence pour utiliser la sortie Art-Net."
+                QMessageBox.warning(self.main_window, "Sortie Art-Net", msg)
+                return
         if self.dmx_toggle_btn.isChecked():
             self.dmx_toggle_btn.setText("ON")
         else:
             self.dmx_toggle_btn.setText("OFF")
+
+    def set_dmx_blocked(self):
+        """Force le bouton DMX sur OFF (licence non autorisee)"""
+        self.dmx_toggle_btn.setChecked(False)
+        self.dmx_toggle_btn.setText("OFF")
 
     def is_dmx_enabled(self):
         return self.dmx_toggle_btn.isChecked()
@@ -357,32 +631,38 @@ class PlanDeFeu(QFrame):
 
         menu.addSeparator()
 
-        # === COLOR PICKER HSV ===
-        picker_container = QWidget()
-        picker_layout = QVBoxLayout(picker_container)
-        picker_layout.setContentsMargins(4, 2, 4, 2)
-        picker_layout.setSpacing(4)
+        # === 8 PASTILLES COULEUR (1 ligne, ordre AKAI) ===
+        colors_container = QWidget()
+        colors_layout = QHBoxLayout(colors_container)
+        colors_layout.setContentsMargins(8, 4, 8, 4)
+        colors_layout.setSpacing(6)
 
-        # Apercu couleur actuelle
-        self._color_preview = QLabel()
-        self._color_preview.setFixedHeight(18)
-        current_color = targets[0][0].base_color
-        self._color_preview.setStyleSheet(
-            f"background: {current_color.name()}; border-radius: 4px; "
-            f"border: 1px solid #555;"
-        )
-        picker_layout.addWidget(self._color_preview)
+        for ci, (label, color) in enumerate(PRESET_COLORS):
+            btn = QPushButton()
+            btn.setFixedSize(28, 28)
+            border_color = "#555" if color.lightness() < 50 else color.darker(130).name()
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {color.name()};
+                    border: 2px solid {border_color};
+                    border-radius: 14px;
+                }}
+                QPushButton:hover {{
+                    border: 2px solid #00d4ff;
+                }}
+            """)
+            btn.setToolTip(label)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(
+                lambda checked, c=color, t=targets, m=menu: (
+                    self._apply_color_to_targets(t, c), m.close()
+                )
+            )
+            colors_layout.addWidget(btn)
 
-        # Gradient HSV
-        picker = ColorPickerWidget(230, 200)
-        picker.colorSelected.connect(
-            lambda color, t=targets: self._apply_color_to_targets(t, color)
-        )
-        picker_layout.addWidget(picker)
-
-        picker_action = QWidgetAction(menu)
-        picker_action.setDefaultWidget(picker_container)
-        menu.addAction(picker_action)
+        colors_action = QWidgetAction(menu)
+        colors_action.setDefaultWidget(colors_container)
+        menu.addAction(colors_action)
 
         menu.addSeparator()
 
@@ -441,15 +721,15 @@ class PlanDeFeu(QFrame):
         """Applique une couleur a tous les projecteurs cibles (temps reel)"""
         for proj, g, i in targets:
             proj.base_color = color
-            if proj.level > 0:
-                brightness = proj.level / 100.0
-                proj.color = QColor(
-                    int(color.red() * brightness),
-                    int(color.green() * brightness),
-                    int(color.blue() * brightness)
-                )
-            else:
-                proj.color = QColor(0, 0, 0)
+            # Auto-dimmer a 100% si le dimmer est a 0
+            if proj.level == 0:
+                proj.level = 100
+            brightness = proj.level / 100.0
+            proj.color = QColor(
+                int(color.red() * brightness),
+                int(color.green() * brightness),
+                int(color.blue() * brightness)
+            )
 
         # Mettre a jour l'apercu couleur dans le menu
         if hasattr(self, '_color_preview') and self._color_preview:
@@ -511,8 +791,14 @@ class PlanDeFeu(QFrame):
 
     # ── Rafraichissement visuel ──────────────────────────────────────
 
+    def set_htp_overrides(self, overrides):
+        """Met a jour les overrides HTP pour l'affichage.
+        overrides: dict {id(proj): (level, QColor)} ou None"""
+        self._htp_overrides = overrides
+
     def refresh(self):
-        """Rafraichit les lampes avec bordure de selection cyan"""
+        """Rafraichit les lampes avec bordure de selection cyan.
+        Utilise automatiquement les overrides HTP si disponibles."""
         for group, idx, lamp in self.lamps:
             projs = [p for p in self.projectors if p.group == group]
             if idx < len(projs):
@@ -520,13 +806,22 @@ class PlanDeFeu(QFrame):
                 key = (group, idx)
                 is_selected = key in self.selected_lamps
 
-                if p.level > 0 and not p.muted:
+                # Utiliser les overrides HTP si disponibles
+                if self._htp_overrides and id(p) in self._htp_overrides:
+                    level, color = self._htp_overrides[id(p)][:2]
+                    muted = p.muted
+                else:
+                    level = p.level
+                    color = p.color
+                    muted = p.muted
+
+                if level > 0 and not muted:
                     if is_selected:
                         border = "3px solid #00d4ff"
                     else:
-                        border = f"2px solid {p.color.lighter(150).name()}"
+                        border = f"2px solid {color.lighter(150).name()}"
                     lamp.setStyleSheet(
-                        f"background:{p.color.name()}; border-radius:12px; "
+                        f"background:{color.name()}; border-radius:12px; "
                         f"border: {border};"
                     )
                 else:

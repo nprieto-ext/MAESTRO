@@ -1,6 +1,6 @@
 [Setup]
 AppName=Maestro
-AppVersion=2.5.1
+AppVersion=2.5.2
 AppPublisher=Maestro
 AppPublisherURL=https://maestro.fr
 DefaultDirName={autopf}\Maestro

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton, QProgressBar, QDialog, QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QScreen
+from PySide6.QtGui import QFont, QScreen, QPixmap
 
 from config import VERSION
 
@@ -50,7 +50,7 @@ class SplashScreen(QWidget):
 
     def __init__(self):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setFixedSize(400, 250)
+        self.setFixedSize(420, 380)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         self.setStyleSheet("""
@@ -61,25 +61,47 @@ class SplashScreen(QWidget):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(30, 20, 30, 16)
+        layout.setSpacing(8)
 
-        layout.addStretch()
+        # --- Logo ---
+        self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        if os.path.exists(logo_path):
+            px = QPixmap(logo_path)
+            px = px.scaledToHeight(80, Qt.SmoothTransformation)
+            self.logo_label.setPixmap(px)
+        layout.addWidget(self.logo_label)
 
+        # --- Titre + version ---
         title = QLabel("Maestro.py")
-        title.setFont(QFont("Segoe UI", 28, QFont.Bold))
+        title.setFont(QFont("Segoe UI", 22, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
         ver = QLabel(f"v{VERSION}")
-        ver.setFont(QFont("Segoe UI", 12))
+        ver.setFont(QFont("Segoe UI", 10))
         ver.setStyleSheet("color: #888888;")
         ver.setAlignment(Qt.AlignCenter)
         layout.addWidget(ver)
 
-        layout.addStretch()
+        layout.addSpacing(10)
 
+        # --- Status hardware (AKAI, Node, Licence) ---
+        self.status_akai = self._create_status_row("AKAI APC mini", "Recherche...")
+        layout.addLayout(self.status_akai["layout"])
+
+        self.status_node = self._create_status_row("Node Art-Net", "Recherche...")
+        layout.addLayout(self.status_node["layout"])
+
+        self.status_license = self._create_status_row("Licence", "Verification...")
+        layout.addLayout(self.status_license["layout"])
+
+        layout.addSpacing(8)
+
+        # --- Barre de progression ---
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # Indeterminee
         self.progress.setFixedHeight(4)
@@ -104,6 +126,45 @@ class SplashScreen(QWidget):
         layout.addWidget(self.status_label)
 
         self._center_on_screen()
+
+    def _create_status_row(self, label_text, initial_value):
+        """Cree une ligne de statut avec indicateur et texte"""
+        row = QHBoxLayout()
+        row.setContentsMargins(10, 2, 10, 2)
+        row.setSpacing(8)
+
+        indicator = QLabel("\u25CF")  # Cercle plein
+        indicator.setFont(QFont("Segoe UI", 10))
+        indicator.setStyleSheet("color: #666666;")
+        indicator.setFixedWidth(16)
+        row.addWidget(indicator)
+
+        label = QLabel(label_text)
+        label.setFont(QFont("Segoe UI", 10))
+        label.setStyleSheet("color: #cccccc;")
+        row.addWidget(label)
+
+        row.addStretch()
+
+        value = QLabel(initial_value)
+        value.setFont(QFont("Segoe UI", 10))
+        value.setStyleSheet("color: #888888;")
+        row.addWidget(value)
+
+        return {"layout": row, "indicator": indicator, "value": value}
+
+    def set_hw_status(self, target, text, ok):
+        """Met a jour un statut hardware (akai, node, license)"""
+        row = getattr(self, f"status_{target}", None)
+        if not row:
+            return
+        if ok:
+            row["indicator"].setStyleSheet("color: #4CAF50;")  # Vert
+            row["value"].setStyleSheet("color: #4CAF50;")
+        else:
+            row["indicator"].setStyleSheet("color: #f44336;")  # Rouge
+            row["value"].setStyleSheet("color: #f44336;")
+        row["value"].setText(text)
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()

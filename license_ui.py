@@ -115,11 +115,10 @@ class ActivationDialog(QDialog):
 
     activation_success = Signal()  # Emis apres activation reussie
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, license_result=None):
         super().__init__(parent)
         self.setWindowTitle("Activation - Maestro.py")
-        self.setFixedSize(420, 280)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setFixedSize(420, 340)
 
         self.setStyleSheet("""
             QDialog { background: #1a1a1a; }
@@ -160,6 +159,15 @@ class ActivationDialog(QDialog):
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
+        # Afficher les jours restants si periode d'essai active
+        if license_result and license_result.state == LicenseState.TRIAL_ACTIVE:
+            days = license_result.days_remaining
+            days_label = QLabel(f"Periode d'essai : {days} jour{'s' if days > 1 else ''} restant{'s' if days > 1 else ''}")
+            days_label.setFont(QFont("Segoe UI", 11))
+            days_label.setStyleSheet("color: #00d4ff; font-weight: bold;")
+            days_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(days_label)
+
         # Onglets
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
@@ -170,11 +178,7 @@ class ActivationDialog(QDialog):
         trial_layout.setContentsMargins(15, 15, 15, 10)
         trial_layout.setSpacing(10)
 
-        trial_layout.addWidget(QLabel("Essai gratuit de 7 jours (toutes fonctionnalites)"))
-
-        self.email_edit = QLineEdit()
-        self.email_edit.setPlaceholderText("Votre adresse email")
-        trial_layout.addWidget(self.email_edit)
+        trial_layout.addWidget(QLabel("Essai gratuit de 15 jours (toutes fonctionnalites)"))
 
         self.trial_btn = QPushButton("Demarrer l'essai gratuit")
         self.trial_btn.setFixedHeight(36)
@@ -220,6 +224,14 @@ class ActivationDialog(QDialog):
         """)
         self.license_btn.clicked.connect(self._activate_license)
         license_layout.addWidget(self.license_btn)
+
+        # Lien vers le site d'achat
+        buy_link = QLabel('<a href="https://mystrow.fr/" style="color: #00d4ff;">Acheter une licence sur mystrow.fr</a>')
+        buy_link.setOpenExternalLinks(True)
+        buy_link.setAlignment(Qt.AlignCenter)
+        buy_link.setFont(QFont("Segoe UI", 10))
+        license_layout.addWidget(buy_link)
+
         license_layout.addStretch()
 
         self.tabs.addTab(license_page, "Cle de licence")
@@ -242,6 +254,20 @@ class ActivationDialog(QDialog):
         self.status_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.status_label)
 
+        # Bouton Fermer
+        close_btn = QPushButton("Fermer")
+        close_btn.setFixedHeight(30)
+        close_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        close_btn.setStyleSheet("""
+            QPushButton {
+                color: #aaa; background: #333; border: 1px solid #555;
+                border-radius: 4px; padding: 4px 20px; font-size: 10px;
+            }
+            QPushButton:hover { background: #444; color: white; }
+        """)
+        close_btn.clicked.connect(self.reject)
+        layout.addWidget(close_btn)
+
     def _set_busy(self, busy):
         """Active/desactive le mode chargement"""
         self.trial_btn.setEnabled(not busy)
@@ -249,7 +275,7 @@ class ActivationDialog(QDialog):
         self.progress.setVisible(busy)
         if busy:
             self.status_label.setStyleSheet("color: #aaa; font-size: 11px;")
-            self.status_label.setText("Connexion au serveur...")
+            self.status_label.setText("Activation en cours...")
         QApplication.processEvents()
 
     def _show_result(self, success, message):
@@ -262,11 +288,9 @@ class ActivationDialog(QDialog):
 
     def _activate_trial(self):
         """Lance l'activation d'essai"""
-        email = self.email_edit.text().strip()
         self._set_busy(True)
 
-        # Appel bloquant (< 15s timeout)
-        success, message = activate_trial(email)
+        success, message = activate_trial()
 
         self._set_busy(False)
         self._show_result(success, message)
