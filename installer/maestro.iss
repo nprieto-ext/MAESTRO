@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=2.5.4
+AppVersion=2.5.5
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow

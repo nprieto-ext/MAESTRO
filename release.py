@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import re
+import shutil
 from pathlib import Path
 
 # ------------------------------------------------------------------
@@ -10,6 +11,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "core.py"
 ISS_FILE = BASE_DIR / "installer" / "maestro.iss"
+DESKTOP = Path.home() / "Desktop"
 
 # ------------------------------------------------------------------
 # UTIL
@@ -53,6 +55,36 @@ def update_version(new_version):
     ISS_FILE.write_text(iss_content, encoding="utf-8")
 
 # ------------------------------------------------------------------
+# BUILD LOCAL EXE
+# ------------------------------------------------------------------
+
+def build_local_exe(version):
+    print("\n========== BUILD EXE LOCAL ==========")
+    dist_exe = BASE_DIR / "dist" / "MyStrow.exe"
+
+    # Nettoyage des anciens builds
+    for d in ["dist", "build"]:
+        p = BASE_DIR / d
+        if p.exists():
+            shutil.rmtree(p)
+
+    run(
+        "pyinstaller --onefile --windowed "
+        "--icon=mystrow.ico "
+        "--name=MyStrow "
+        "main.py"
+    )
+
+    if not dist_exe.exists():
+        print("ERREUR: EXE non trouve apres build.")
+        sys.exit(1)
+
+    dest = DESKTOP / f"MyStrow_{version}.exe"
+    shutil.copy2(dist_exe, dest)
+    print(f"\nEXE copie sur le bureau : {dest}")
+
+
+# ------------------------------------------------------------------
 # RELEASE
 # ------------------------------------------------------------------
 
@@ -67,6 +99,9 @@ if not new_version:
 
 print(f"\nMise a jour vers {new_version}...")
 update_version(new_version)
+
+# Build EXE local et copie sur le bureau
+build_local_exe(new_version)
 
 # Git commit + tag + push (le CI build Windows + Mac automatiquement)
 run("git add -A")
