@@ -68,11 +68,21 @@ def build_local_exe(version):
         if p.exists():
             shutil.rmtree(p)
 
+    # Tous les modules locaux du projet doivent etre declares explicitement
+    local_modules = [
+        "core", "main_window", "updater", "license_manager", "license_ui",
+        "projector", "midi_handler", "artnet_dmx", "audio_ai",
+        "ui_components", "plan_de_feu", "recording_waveform",
+        "sequencer", "light_timeline", "timeline_editor",
+    ]
+    hidden = " ".join(f"--hidden-import={m}" for m in local_modules)
+
     cmd = (
-        "pyinstaller --onefile --windowed "
-        "--icon=mystrow.ico "
-        "--name=MyStrow "
-        "main.py"
+        f"pyinstaller --onefile --windowed "
+        f"--icon=mystrow.ico "
+        f"--name=MyStrow "
+        f"{hidden} "
+        f"main.py"
     )
     print(f"\n>>> {cmd}")
     result = subprocess.run(cmd, shell=True, cwd=BASE_DIR)
