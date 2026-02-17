@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QFrame, QSplitter, QScrollArea, QSlider,
     QToolButton, QMenu, QMenuBar, QFileDialog, QMessageBox, QDialog,
     QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction,
-    QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget
+    QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
+    QHeaderView
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QPoint
 from PySide6.QtGui import (
@@ -24,12 +25,12 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
-from config import (
+from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
     rgb_to_akai_velocity, fmt_time, create_icon, media_icon
 )
 from projector import Projector
-from artnet_dmx import ArtNetDMX
+from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode, profile_name, profile_display_text
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
@@ -204,6 +205,7 @@ class MainWindow(QMainWindow):
 
         # DMX Art-Net Handler
         self.dmx = ArtNetDMX()
+        self._saved_custom_profiles = {}
         self.auto_patch_at_startup()
 
         self.dmx_send_timer = QTimer()
@@ -396,6 +398,9 @@ class MainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu("📋 Recents")
         self.update_recent_menu()
         file_menu.addSeparator()
+        file_menu.addAction("📥 Importer une configuration...", self.import_akai_config)
+        file_menu.addAction("📤 Exporter une configuration...", self.export_akai_config)
+        file_menu.addSeparator()
         file_menu.addAction("❌ Quitter", self.close)
 
         edit_menu = bar.addMenu("✏️ Edition")
@@ -407,21 +412,18 @@ class MainWindow(QMainWindow):
         params_menu = bar.addMenu("⚙️ Paramètres")
         params_menu.addAction("🔌 Patch DMX", self.show_dmx_patch_config)
         params_menu.addAction("💡 IA Lumière", self.show_ia_lumiere_config)
+        params_menu.addAction("⌨️ Raccourcis", self.show_shortcuts_dialog)
 
         conn_menu = bar.addMenu("🔗 Connexion")
+        conn_menu.setStyleSheet("QMenu { min-width: 280px; }")
 
         akai_menu = conn_menu.addMenu("🎹 Entrée Akai")
         akai_menu.addAction("🔍 Tester la connexion", self.test_akai_connection)
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
-        akai_menu.addSeparator()
-        akai_menu.addAction("📥 Importer une configuration...", self.import_akai_config)
-        akai_menu.addAction("📤 Exporter une configuration...", self.export_akai_config)
 
         self.node_menu = conn_menu.addMenu("🌐 Sortie DMX")
         self.node_menu.addAction("🔍 Tester la connexion", self.test_node_connection)
         self.node_menu.addAction("⚙️ Parametrer NODE", self.configure_node)
-        if not self._license.dmx_allowed:
-            self.node_menu.setEnabled(False)
 
         audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
         audio_menu.addAction("🔉 Envoi un son de test", self.play_test_sound)
@@ -1389,25 +1391,29 @@ class MainWindow(QMainWindow):
 
     def toggle_effect(self, effect_idx):
         """Active/desactive un effet"""
-        for i, btn in enumerate(self.effect_buttons):
-            if i == effect_idx:
-                btn.active = not btn.active
-                if btn.active:
-                    self.active_effect = effect_idx
-                    self.start_effect(effect_idx)
-                    for j, other_btn in enumerate(self.effect_buttons):
-                        if j != i and other_btn.active:
-                            other_btn.active = False
-                            other_btn.update_style()
-                            if MIDI_AVAILABLE and self.midi_handler.midi_out:
-                                self.midi_handler.set_pad_led(j, 8, 0)
-                else:
-                    self.active_effect = None
-                    self.stop_effect()
-            btn.update_style()
+        btn = self.effect_buttons[effect_idx]
+        btn.active = not btn.active
+        if btn.active:
+            effect_name = btn.current_effect
+            if not effect_name:
+                btn.active = False
+                btn.update_style()
+                return
+            self.active_effect = effect_name
+            self.start_effect(effect_name)
+            for j, other_btn in enumerate(self.effect_buttons):
+                if j != effect_idx and other_btn.active:
+                    other_btn.active = False
+                    other_btn.update_style()
+                    if MIDI_AVAILABLE and self.midi_handler.midi_out:
+                        self.midi_handler.set_pad_led(j, 8, 0)
+        else:
+            self.active_effect = None
+            self.stop_effect()
+        btn.update_style()
 
-    def start_effect(self, effect_idx):
-        """Demarre l'effet selectionne"""
+    def start_effect(self, effect_name):
+        """Demarre l'effet selectionne par nom"""
         self.effect_state = 0
         self.effect_saved_colors = {}
 
@@ -1418,14 +1424,16 @@ class MainWindow(QMainWindow):
             self.effect_timer = QTimer()
             self.effect_timer.timeout.connect(self.update_effect)
 
-        intervals = {0: 100, 1: 100, 2: 1000, 3: 200, 4: 50, 5: 100, 6: 150, 7: 30}
-        self.effect_timer.start(intervals.get(effect_idx, 100))
+        intervals = {
+            "Strobe": 100, "Flash": 100, "Pulse": 30,
+            "Wave": 50, "Random": 200, "Rainbow": 50,
+            "Sparkle": 80, "Fire": 60,
+        }
+        self.effect_timer.start(intervals.get(effect_name, 100))
 
-        if effect_idx == 4:
+        if effect_name in ("Rainbow", "Wave"):
             self.effect_hue = 0
-        elif effect_idx == 5:
-            self.effect_hue = 0
-        elif effect_idx == 7:
+        elif effect_name == "Pulse":
             self.effect_brightness = 0
             self.effect_direction = 1
 
@@ -1453,22 +1461,21 @@ class MainWindow(QMainWindow):
         else:
             speed_factor = max(0.05, 1.0 - (self.effect_speed / 100.0 * 0.95))
 
-        if self.active_effect == 0:
-            interval = int(100 * speed_factor)
-            self.effect_timer.setInterval(interval)
+        eff = self.active_effect
+
+        if eff == "Strobe":
+            # Alternance blanc/noir sur tous les projos
+            self.effect_timer.setInterval(int(100 * speed_factor))
             for p in self.projectors:
                 if p.group == "fumee":
                     continue
                 if p.level > 0:
-                    if self.effect_state % 2 == 0:
-                        p.color = QColor(255, 255, 255)
-                    else:
-                        p.color = QColor("black")
+                    p.color = QColor(255, 255, 255) if self.effect_state % 2 == 0 else QColor("black")
             self.effect_state += 1
 
-        elif self.active_effect == 1:
-            interval = int(100 * speed_factor)
-            self.effect_timer.setInterval(interval)
+        elif eff == "Flash":
+            # Alternance couleur/noir
+            self.effect_timer.setInterval(int(100 * speed_factor))
             for p in self.projectors:
                 if p.group == "fumee":
                     continue
@@ -1484,22 +1491,8 @@ class MainWindow(QMainWindow):
                         p.color = QColor("black")
             self.effect_state += 1
 
-        elif self.active_effect == 4:
-            for i, p in enumerate(self.projectors):
-                if p.group == "fumee":
-                    continue
-                if p.level > 0:
-                    hue = (self.effect_hue + i * 30) % 360
-                    color = QColor.fromHsv(hue, 255, 255)
-                    brightness = p.level / 100.0
-                    p.color = QColor(
-                        int(color.red() * brightness),
-                        int(color.green() * brightness),
-                        int(color.blue() * brightness)
-                    )
-            self.effect_hue += int(5 * (1 + self.effect_speed / 30))
-
-        elif self.active_effect == 7:
+        elif eff == "Pulse":
+            # Respiration douce (fade in/out)
             for p in self.projectors:
                 if p.group == "fumee":
                     continue
@@ -1518,6 +1511,84 @@ class MainWindow(QMainWindow):
             elif self.effect_brightness <= 0:
                 self.effect_brightness = 0
                 self.effect_direction = 1
+
+        elif eff == "Wave":
+            # Vague de couleur qui se deplace d'un projo a l'autre
+            self.effect_timer.setInterval(int(50 * speed_factor))
+            for i, p in enumerate(self.projectors):
+                if p.group == "fumee":
+                    continue
+                if p.level > 0:
+                    phase = (self.effect_state + i * 15) % 100
+                    brightness = (p.level / 100.0) * (abs(50 - phase) / 50.0)
+                    p.color = QColor(
+                        int(p.base_color.red() * brightness),
+                        int(p.base_color.green() * brightness),
+                        int(p.base_color.blue() * brightness)
+                    )
+            self.effect_state += 3 + int(self.effect_speed / 25)
+
+        elif eff == "Random":
+            # Couleurs aleatoires sur chaque projo
+            self.effect_timer.setInterval(int(200 * speed_factor))
+            for p in self.projectors:
+                if p.group == "fumee":
+                    continue
+                if p.level > 0:
+                    p.color = QColor.fromHsv(random.randint(0, 359), 255, int(p.level * 2.55))
+            self.effect_state += 1
+
+        elif eff == "Rainbow":
+            # Rotation arc-en-ciel sur tous les projos
+            for i, p in enumerate(self.projectors):
+                if p.group == "fumee":
+                    continue
+                if p.level > 0:
+                    hue = (self.effect_hue + i * 30) % 360
+                    color = QColor.fromHsv(hue, 255, 255)
+                    brightness = p.level / 100.0
+                    p.color = QColor(
+                        int(color.red() * brightness),
+                        int(color.green() * brightness),
+                        int(color.blue() * brightness)
+                    )
+            self.effect_hue += int(5 * (1 + self.effect_speed / 30))
+
+        elif eff == "Sparkle":
+            # Scintillement aleatoire (certains projos flash blanc)
+            self.effect_timer.setInterval(int(80 * speed_factor))
+            for p in self.projectors:
+                if p.group == "fumee":
+                    continue
+                if p.level > 0:
+                    if random.random() < 0.3:
+                        p.color = QColor(255, 255, 255)
+                    else:
+                        brightness = p.level / 100.0
+                        p.color = QColor(
+                            int(p.base_color.red() * brightness),
+                            int(p.base_color.green() * brightness),
+                            int(p.base_color.blue() * brightness)
+                        )
+
+        elif eff == "Fire":
+            # Effet feu (rouge/orange/jaune aleatoire)
+            self.effect_timer.setInterval(int(60 * speed_factor))
+            fire_colors = [
+                QColor(255, 50, 0), QColor(255, 100, 0), QColor(255, 150, 0),
+                QColor(255, 200, 0), QColor(200, 30, 0), QColor(255, 80, 0),
+            ]
+            for p in self.projectors:
+                if p.group == "fumee":
+                    continue
+                if p.level > 0:
+                    base = random.choice(fire_colors)
+                    brightness = p.level / 100.0
+                    p.color = QColor(
+                        int(base.red() * brightness),
+                        int(base.green() * brightness),
+                        int(base.blue() * brightness)
+                    )
 
     def set_effect_speed(self, index, value):
         """Definit la vitesse de l'effet"""
@@ -2706,6 +2777,145 @@ class MainWindow(QMainWindow):
             self.dmx.update_from_projectors(self.projectors)
         self.plan_de_feu.refresh()
 
+    def show_shortcuts_dialog(self):
+        """Affiche le dialog listant tous les raccourcis clavier"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Raccourcis clavier")
+        dlg.setMinimumSize(700, 620)
+        dlg.setStyleSheet("""
+            QDialog { background: #1a1a1a; color: #e0e0e0; }
+            QLabel { color: #e0e0e0; }
+            QScrollArea { border: none; background: #1a1a1a; }
+            QWidget#shortcut_content { background: #1a1a1a; }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Raccourcis clavier")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #ffffff; padding-bottom: 4px;")
+        layout.addWidget(title)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_content.setObjectName("shortcut_content")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(4)
+
+        # Donnees : (groupe, [(touche, description), ...])
+        shortcut_groups = [
+            ("LECTURE", [
+                ("Espace / Entree", "Play / Pause"),
+                ("Page Down", "Media suivant"),
+                ("Page Up", "Media precedent"),
+                ("F1", "Cartouche 1"),
+                ("F2", "Cartouche 2"),
+                ("F3", "Cartouche 3"),
+                ("F4", "Cartouche 4"),
+            ]),
+            ("FICHIERS", [
+                ("Ctrl + N", "Nouveau show"),
+                ("Ctrl + O", "Ouvrir show"),
+                ("Ctrl + S", "Enregistrer show"),
+                ("Ctrl + Shift + S", "Enregistrer sous"),
+            ]),
+            ("COULEURS RAPIDES", [
+                ("W", "Blanc"),
+                ("R", "Rouge"),
+                ("O", "Orange"),
+                ("Y", "Jaune"),
+                ("G", "Vert"),
+                ("C", "Cyan"),
+                ("B", "Bleu"),
+                ("M", "Magenta"),
+                ("P", "Rose"),
+                ("K", "Noir (eteindre)"),
+            ]),
+            ("PLAN DE FEU  -  Selection", [
+                ("Ctrl + A", "Tout selectionner"),
+                ("Escape", "Deselectionner tout"),
+                ("Escape x3", "Eteindre tous les projecteurs"),
+                ("F", "Selectionner les Faces"),
+                ("1", "Contre + Lat pairs"),
+                ("2", "Contre + Lat impairs"),
+                ("3", "Tous Contre + Lat"),
+                ("4", "Douche 1"),
+                ("5", "Douche 2"),
+                ("6", "Douche 3"),
+            ]),
+            ("EDITEUR TIMELINE", [
+                ("Espace", "Play / Pause"),
+                ("Ctrl + Z", "Annuler"),
+                ("Ctrl + Y", "Retablir"),
+                ("Suppr", "Supprimer les clips selectionnes"),
+                ("Ctrl + A", "Selectionner tous les clips"),
+                ("Ctrl + C", "Copier les clips"),
+                ("Ctrl + X", "Couper les clips"),
+                ("Ctrl + V", "Coller les clips"),
+                ("C", "Activer / desactiver mode CUT"),
+                ("Escape", "Quitter mode CUT / deselectionner"),
+            ]),
+        ]
+
+        for group_name, shortcuts in shortcut_groups:
+            # En-tete de groupe
+            group_label = QLabel(f"  {group_name}")
+            group_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            group_label.setStyleSheet("color: #00d4ff; padding: 8px 0 2px 0;")
+            scroll_layout.addWidget(group_label)
+
+            for key, desc in shortcuts:
+                row_frame = QFrame()
+                row_frame.setStyleSheet("""
+                    QFrame {
+                        background: #222222; border-radius: 6px;
+                        padding: 6px 12px; margin: 1px 0;
+                    }
+                    QFrame:hover { background: #2a2a2a; }
+                """)
+                row_layout = QHBoxLayout(row_frame)
+                row_layout.setContentsMargins(8, 4, 8, 4)
+
+                # Touche avec style "keycap"
+                key_label = QLabel(key)
+                key_label.setMinimumWidth(180)
+                key_label.setStyleSheet("""
+                    color: #ffffff; font-weight: bold; font-size: 13px;
+                    font-family: 'Consolas';
+                """)
+                row_layout.addWidget(key_label)
+
+                row_layout.addStretch()
+
+                desc_label = QLabel(desc)
+                desc_label.setMinimumWidth(300)
+                desc_label.setStyleSheet("color: #aaaaaa; font-size: 13px;")
+                row_layout.addWidget(desc_label)
+
+                scroll_layout.addWidget(row_frame)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+
+        close_btn = QPushButton("Fermer")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #333333; color: #aaaaaa;
+                padding: 10px 30px; border-radius: 6px; font-size: 13px;
+                border: 1px solid #4a4a4a;
+            }
+            QPushButton:hover { background: #3a3a3a; color: #ffffff; }
+        """)
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignCenter)
+
+        dlg.exec()
+
     def next_media(self):
         """Passe au media suivant"""
         if self.seq.current_row + 1 < self.seq.table.rowCount():
@@ -2980,29 +3190,26 @@ class MainWindow(QMainWindow):
         if self.load_dmx_patch_config():
             return
 
+        default_profile = DMX_PROFILES["RGBDS"]
         dmx_addr = 1
         for i, proj in enumerate(self.projectors):
             proj_key = f"{proj.group}_{i}"
-            self.dmx.projector_channels[proj_key] = [
-                dmx_addr, dmx_addr + 1, dmx_addr + 2, dmx_addr + 3, dmx_addr + 4
-            ]
-            self.dmx.projector_modes[proj_key] = "5CH"
+            profile = list(default_profile)
+
+            # Fumee -> profil 2CH_FUMEE
+            if proj.group == "fumee":
+                profile = list(DMX_PROFILES["2CH_FUMEE"])
+
+            nb_ch = len(profile)
+            channels = [dmx_addr + c for c in range(nb_ch)]
+            self.dmx.set_projector_patch(proj_key, channels, profile=profile)
             dmx_addr += 10
 
-        # Re-patcher le fumee en mode 2CH
-        for i, proj in enumerate(self.projectors):
-            if proj.group == "fumee":
-                proj_key = f"fumee_{i}"
-                if proj_key in self.dmx.projector_channels:
-                    addr = self.dmx.projector_channels[proj_key][0]
-                    self.dmx.projector_channels[proj_key] = [addr, addr + 1]
-                    self.dmx.projector_modes[proj_key] = "2CH_FUMEE"
-
     def show_dmx_patch_config(self):
-        """Interface de configuration DMX"""
+        """Interface de configuration DMX avec profils flexibles"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Patch DMX")
-        dialog.setMinimumSize(700, 500)
+        dialog.setMinimumSize(750, 520)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; color: #e0e0e0; }
             QLabel { color: #e0e0e0; }
@@ -3011,7 +3218,7 @@ class MainWindow(QMainWindow):
             QComboBox {
                 background: #2a2a2a; color: #ffffff;
                 border: 1px solid #4a4a4a; border-radius: 4px;
-                padding: 6px 12px; min-width: 80px;
+                padding: 6px 12px; min-width: 100px;
                 font-weight: bold; font-size: 13px;
             }
             QComboBox:hover { border: 1px solid #00d4ff; }
@@ -3052,12 +3259,10 @@ class MainWindow(QMainWindow):
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(4)
 
-        self.mode_inputs = {}
+        self._profile_inputs = {}  # i -> {"combo": QComboBox, "label": QLabel, "custom": list|None}
 
-        # Grouper par type pour un affichage plus lisible
         current_group = None
         for i, proj in enumerate(self.projectors):
-            # Separateur de groupe
             if proj.group != current_group:
                 current_group = proj.group
                 group_label = QLabel(f"  {current_group.upper()}")
@@ -3076,7 +3281,6 @@ class MainWindow(QMainWindow):
             proj_layout = QHBoxLayout(proj_frame)
             proj_layout.setContentsMargins(8, 4, 8, 4)
 
-            # Pastille couleur indicatrice
             dot = QLabel("\u25cf")
             dot.setFixedWidth(16)
             dot.setStyleSheet("color: #00d4ff; font-size: 14px;")
@@ -3097,22 +3301,112 @@ class MainWindow(QMainWindow):
             proj_layout.addStretch()
 
             proj_key = f"{proj.group}_{i}"
-            current_mode = self.dmx.projector_modes.get(proj_key, "5CH")
+            current_profile = self.dmx._get_profile(proj_key)
+            current_name = profile_name(current_profile)
 
-            mode_combo = QComboBox()
-            mode_combo.addItem("3CH", "3CH")
-            mode_combo.addItem("4CH", "4CH")
-            mode_combo.addItem("5CH", "5CH")
-            mode_combo.addItem("6CH", "6CH")
+            profile_combo = QComboBox()
+            profile_combo.setMinimumWidth(160)
+            # Profils pre-definis avec nom lisible
+            for pname, pchannels in DMX_PROFILES.items():
+                display = profile_display_text(pchannels)
+                profile_combo.addItem(display, pname)
+            # Profils custom sauvegardes
+            custom_profiles = getattr(self, '_saved_custom_profiles', {})
+            for cname, cchannels in custom_profiles.items():
+                display = f"{cname}  ({profile_display_text(cchannels)})"
+                profile_combo.addItem(display, f"__saved__{cname}")
+            profile_combo.addItem("Custom...", "__custom__")
 
-            index = mode_combo.findData(current_mode)
-            if index >= 0:
-                mode_combo.setCurrentIndex(index)
+            chan_label = QLabel()
+            chan_label.setMinimumWidth(200)
 
-            proj_layout.addWidget(mode_combo)
+            entry = {"combo": profile_combo, "label": chan_label, "custom": None, "custom_name": None}
+            self._profile_inputs[i] = entry
+
+            # Si le profil actuel est custom (pas dans DMX_PROFILES)
+            if current_name is None:
+                entry["custom"] = list(current_profile)
+                # Chercher si c'est un custom sauvegarde
+                custom_saved_name = None
+                for cname, cchannels in custom_profiles.items():
+                    if cchannels == current_profile:
+                        custom_saved_name = cname
+                        break
+                if custom_saved_name:
+                    entry["custom_name"] = custom_saved_name
+                    idx_c = profile_combo.findData(f"__saved__{custom_saved_name}")
+                    if idx_c >= 0:
+                        profile_combo.setCurrentIndex(idx_c)
+                else:
+                    display = profile_display_text(current_profile)
+                    profile_combo.insertItem(profile_combo.count() - 1, display, "__current_custom__")
+                    idx_c = profile_combo.findData("__current_custom__")
+                    profile_combo.setCurrentIndex(idx_c)
+            else:
+                idx_c = profile_combo.findData(current_name)
+                if idx_c >= 0:
+                    profile_combo.setCurrentIndex(idx_c)
+
+            def update_chan_label(lbl, combo, entry_ref):
+                data = combo.currentData()
+                if data == "__custom__":
+                    return
+                elif data == "__current_custom__":
+                    parts = entry_ref["custom"] or []
+                elif isinstance(data, str) and data.startswith("__saved__"):
+                    cname = data[len("__saved__"):]
+                    parts = custom_profiles.get(cname, [])
+                else:
+                    parts = DMX_PROFILES.get(data, [])
+                text = profile_display_text(parts)
+                lbl.setText(text)
+                lbl.setStyleSheet("color: #888; font-size: 11px; font-family: 'Consolas';")
+
+            update_chan_label(chan_label, profile_combo, entry)
+
+            def on_profile_changed(_, combo=profile_combo, lbl=chan_label, e=entry, idx=i):
+                data = combo.currentData()
+                if data == "__custom__":
+                    custom = self._show_custom_profile_dialog(e.get("custom"))
+                    if custom:
+                        # Demander un nom pour le profil custom
+                        cname = self._ask_custom_profile_name()
+                        if cname:
+                            e["custom"] = custom
+                            e["custom_name"] = cname
+                            # Sauvegarder le profil custom
+                            if not hasattr(self, '_saved_custom_profiles'):
+                                self._saved_custom_profiles = {}
+                            self._saved_custom_profiles[cname] = custom
+                            # Ajouter au combo s'il n'existe pas
+                            saved_key = f"__saved__{cname}"
+                            ci = combo.findData(saved_key)
+                            if ci < 0:
+                                display = f"{cname}  ({profile_display_text(custom)})"
+                                combo.insertItem(combo.count() - 1, display, saved_key)
+                                ci = combo.findData(saved_key)
+                            combo.setCurrentIndex(ci)
+                        else:
+                            # Pas de nom -> annuler
+                            prev = profile_name(self.dmx._get_profile(f"{self.projectors[idx].group}_{idx}"))
+                            pi = combo.findData(prev if prev else "__current_custom__")
+                            if pi >= 0:
+                                combo.setCurrentIndex(pi)
+                            return
+                    else:
+                        prev = profile_name(self.dmx._get_profile(f"{self.projectors[idx].group}_{idx}"))
+                        pi = combo.findData(prev if prev else "__current_custom__")
+                        if pi >= 0:
+                            combo.setCurrentIndex(pi)
+                        return
+                update_chan_label(lbl, combo, e)
+
+            profile_combo.currentIndexChanged.connect(on_profile_changed)
+
+            proj_layout.addWidget(profile_combo)
+            proj_layout.addWidget(chan_label)
 
             scroll_layout.addWidget(proj_frame)
-            self.mode_inputs[i] = mode_combo
 
         scroll_layout.addStretch()
         scroll.setWidget(scroll_content)
@@ -3147,43 +3441,193 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_layout)
         dialog.exec()
 
+    def _show_custom_profile_dialog(self, initial=None):
+        """Dialog pour composer un profil DMX custom. Retourne la liste ou None si annule."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Profil DMX Custom")
+        dialog.setFixedSize(400, 420)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; color: #e0e0e0; }
+            QLabel { color: #e0e0e0; }
+            QPushButton {
+                background: #2a2a2a; color: #ffffff; border: 1px solid #4a4a4a;
+                border-radius: 4px; padding: 6px 12px; font-size: 12px;
+            }
+            QPushButton:hover { border: 1px solid #00d4ff; background: #333; }
+            QListWidget {
+                background: #222; color: #fff; border: 1px solid #4a4a4a;
+                border-radius: 4px; font-size: 13px; font-family: 'Consolas';
+            }
+            QListWidget::item:selected { background: #00d4ff; color: #000; }
+            QComboBox {
+                background: #2a2a2a; color: #ffffff;
+                border: 1px solid #4a4a4a; border-radius: 4px;
+                padding: 4px 8px; font-size: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background: #2a2a2a; color: #ffffff;
+                border: 1px solid #4a4a4a; selection-background-color: #00d4ff;
+                selection-color: #000000;
+            }
+        """)
+
+        from PySide6.QtWidgets import QListWidget
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        title = QLabel("Composer le profil")
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Liste des canaux du profil
+        list_widget = QListWidget()
+        if initial:
+            for ch in initial:
+                list_widget.addItem(ch)
+        layout.addWidget(list_widget)
+
+        # Ajout d'un type de canal
+        add_row = QHBoxLayout()
+        type_combo = QComboBox()
+        for ct in CHANNEL_TYPES:
+            type_combo.addItem(ct)
+        add_row.addWidget(type_combo)
+
+        add_btn = QPushButton("Ajouter")
+        add_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; } QPushButton:hover { background: #33ddff; }")
+
+        def add_channel():
+            ch = type_combo.currentText()
+            existing = [list_widget.item(r).text() for r in range(list_widget.count())]
+            if ch in existing:
+                QMessageBox.warning(dialog, "Doublon", f"Le canal '{ch}' est deja dans le profil.")
+                return
+            list_widget.addItem(ch)
+
+        add_btn.clicked.connect(add_channel)
+        add_row.addWidget(add_btn)
+        layout.addLayout(add_row)
+
+        # Boutons monter / descendre / supprimer
+        action_row = QHBoxLayout()
+        up_btn = QPushButton("Monter")
+        down_btn = QPushButton("Descendre")
+        del_btn = QPushButton("Supprimer")
+        del_btn.setStyleSheet("QPushButton { background: #662222; color: #ff8888; border: 1px solid #883333; } QPushButton:hover { background: #883333; }")
+
+        def move_item(direction):
+            row = list_widget.currentRow()
+            if row < 0:
+                return
+            new_row = row + direction
+            if 0 <= new_row < list_widget.count():
+                item = list_widget.takeItem(row)
+                list_widget.insertItem(new_row, item)
+                list_widget.setCurrentRow(new_row)
+
+        up_btn.clicked.connect(lambda: move_item(-1))
+        down_btn.clicked.connect(lambda: move_item(1))
+        del_btn.clicked.connect(lambda: list_widget.takeItem(list_widget.currentRow()) if list_widget.currentRow() >= 0 else None)
+
+        action_row.addWidget(up_btn)
+        action_row.addWidget(down_btn)
+        action_row.addWidget(del_btn)
+        layout.addLayout(action_row)
+
+        # Preview
+        preview_label = QLabel("")
+        preview_label.setAlignment(Qt.AlignCenter)
+        preview_label.setStyleSheet("color: #888; font-family: 'Consolas'; font-size: 12px; padding: 6px;")
+        layout.addWidget(preview_label)
+
+        def update_preview():
+            items = [list_widget.item(r).text() for r in range(list_widget.count())]
+            preview_label.setText("  ".join(items) if items else "(vide)")
+
+        list_widget.model().rowsInserted.connect(update_preview)
+        list_widget.model().rowsRemoved.connect(update_preview)
+        list_widget.model().rowsMoved.connect(update_preview)
+        update_preview()
+
+        # OK / Annuler
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; padding: 8px 24px; } QPushButton:hover { background: #33ddff; }")
+        cancel_btn = QPushButton("Annuler")
+        cancel_btn.setStyleSheet("QPushButton { padding: 8px 24px; }")
+
+        result = [None]
+
+        def accept():
+            items = [list_widget.item(r).text() for r in range(list_widget.count())]
+            if not items:
+                QMessageBox.warning(dialog, "Profil vide", "Le profil doit contenir au moins 1 canal.")
+                return
+            result[0] = items
+            dialog.accept()
+
+        ok_btn.clicked.connect(accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        dialog.exec()
+        return result[0]
+
+    def _ask_custom_profile_name(self):
+        """Demande un nom court (max 8 car.) pour un profil custom. Retourne le nom ou None."""
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(
+            self, "Nom du profil",
+            "Nom du profil (8 caracteres max) :",
+        )
+        if ok and name:
+            name = name.strip()[:8]
+            if name:
+                return name
+        return None
+
     def apply_dmx_modes(self, dialog):
-        """Applique les modes configures"""
+        """Applique les profils configures"""
+        custom_profiles = getattr(self, '_saved_custom_profiles', {})
         for i, proj in enumerate(self.projectors):
             proj_key = f"{proj.group}_{i}"
-            combo = self.mode_inputs[i]
-            mode = combo.currentData()
+            entry = self._profile_inputs[i]
+            combo = entry["combo"]
+            data = combo.currentData()
             dmx_addr = (i * 10) + 1
 
-            if mode == "5CH":
-                self.dmx.projector_channels[proj_key] = [
-                    dmx_addr, dmx_addr + 1, dmx_addr + 2, dmx_addr + 3, dmx_addr + 4
-                ]
-            elif mode == "6CH":
-                self.dmx.projector_channels[proj_key] = [
-                    dmx_addr, dmx_addr + 1, dmx_addr + 2, -1, -1
-                ]
-            elif mode == "4CH":
-                self.dmx.projector_channels[proj_key] = [
-                    dmx_addr, dmx_addr + 1, dmx_addr + 2, dmx_addr + 3
-                ]
+            # Determiner le profil
+            if data == "__current_custom__":
+                profile = list(entry["custom"])
+            elif isinstance(data, str) and data.startswith("__saved__"):
+                cname = data[len("__saved__"):]
+                profile = list(custom_profiles.get(cname, entry.get("custom") or DMX_PROFILES["RGBDS"]))
+            elif data in DMX_PROFILES:
+                profile = list(DMX_PROFILES[data])
             else:
-                self.dmx.projector_channels[proj_key] = [
-                    dmx_addr, dmx_addr + 1, dmx_addr + 2
-                ]
+                profile = list(DMX_PROFILES["RGBDS"])
 
-            self.dmx.projector_modes[proj_key] = mode
+            nb_ch = len(profile)
+            channels = [dmx_addr + c for c in range(nb_ch)]
+            self.dmx.set_projector_patch(proj_key, channels, profile=profile)
 
         self.save_dmx_patch_config()
-        QMessageBox.information(dialog, "Modes appliques",
-            f"Modes DMX appliques avec succes !")
+        QMessageBox.information(dialog, "Profils appliques",
+            "Profils DMX appliques avec succes !")
         dialog.accept()
 
     def save_dmx_patch_config(self):
         """Sauvegarde la configuration du patch DMX"""
         config = {
             'channels': self.dmx.projector_channels,
-            'modes': self.dmx.projector_modes
+            'modes': self.dmx.projector_modes,
+            'profiles': self.dmx.projector_profiles,
+            'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
         }
         try:
             config_path = Path.home() / '.maestro_dmx_patch.json'
@@ -3201,6 +3645,17 @@ class MainWindow(QMainWindow):
                     config = json.load(f)
                 self.dmx.projector_channels = config.get('channels', {})
                 self.dmx.projector_modes = config.get('modes', {})
+
+                # Charger les profils custom sauvegardes
+                self._saved_custom_profiles = config.get('custom_profiles', {})
+
+                # Charger les profils (nouveau format)
+                if 'profiles' in config:
+                    self.dmx.projector_profiles = config['profiles']
+                else:
+                    # Retro-compat : convertir les anciens modes en profils
+                    for key, mode in self.dmx.projector_modes.items():
+                        self.dmx.projector_profiles[key] = profile_for_mode(mode)
                 return True
         except Exception as e:
             print(f"Erreur chargement patch: {e}")

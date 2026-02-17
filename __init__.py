@@ -1,6 +1,6 @@
 """
 ================================================================================
-Maestro.py
+MyStrow
 ================================================================================
 
 Application de controle lumiere professionnel avec:
@@ -159,7 +159,7 @@ Version originale:  python maestro.py (backup)
 # === IMPORTS PRINCIPAUX ===
 
 # Configuration et constantes
-from config import (
+from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE, midi_lib,
     AKAI_COLOR_MAP, HEX_COLOR_MAP,
     rgb_to_akai_velocity, fmt_time, media_icon, create_icon

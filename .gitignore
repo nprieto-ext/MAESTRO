@@ -1,12 +1,31 @@
 build/
 dist/
-installer/installer_output/
 __pycache__/
-*.pyc
-keys/
-private_key.pem
+*.spec
+
+# Medias et assets
 *.mp3
-*.mp4
 *.wav
+*.mp4
+*.mov
+*.avi
+
+# Images (sauf logo.png et mystrow.ico)
+*.jpg
+*.jpeg
+*.webp
+*.bmp
+*.tiff
 *.pdf
-show*/
+
+# Fichiers sensibles
+keys/
+*.pem
+*.bmtp
+
+# Shows utilisateur
+show */
+*.tui
+
+# Installer output
+installer/installer_output/

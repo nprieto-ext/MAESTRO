@@ -1,0 +1,99 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  # BUILD WINDOWS (exe + installer Inno Setup)
+  # ─────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller --onefile --windowed --icon=mystrow.ico main.py --name MyStrow
+
+      - name: Build Installer (Inno Setup)
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
+        shell: pwsh
+
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: installer/installer_output/MyStrow_Setup.exe
+
+  # ─────────────────────────────────────────────
+  # BUILD MAC (.app + DMG)
+  # ─────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .app
+        run: pyinstaller --windowed --icon=logo.png main.py --name MyStrow
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          create-dmg \
+            --volname "MyStrow" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "MyStrow.app" 150 190 \
+            --app-drop-link 450 190 \
+            "MyStrow_Installer.dmg" \
+            "dist/MyStrow.app"
+
+      - name: Upload Mac DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: MyStrow_Installer.dmg
+
+  # ─────────────────────────────────────────────
+  # CREATE GITHUB RELEASE
+  # ─────────────────────────────────────────────
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "MyStrow ${{ github.ref_name }}"
+          body: "Release ${{ github.ref_name }}\n\n**Downloads:**\n- Windows: `MyStrow_Setup.exe`\n- Mac: `MyStrow_Installer.dmg`"
+          files: |
+            windows-installer/MyStrow_Setup.exe
+            mac-dmg/MyStrow_Installer.dmg

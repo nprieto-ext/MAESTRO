@@ -1,5 +1,5 @@
 """
-Interface utilisateur pour le systeme de licence Maestro.py
+Interface utilisateur pour le systeme de licence MyStrow
 Widgets Qt : banniere, dialogue d'activation, avertissement
 """
 
@@ -117,7 +117,7 @@ class ActivationDialog(QDialog):
 
     def __init__(self, parent=None, license_result=None):
         super().__init__(parent)
-        self.setWindowTitle("Activation - Maestro.py")
+        self.setWindowTitle("Activation - MyStrow")
         self.setFixedSize(420, 340)
 
         self.setStyleSheet("""
@@ -153,7 +153,7 @@ class ActivationDialog(QDialog):
         layout.setContentsMargins(20, 15, 20, 15)
         layout.setSpacing(10)
 
-        title = QLabel("Activer Maestro.py")
+        title = QLabel("Activer MyStrow")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         title.setAlignment(Qt.AlignCenter)
@@ -330,7 +330,7 @@ class LicenseWarningDialog(QDialog):
 
     def __init__(self, result: LicenseResult, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Maestro.py - Licence")
+        self.setWindowTitle("MyStrow - Licence")
         self.setFixedSize(380, 180)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 

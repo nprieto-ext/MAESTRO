@@ -28,21 +28,23 @@ import sys
 import os
 import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
 # ------------------------------------------------------------------
 # IMPORTS APPLICATION
 # ------------------------------------------------------------------
+
 import socket
 
-from config import APP_NAME, VERSION, MIDI_AVAILABLE
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QEventLoop, QTimer
+
+from core import APP_NAME, VERSION, MIDI_AVAILABLE
 from updater import SplashScreen, UpdateChecker
 from main_window import MainWindow
-from license_manager import verify_license, check_exe_integrity, LicenseState
+from license_manager import (
+    verify_license,
+    check_exe_integrity,
+    LicenseState,
+)
 
 # ------------------------------------------------------------------
 # MAIN
@@ -74,7 +76,7 @@ def main():
 
     if not check_exe_integrity():
         splash.close()
-        QMessageBox.critical(None, "Maestro.py",
+        QMessageBox.critical(None, "MyStrow",
             "L'integrite de l'application n'a pas pu etre verifiee.\n\n"
             "Le fichier executable semble avoir ete modifie.\n"
             "Veuillez retelecharger l'application depuis le site officiel.")

@@ -3,7 +3,7 @@ Gestionnaire MIDI pour l'AKAI APC mini
 """
 from PySide6.QtCore import QObject, Signal, QTimer
 
-from config import MIDI_AVAILABLE
+from core import MIDI_AVAILABLE
 
 # Import conditionnel de rtmidi
 rtmidi = None

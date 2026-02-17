@@ -54,6 +54,32 @@ class DualColorButton(QPushButton):
             painter.drawRoundedRect(1, 1, 26, 26, 4, 4)
 
 
+EFFECT_PRESETS = [
+    ("⭕ Aucun", None, "#2a2a2a"),
+    ("⚡ Strobe", "Strobe", "#ffffff"),
+    ("💥 Flash", "Flash", "#ffff00"),
+    ("💜 Pulse", "Pulse", "#ff00ff"),
+    ("🌊 Vague", "Wave", "#00ffff"),
+    ("🎲 Random", "Random", "#ff8800"),
+    ("🌈 Rainbow", "Rainbow", "#00ff00"),
+    ("✨ Scintillement", "Sparkle", "#ffccff"),
+    ("🔥 Feu", "Fire", "#ff4400"),
+]
+
+# Effet par defaut pour chaque bouton (index 0-8)
+DEFAULT_EFFECTS = [
+    "Strobe", "Flash", "Pulse", "Wave",
+    "Random", "Rainbow", "Sparkle", "Fire", None
+]
+
+def get_effect_emoji(effect_name):
+    """Retourne l'emoji correspondant a un effet"""
+    for label, name, _ in EFFECT_PRESETS:
+        if name == effect_name:
+            return label.split(" ")[0]
+    return ""
+
+
 class EffectButton(QPushButton):
     """Bouton d'effet carre rouge avec menu d'effets"""
 
@@ -62,10 +88,24 @@ class EffectButton(QPushButton):
         self.index = index
         self.setFixedSize(16, 16)
         self.active = False
-        self.current_effect = None  # Effet actuel
+        # Effet par defaut selon la position
+        if index < len(DEFAULT_EFFECTS):
+            self.current_effect = DEFAULT_EFFECTS[index]
+        else:
+            self.current_effect = None
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_effects_menu)
+        self.setToolTip(self._tooltip())
         self.update_style()
+
+    def _tooltip(self):
+        """Genere le tooltip avec emoji + nom de l'effet"""
+        if not self.current_effect:
+            return "Aucun effet"
+        for label, name, _ in EFFECT_PRESETS:
+            if name == self.current_effect:
+                return label
+        return self.current_effect
 
     def show_effects_menu(self, pos):
         """Affiche le menu des effets avec previsualisation"""
@@ -86,30 +126,13 @@ class EffectButton(QPushButton):
             }
         """)
 
-        # Effets disponibles avec emoji + previsualisation couleur
-        effects = [
-            ("Aucun", None, "#2a2a2a"),
-            ("Strobe", "Strobe", "#ffffff"),
-            ("Flash", "Flash", "#ffff00"),
-            ("Pulse", "Pulse", "#ff00ff"),
-            ("Vague", "Wave", "#00ffff"),
-            ("Random", "Random", "#ff8800"),
-            ("Rotation", "Rotate", "#00ff00"),
-            ("Scintillement", "Sparkle", "#ffccff"),
-            ("Feu", "Fire", "#ff4400"),
-        ]
+        effects = EFFECT_PRESETS
 
         for name, effect, color in effects:
             action = QWidgetAction(menu)
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(5, 2, 5, 2)
-
-            # Carre de couleur previsualisation
-            preview = QLabel()
-            preview.setFixedSize(20, 20)
-            preview.setStyleSheet(f"background: {color}; border-radius: 3px; border: 1px solid #555;")
-            layout.addWidget(preview)
 
             # Nom effet
             label = QLabel(name)
@@ -119,8 +142,8 @@ class EffectButton(QPushButton):
 
             # Marque si c'est l'effet actuel
             if effect == self.current_effect:
-                check = QLabel("OK")
-                check.setStyleSheet("color: #00ff00; font-weight: bold;")
+                check = QLabel("✓")
+                check.setStyleSheet("color: #00ff00; font-weight: bold; font-size: 16px;")
                 layout.addWidget(check)
 
             action.setDefaultWidget(widget)
@@ -136,6 +159,7 @@ class EffectButton(QPushButton):
             self.active = True
         else:
             self.active = False
+        self.setToolTip(self._tooltip())
         self.update_style()
         print(f"Effet {self.index}: {effect}")
 

@@ -1056,8 +1056,14 @@ print(json.dumps(waveform))
         no_effect = effects_menu.addAction("⭕ Aucun")
         no_effect.triggered.connect(lambda: self.set_clip_effect(clip, None))
         effects_menu.addSeparator()
-        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random"]:
-            action = effects_menu.addAction(f"⚡ {eff}")
+        effect_emojis = {
+            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
+            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
+            "Sparkle": "✨", "Fire": "🔥",
+        }
+        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Rainbow", "Sparkle", "Fire"]:
+            emoji = effect_emojis.get(eff, "⚡")
+            action = effects_menu.addAction(f"{emoji} {eff}")
             action.triggered.connect(lambda checked=False, e=eff, cl=clip: self.set_clip_effect(cl, e))
 
         # === FADES ===

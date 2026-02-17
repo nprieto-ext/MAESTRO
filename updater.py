@@ -1,5 +1,5 @@
 """
-Systeme de mise a jour et ecran de chargement pour Maestro.py
+Systeme de mise a jour et ecran de chargement pour MyStrow
 - SplashScreen : ecran de demarrage
 - UpdateChecker : verification async des releases GitHub
 - UpdateBar : barre de notification de mise a jour
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QScreen, QPixmap
 
-from config import VERSION
+from core import VERSION
 
 # === CONSTANTES ===
 GITHUB_API_URL = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
@@ -75,7 +75,7 @@ class SplashScreen(QWidget):
         layout.addWidget(self.logo_label)
 
         # --- Titre + version ---
-        title = QLabel("Maestro.py")
+        title = QLabel("MyStrow")
         title.setFont(QFont("Segoe UI", 22, QFont.Bold))
         title.setStyleSheet("color: #00d4ff;")
         title.setAlignment(Qt.AlignCenter)
@@ -199,7 +199,7 @@ class UpdateChecker(QThread):
             req = urllib.request.Request(
                 GITHUB_API_URL,
                 headers={"Accept": "application/vnd.github.v3+json",
-                         "User-Agent": "Maestro-Updater"}
+                         "User-Agent": "MyStrow-Updater"}
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -350,9 +350,9 @@ def download_update(parent, version, exe_url, hash_url):
     dlg.show()
     QApplication.processEvents()
 
-    update_dir = Path(tempfile.gettempdir()) / "maestro_update"
+    update_dir = Path(tempfile.gettempdir()) / "mystrow_update"
     update_dir.mkdir(exist_ok=True)
-    new_exe = update_dir / "Maestro.exe"
+    new_exe = update_dir / "MyStrow.exe"
 
     # --- Telechargement SHA256 ---
     expected_hash = ""
@@ -380,7 +380,7 @@ def download_update(parent, version, exe_url, hash_url):
         QApplication.processEvents()
 
     try:
-        status_label.setText("Telechargement de Maestro.exe...")
+        status_label.setText("Telechargement de MyStrow.exe...")
         QApplication.processEvents()
         urllib.request.urlretrieve(exe_url, str(new_exe), reporthook)
     except Exception as e:
@@ -442,9 +442,9 @@ def download_update(parent, version, exe_url, hash_url):
 
 def _create_updater_batch(new_exe, current_exe):
     """Cree le script batch de mise a jour"""
-    batch_path = Path(tempfile.gettempdir()) / "maestro_update" / "update_maestro.bat"
+    batch_path = Path(tempfile.gettempdir()) / "mystrow_update" / "update_mystrow.bat"
     batch_content = f'''@echo off
-echo Mise a jour Maestro en cours...
+echo Mise a jour MyStrow en cours...
 timeout /t 2 /nobreak >nul
 :retry
 copy /y "{new_exe}" "{current_exe}" >nul 2>&1

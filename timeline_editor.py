@@ -16,7 +16,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from light_timeline import LightTrack, LightClip, ColorPalette
-from config import media_icon
+from core import media_icon
 
 
 class _AnalysisCancelled(Exception):

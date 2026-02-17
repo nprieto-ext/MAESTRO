@@ -1,5 +1,5 @@
 """
-Configuration globale et constantes pour Maestro.py - Controleur Lumiere DMX
+Configuration globale et constantes pour MyStrow - Controleur Lumiere DMX
 """
 import sys
 import os
@@ -30,8 +30,8 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.aiff *.mp4 *.mov *.avi *.mkv *.wmv *.flv *.webm *.m4v *.mpg *.mpeg *.png *.jpg *.jpeg *.gif *.bmp *.svg *.webp *.tiff)"
 
 # === CONFIGURATION GLOBALE ===
-APP_NAME = "Maestro.py"
-VERSION = "2.5.2"
+APP_NAME = "MyStrow"
+VERSION = "2.5.4"
 
 # === MIDI SUPPORT ===
 MIDI_AVAILABLE = False

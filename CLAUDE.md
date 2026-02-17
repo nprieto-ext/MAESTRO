@@ -1,11 +1,11 @@
-# Maestro.py
+# MyStrow
 
 Application de controle lumiere professionnel avec controleur AKAI APC mini.
 
 ## Lancement
 
 ```bash
-python maestro_new.py
+python main.py
 ```
 
 ## Technologies
@@ -18,35 +18,42 @@ python maestro_new.py
 ## Structure des modules
 
 ```
-Boitier AKAI/
-├── maestro_new.py      # Point d'entree (lance MainWindow)
-├── maestro.py          # Ancien fichier monolithique (backup)
-├── __init__.py         # Documentation et exports du package
+MyStrow/
+├── main.py               # Point d'entree
+├── core.py               # APP_NAME, VERSION, constantes, utilitaires
+├── __init__.py            # Documentation et exports du package
 │
-├── config.py           # Constantes, MIDI detection, utilitaires
-├── projector.py        # Classe Projector (DMX, couleurs, groupes)
-├── midi_handler.py     # MIDIHandler (AKAI APC mini)
-├── artnet_dmx.py       # ArtNetDMX (envoi UDP Art-Net)
-├── audio_ai.py         # AudioColorAI (mode IA reactive)
+├── main_window.py         # Fenetre principale
+├── updater.py             # Splash screen et mise a jour
+├── license_manager.py     # Systeme de licence
+├── license_ui.py          # Interface licence
 │
-├── ui_components.py    # Widgets AKAI (DualColorButton, ApcFader...)
-├── plan_de_feu.py      # Visualisation des projecteurs
-├── recording_waveform.py # Timeline avec blocs editables
+├── projector.py           # Classe Projector (DMX, couleurs, groupes)
+├── midi_handler.py        # MIDIHandler (AKAI APC mini)
+├── artnet_dmx.py          # ArtNetDMX (envoi UDP Art-Net)
+├── audio_ai.py            # AudioColorAI (mode IA reactive)
 │
-├── sequencer.py        # Playlist medias + modes DMX
-├── light_timeline.py   # LightClip, LightTrack, ColorPalette
-├── timeline_editor.py  # Editeur de sequences lumiere
-└── main_window.py      # Fenetre principale (~1350 lignes)
+├── ui_components.py       # Widgets AKAI (DualColorButton, ApcFader...)
+├── plan_de_feu.py         # Visualisation des projecteurs
+├── recording_waveform.py  # Timeline avec blocs editables
+│
+├── sequencer.py           # Playlist medias + modes DMX
+├── light_timeline.py      # LightClip, LightTrack, ColorPalette
+├── timeline_editor.py     # Editeur de sequences lumiere
+│
+├── release.py             # Pipeline de release (build + installer + GitHub)
+├── installer/maestro.iss  # Script Inno Setup
+├── logo.png               # Logo application
+└── mystrow.ico            # Icone application
 ```
 
-## Fichiers cles
+## Release
 
-| Fichier | Contenu | Lignes |
-|---------|---------|--------|
-| main_window.py | Fenetre principale, gestion projecteurs/effets/MIDI/DMX | ~1350 |
-| timeline_editor.py | Editeur timeline lumiere avec zoom/play/IA | ~750 |
-| sequencer.py | Playlist medias avec 4 modes DMX | ~400 |
-| light_timeline.py | Clips, pistes, palette couleurs | ~350 |
+```bash
+python release.py
+```
+
+Pipeline: version bump -> build exe -> build installer -> git tag -> GitHub Release
 
 ## Concepts importants
 

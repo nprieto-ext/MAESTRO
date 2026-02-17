@@ -637,6 +637,10 @@ class PlanDeFeu(QFrame):
         colors_layout.setContentsMargins(8, 4, 8, 4)
         colors_layout.setSpacing(6)
 
+        COLOR_SHORTCUT_KEYS = {
+            "Blanc": "W", "Rouge": "R", "Orange": "O", "Jaune": "Y",
+            "Vert": "G", "Cyan": "C", "Bleu": "B", "Magenta": "M",
+        }
         for ci, (label, color) in enumerate(PRESET_COLORS):
             btn = QPushButton()
             btn.setFixedSize(28, 28)
@@ -651,7 +655,8 @@ class PlanDeFeu(QFrame):
                     border: 2px solid #00d4ff;
                 }}
             """)
-            btn.setToolTip(label)
+            shortcut = COLOR_SHORTCUT_KEYS.get(label, "")
+            btn.setToolTip(f"{label} ({shortcut})" if shortcut else label)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(
                 lambda checked, c=color, t=targets, m=menu: (

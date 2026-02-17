@@ -5,6 +5,69 @@ import socket
 import struct
 import time
 
+# Profils DMX pre-definis : nom -> liste ordonnee de types de canaux
+DMX_PROFILES = {
+    "RGB":        ["R", "G", "B"],
+    "RGBD":       ["R", "G", "B", "Dim"],
+    "RGBDS":      ["R", "G", "B", "Dim", "Strobe"],
+    "RGBSD":      ["R", "G", "B", "Strobe", "Dim"],
+    "DRGB":       ["Dim", "R", "G", "B"],
+    "DRGBS":      ["Dim", "R", "G", "B", "Strobe"],
+    "RGBW":       ["R", "G", "B", "W"],
+    "RGBWD":      ["R", "G", "B", "W", "Dim"],
+    "RGBWDS":     ["R", "G", "B", "W", "Dim", "Strobe"],
+    "RGBWZ":      ["R", "G", "B", "W", "Zoom"],
+    "RGBWA":      ["R", "G", "B", "W", "Ambre"],
+    "RGBWAD":     ["R", "G", "B", "W", "Ambre", "Dim"],
+    "RGBWOUV":    ["R", "G", "B", "W", "Orange", "UV"],
+    "2CH_FUMEE":  ["Smoke", "Fan"],
+}
+
+# Types de canaux disponibles pour les profils custom
+CHANNEL_TYPES = ["R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Smoke", "Fan"]
+
+# Noms courts pour l'affichage dans les combos
+CHANNEL_DISPLAY = {
+    "R": "R", "G": "G", "B": "B", "W": "W",
+    "Dim": "Dim", "Strobe": "Strob", "UV": "UV",
+    "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom",
+    "Smoke": "Smoke", "Fan": "Fan",
+}
+
+
+def profile_display_text(channels):
+    """Formate une liste de canaux en texte lisible (R G B Dim Strob)"""
+    return " ".join(CHANNEL_DISPLAY.get(ch, ch) for ch in channels)
+
+# Retro-compatibilite : anciens modes -> nom de profil
+_LEGACY_MODE_MAP = {
+    "3CH": "RGB",
+    "4CH": "RGBD",
+    "5CH": "RGBDS",
+    "6CH": "RGBDS",  # 6CH = RGBDS + 1 canal inutilise
+    "2CH_FUMEE": "2CH_FUMEE",
+}
+
+
+def profile_for_mode(mode):
+    """Convertit un ancien mode (3CH, 5CH...) en liste de types de canaux (profil)"""
+    name = _LEGACY_MODE_MAP.get(mode, mode)
+    if name in DMX_PROFILES:
+        return list(DMX_PROFILES[name])
+    # Si c'est deja une liste (profil custom), la retourner telle quelle
+    if isinstance(mode, list):
+        return mode
+    # Fallback
+    return list(DMX_PROFILES["RGBDS"])
+
+
+def profile_name(profile):
+    """Retrouve le nom d'un profil a partir de sa liste de canaux, ou None si custom"""
+    for name, channels in DMX_PROFILES.items():
+        if channels == profile:
+            return name
+    return None
+
 
 class ArtNetDMX:
     """Gestion de l'envoi DMX via Art-Net vers le Node 2"""
@@ -19,10 +82,13 @@ class ArtNetDMX:
         self.connected = False
 
         # Mapping des projecteurs vers les canaux DMX
-        # Format: {"face_0": [1, 2, 3, 4, 5], "douche1_4": [11, 12, 13, 14, 15], ...}
+        # Format: {"face_0": [1, 2, 3, 4, 5], ...}
         self.projector_channels = {}
 
-        # Modes des projecteurs (5CH, 4CH, 3CH)
+        # Profils des projecteurs : proj_key -> liste de types ["R","G","B","Dim","Strobe"]
+        self.projector_profiles = {}
+
+        # Retro-compat : garde projector_modes comme alias lecture
         self.projector_modes = {}
 
     def connect(self):
@@ -94,38 +160,50 @@ class ArtNetDMX:
             print(f"Erreur envoi DMX: {e}")
             return False
 
+    def _get_profile(self, proj_key):
+        """Retourne le profil d'un projecteur (liste de types de canaux)"""
+        if proj_key in self.projector_profiles:
+            return self.projector_profiles[proj_key]
+        # Retro-compat : convertir depuis projector_modes
+        mode = self.projector_modes.get(proj_key, "5CH")
+        return profile_for_mode(mode)
+
+    def _channel_index(self, profile, channel_type):
+        """Retourne l'index d'un type de canal dans le profil, ou -1 si absent"""
+        try:
+            return profile.index(channel_type)
+        except ValueError:
+            return -1
+
     def update_from_projectors(self, projectors, effect_speed=0):
         """Met a jour les canaux DMX depuis la liste des projecteurs en utilisant le patch"""
         for i, proj in enumerate(projectors):
-            # Creer la cle unique du projecteur
             proj_key = f"{proj.group}_{i}"
 
-            # Verifier si ce projecteur est patche
             if proj_key not in self.projector_channels:
-                continue  # Projecteur non patche, on passe
+                continue
 
             channels = self.projector_channels[proj_key]
+            profile = self._get_profile(proj_key)
 
-            # Traitement special fumee (2CH: smoke + fan)
-            mode = self.projector_modes.get(proj_key, "5CH")
-            if mode == "2CH_FUMEE":
+            # Traitement special fumee
+            if "Smoke" in profile:
                 is_muted = hasattr(proj, 'muted') and proj.muted
-                smoke = int((proj.level / 100.0) * 255) if not is_muted else 0
-                fan = getattr(proj, 'fan_speed', 0) if not is_muted else 0
-                self.set_channel(channels[0], smoke)
-                if len(channels) >= 2:
-                    self.set_channel(channels[1], fan)
+                smoke_idx = self._channel_index(profile, "Smoke")
+                fan_idx = self._channel_index(profile, "Fan")
+                if smoke_idx >= 0 and smoke_idx < len(channels):
+                    smoke = int((proj.level / 100.0) * 255) if not is_muted else 0
+                    self.set_channel(channels[smoke_idx], smoke)
+                if fan_idx >= 0 and fan_idx < len(channels):
+                    fan = getattr(proj, 'fan_speed', 0) if not is_muted else 0
+                    self.set_channel(channels[fan_idx], fan)
                 continue
 
             # Si le projecteur est mute, envoyer des 0
             if hasattr(proj, 'muted') and proj.muted:
-                self.set_channel(channels[0], 0)  # Rouge
-                self.set_channel(channels[1], 0)  # Vert
-                self.set_channel(channels[2], 0)  # Bleu
-                if len(channels) >= 4:
-                    self.set_channel(channels[3], 0)  # Dimmer
-                if len(channels) >= 5:
-                    self.set_channel(channels[4], 0)  # Strobe
+                for ch in channels:
+                    if ch > 0:
+                        self.set_channel(ch, 0)
                 continue
 
             # Recuperer RGB depuis proj.color
@@ -137,67 +215,83 @@ class ArtNetDMX:
             level = proj.level if hasattr(proj, 'level') else 0
             dimmer = int((level / 100.0) * 255)
 
-            # Verifier si on a un dimmer virtuel (canal = -1)
-            has_virtual_dimmer = len(channels) >= 4 and channels[3] == -1
+            # Verifier presence de Dim dans le profil
+            dim_idx = self._channel_index(profile, "Dim")
+            has_dimmer = dim_idx >= 0 and dim_idx < len(channels)
 
-            # Si dimmer virtuel, appliquer le dimmer directement sur RGB
-            if has_virtual_dimmer:
+            # Si pas de dimmer hardware, appliquer le dimmer sur RGB
+            if not has_dimmer:
                 dimmer_factor = level / 100.0
                 r = int(r * dimmer_factor)
                 g = int(g * dimmer_factor)
                 b = int(b * dimmer_factor)
 
-            # Verifier si on a un strobe virtuel (canal = -1)
-            has_virtual_strobe = len(channels) >= 5 and channels[4] == -1
+            # Verifier presence de Strobe
+            strobe_idx = self._channel_index(profile, "Strobe")
+            has_strobe = strobe_idx >= 0 and strobe_idx < len(channels)
 
-            # Si strobe virtuel ET effet strobe actif, creer un strobe logiciel
-            if has_virtual_strobe and hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
-                if int(time.time() * 10) % 2 == 0:  # Clignote 5 fois par seconde
-                    r, g, b = 0, 0, 0  # Noir
+            # Si pas de strobe hardware mais strobe actif, creer strobe logiciel
+            if not has_strobe and hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
+                if int(time.time() * 10) % 2 == 0:
+                    r, g, b = 0, 0, 0
 
-            # Envoyer aux canaux patches
-            self.set_channel(channels[0], r)      # Rouge
-            self.set_channel(channels[1], g)      # Vert
-            self.set_channel(channels[2], b)      # Bleu
+            # Envoyer chaque canal selon son type dans le profil
+            for idx, ch_type in enumerate(profile):
+                if idx >= len(channels):
+                    break
+                ch = channels[idx]
+                if ch <= 0:
+                    continue
 
-            # Canal Dimmer
-            if len(channels) >= 4:
-                if channels[3] != -1:
-                    # Dimmer hardware
-                    self.set_channel(channels[3], dimmer)
-                else:
-                    # Dimmer virtuel : forcer canal 4 a zero
-                    dmx_addr = (i * 10) + 1
-                    self.set_channel(dmx_addr + 3, 0)
-
-            # Canal Strobe
-            if len(channels) >= 5:
-                if channels[4] != -1:
-                    # Strobe hardware
+                if ch_type == "R":
+                    self.set_channel(ch, r)
+                elif ch_type == "G":
+                    self.set_channel(ch, g)
+                elif ch_type == "B":
+                    self.set_channel(ch, b)
+                elif ch_type == "W":
+                    # Blanc = minimum des RGB (composante blanche commune)
+                    w = min(r, g, b)
+                    self.set_channel(ch, w)
+                elif ch_type == "Ambre":
+                    # Ambre = approximation ton chaud
+                    ambre = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
+                    self.set_channel(ch, ambre)
+                elif ch_type == "Orange":
+                    # Orange = approximation ton chaud (R fort, un peu de G)
+                    orange = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
+                    self.set_channel(ch, orange)
+                elif ch_type == "UV":
+                    self.set_channel(ch, 0)
+                elif ch_type == "Zoom":
+                    # Zoom controlable via attribut zoom du projecteur (0-255)
+                    zoom = getattr(proj, 'zoom', 0)
+                    self.set_channel(ch, zoom)
+                elif ch_type == "Dim":
+                    self.set_channel(ch, dimmer)
+                elif ch_type == "Strobe":
                     strobe_value = 0
                     if hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
                         if effect_speed > 0:
                             strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16))
                         else:
                             strobe_value = 100
-                    self.set_channel(channels[4], strobe_value)
-                else:
-                    # Strobe virtuel : forcer canal 5 a zero
-                    dmx_addr = (i * 10) + 1
-                    self.set_channel(dmx_addr + 4, 0)
+                    self.set_channel(ch, strobe_value)
 
-            # En mode 6CH, forcer aussi canal 6 a zero
-            mode = self.projector_modes.get(proj_key, "5CH")
-            if mode == "6CH":
-                dmx_addr = (i * 10) + 1
-                self.set_channel(dmx_addr + 5, 0)
-
-    def set_projector_patch(self, proj_key, channels, mode="5CH"):
+    def set_projector_patch(self, proj_key, channels, profile=None, mode=None):
         """Configure le patch d'un projecteur"""
         self.projector_channels[proj_key] = channels
-        self.projector_modes[proj_key] = mode
+        if profile is not None:
+            self.projector_profiles[proj_key] = profile
+            # Garder projector_modes synchronise pour retro-compat
+            name = profile_name(profile)
+            self.projector_modes[proj_key] = name if name else "CUSTOM"
+        elif mode is not None:
+            self.projector_modes[proj_key] = mode
+            self.projector_profiles[proj_key] = profile_for_mode(mode)
 
     def clear_patch(self):
         """Efface tout le patch"""
         self.projector_channels.clear()
         self.projector_modes.clear()
+        self.projector_profiles.clear()

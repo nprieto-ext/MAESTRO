@@ -1,5 +1,5 @@
 """
-Systeme de licence pour Maestro.py
+Systeme de licence pour MyStrow
 Gestion des essais, licences, anti-fraude (horloge, patch)
 Zero dependance Qt - appelable depuis n'importe quel contexte
 """
@@ -59,10 +59,10 @@ ACTIVATION_SERVER_URL = "https://api.maestro-light.com/license"
 # Empreinte cachee anti-reset (AppData)
 if platform.system() == "Windows":
     _APPDATA = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-    _FINGERPRINT_DIR = os.path.join(_APPDATA, "Maestro", "cache")
+    _FINGERPRINT_DIR = os.path.join(_APPDATA, "MyStrow", "cache")
     _FINGERPRINT_FILE = os.path.join(_FINGERPRINT_DIR, ".sys")
 else:
-    _FINGERPRINT_DIR = os.path.join(os.path.expanduser("~"), ".config", "maestro")
+    _FINGERPRINT_DIR = os.path.join(os.path.expanduser("~"), ".config", "mystrow")
     _FINGERPRINT_FILE = os.path.join(_FINGERPRINT_DIR, ".sys")
 
 # Flags pour subprocess sur Windows (pas de fenetre console)

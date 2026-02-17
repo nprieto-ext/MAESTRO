@@ -18,7 +18,12 @@
       "Bash(do [ -f \"$p\" ])",
       "Bash(echo:*)",
       "Bash(done)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(ls:*)",
+      "Bash(cmd //c \"rename \"\"Boitier AKAI\"\" MyStrow\")",
+      "Bash(cmd //c \"rename \"\"C:\\\\Users\\\\nikop\\\\Desktop\\\\Boitier AKAI\"\" MyStrow\")",
+      "Bash(powershell -Command:*)",
+      "Bash(grep:*)"
     ]
   }
 }

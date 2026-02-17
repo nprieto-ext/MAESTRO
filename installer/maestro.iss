@@ -1,22 +1,22 @@
 [Setup]
-AppName=Maestro
-AppVersion=2.5.2
-AppPublisher=Maestro
-AppPublisherURL=https://maestro.fr
-DefaultDirName={autopf}\Maestro
-DefaultGroupName=Maestro
+AppName=MyStrow
+AppVersion=2.5.4
+AppPublisher=MyStrow
+AppPublisherURL=https://mystrow.fr
+DefaultDirName={autopf}\MyStrow
+DefaultGroupName=MyStrow
 OutputDir=installer_output
-OutputBaseFilename=Maestro_Setup
+OutputBaseFilename=MyStrow_Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 
 [Files]
-Source: "..\dist\maestro_new.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\MyStrow.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Maestro"; Filename: "{app}\maestro_new.exe"
-Name: "{commondesktop}\Maestro"; Filename: "{app}\maestro_new.exe"
+Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"
+Name: "{commondesktop}\MyStrow"; Filename: "{app}\MyStrow.exe"
 
 [Run]
-Filename: "{app}\maestro_new.exe"; Description: "Lancer Maestro"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MyStrow.exe"; Description: "Lancer MyStrow"; Flags: nowait postinstall skipifsilent
