@@ -31,7 +31,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "2.5.5"
+VERSION = "2.5.6"
 
 # === MIDI SUPPORT ===
 MIDI_AVAILABLE = False

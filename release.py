@@ -68,12 +68,17 @@ def build_local_exe(version):
         if p.exists():
             shutil.rmtree(p)
 
-    run(
+    cmd = (
         "pyinstaller --onefile --windowed "
         "--icon=mystrow.ico "
         "--name=MyStrow "
         "main.py"
     )
+    print(f"\n>>> {cmd}")
+    result = subprocess.run(cmd, shell=True, cwd=BASE_DIR)
+    if result.returncode != 0:
+        print("Erreur detectee. Arret.")
+        sys.exit(1)
 
     if not dist_exe.exists():
         print("ERREUR: EXE non trouve apres build.")
