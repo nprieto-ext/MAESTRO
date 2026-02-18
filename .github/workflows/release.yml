@@ -29,16 +29,26 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onefile --windowed --icon=mystrow.ico main.py --name MyStrow
 
+      - name: Generate SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist\MyStrow.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  MyStrow.exe" | Out-File -Encoding ascii dist\sha256.txt
+          Write-Host "SHA256: $hash"
+
       - name: Build Installer (Inno Setup)
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
         shell: pwsh
 
-      - name: Upload Windows Installer
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: installer/installer_output/MyStrow_Setup.exe
+          path: |
+            installer/installer_output/MyStrow_Setup.exe
+            dist/MyStrow.exe
+            dist/sha256.txt
 
   # ─────────────────────────────────────────────
   # BUILD MAC (.app + DMG)
@@ -96,4 +106,6 @@ jobs:
           body: "Release ${{ github.ref_name }}\n\n**Downloads:**\n- Windows: `MyStrow_Setup.exe`\n- Mac: `MyStrow_Installer.dmg`"
           files: |
             windows-installer/MyStrow_Setup.exe
+            windows-installer/MyStrow.exe
+            windows-installer/sha256.txt
             mac-dmg/MyStrow_Installer.dmg

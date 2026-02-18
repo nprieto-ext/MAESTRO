@@ -398,8 +398,11 @@ def _verify_license_signature(license_data):
     if not sig:
         return False
 
-    # Reconstruire les donnees signees (sans la signature)
-    data = {k: v for k, v in license_data.items() if k != "signature"}
+    # Champs mutables exclus de la signature (mis a jour a chaque lancement)
+    MUTABLE_KEYS = {"signature", "last_launch_utc", "last_monotonic"}
+
+    # Reconstruire les donnees signees (sans les champs mutables)
+    data = {k: v for k, v in license_data.items() if k not in MUTABLE_KEYS}
     data_str = json.dumps(data, sort_keys=True, separators=(',', ':'))
     return _verify_signature(data_str.encode(), sig)
 
@@ -581,23 +584,24 @@ def activate_trial(email=""):
 
     now_utc = datetime.now(timezone.utc).timestamp()
 
-    # Construire les donnees de licence
+    # Construire les donnees de licence (champs permanents uniquement, sans les mutables)
     license_data = {
         "type": "trial",
         "machine_id": machine_id,
         "created_utc": now_utc,
         "expiry_utc": now_utc + (TRIAL_DURATION_DAYS * 86400),
-        "last_launch_utc": now_utc,
-        "last_monotonic": 0,
     }
 
-    # Signer avec la cle privee embarquee
+    # Signer avec la cle privee embarquee (champs permanents seulement)
     data_str = json.dumps(license_data, sort_keys=True, separators=(',', ':'))
     signature = _sign_data(data_str.encode())
     if not signature:
         return False, "Erreur de signature interne"
 
+    # Ajouter signature + champs mutables (non signes)
     license_data["signature"] = signature
+    license_data["last_launch_utc"] = now_utc
+    license_data["last_monotonic"] = 0
 
     # Sauvegarder la licence
     if not _save_license_data(machine_id, license_data):

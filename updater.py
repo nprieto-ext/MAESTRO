@@ -216,7 +216,7 @@ class UpdateChecker(QThread):
             for asset in data.get("assets", []):
                 name = asset.get("name", "")
                 url = asset.get("browser_download_url", "")
-                if name.lower() == "maestro.exe":
+                if name.lower() == "mystrow.exe":
                     exe_url = url
                 elif name.lower() == "sha256.txt":
                     hash_url = url

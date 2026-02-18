@@ -23,7 +23,9 @@
       "Bash(cmd //c \"rename \"\"Boitier AKAI\"\" MyStrow\")",
       "Bash(cmd //c \"rename \"\"C:\\\\Users\\\\nikop\\\\Desktop\\\\Boitier AKAI\"\" MyStrow\")",
       "Bash(powershell -Command:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cmd //c \"if exist C:\\\\Users\\\\nikop\\\\.maestro_license.dat \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")",
+      "Bash(cmd //c \"if exist \"\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\MyStrow\\\\cache\\\\.sys\"\" \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")"
     ]
   }
 }
