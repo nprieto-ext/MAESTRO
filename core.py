@@ -31,7 +31,14 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "2.7.1"
+VERSION = "2.7.3"
+
+# === FIREBASE (cles dans firebase_config.py, non versionne) ===
+try:
+    from firebase_config import FIREBASE_API_KEY, FIREBASE_PROJECT_ID
+except ImportError:
+    FIREBASE_API_KEY    = ""
+    FIREBASE_PROJECT_ID = ""
 
 # === MIDI SUPPORT ===
 MIDI_AVAILABLE = False
@@ -42,20 +49,14 @@ try:
     import rtmidi
     MIDI_AVAILABLE = True
     midi_lib = "rtmidi"
-    print("✅ Support MIDI activé (python-rtmidi) - AKAI physique disponible")
 except ImportError:
     # Essayer rtmidi2 en alternative
     try:
         import rtmidi2 as rtmidi
         MIDI_AVAILABLE = True
         midi_lib = "rtmidi2"
-        print("✅ Support MIDI activé (rtmidi2) - AKAI physique disponible")
     except ImportError:
         MIDI_AVAILABLE = False
-        print("ℹ️  Mode SIMULATEUR uniquement (MIDI non disponible)")
-        print("   Le logiciel fonctionne parfaitement avec le simulateur AKAI virtuel !")
-        print("   Pour connecter un AKAI physique : py -m pip install rtmidi2")
-        print()
 
 # === MAPPING COULEURS AKAI ===
 AKAI_COLOR_MAP = {
@@ -129,6 +130,16 @@ def rgb_to_akai_velocity(qcolor):
 
     # Par defaut
     return 5
+
+
+def resource_path(filename):
+    """Retourne le chemin absolu d'une ressource embarquee.
+    Compatible mode dev et PyInstaller --onefile (sys._MEIPASS)."""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, filename)
 
 
 def fmt_time(ms):

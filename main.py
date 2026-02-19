@@ -36,8 +36,9 @@ import socket
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtGui import QIcon
 
-from core import APP_NAME, VERSION, MIDI_AVAILABLE
+from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
 from updater import SplashScreen, UpdateChecker
 from main_window import MainWindow
 from license_manager import (
@@ -57,6 +58,9 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    icon_path = resource_path("mystrow.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     # Splash screen
     splash = SplashScreen()
@@ -157,12 +161,12 @@ def main():
 
     # Afficher le statut licence sur le splash
     _license_labels = {
-        LicenseState.LICENSE_ACTIVE: ("Active", True),
+        LicenseState.LICENSE_ACTIVE: ("Compte actif", True),
         LicenseState.TRIAL_ACTIVE: (f"Essai - {license_result.days_remaining}j restants", True),
-        LicenseState.NOT_ACTIVATED: ("Non activee", False),
+        LicenseState.NOT_ACTIVATED: ("—", True),
         LicenseState.TRIAL_EXPIRED: ("Essai expire", False),
-        LicenseState.LICENSE_EXPIRED: ("Expiree", False),
-        LicenseState.INVALID: ("Invalide", False),
+        LicenseState.LICENSE_EXPIRED: ("Licence expiree", False),
+        LicenseState.INVALID: ("Compte invalide", False),
         LicenseState.FRAUD_CLOCK: ("Erreur horloge", False),
     }
     lic_text, lic_ok = _license_labels.get(license_result.state, ("Inconnue", False))

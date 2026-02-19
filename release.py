@@ -107,6 +107,8 @@ def build_local_installer(version):
         f"\"{python_win}\" -m PyInstaller "
         f"--onefile --windowed "
         f"--icon=mystrow.ico "
+        f"--add-data \"logo.png;.\" "
+        f"--add-data \"mystrow.ico;.\" "
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
         f"--noconfirm main.py\n"

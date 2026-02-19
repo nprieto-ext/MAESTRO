@@ -1,31 +1,17 @@
-build/
+# SECRETS - NE JAMAIS PUSHER
+firebase_config.py
+smtp_config.py
+service_account.json
+create_client.py
+activate_dev.py
+keygen.py
+.maestro_admin.json
+
+# Build
 dist/
-__pycache__/
+build/
 *.spec
 
-# Medias et assets
-*.mp3
-*.wav
-*.mp4
-*.mov
-*.avi
-
-# Images (sauf logo.png et mystrow.ico)
-*.jpg
-*.jpeg
-*.webp
-*.bmp
-*.tiff
-*.pdf
-
-# Fichiers sensibles
-keys/
-*.pem
-*.bmtp
-
-# Shows utilisateur
-show */
-*.tui
-
-# Installer output
-installer/installer_output/
+# Python
+__pycache__/
+*.pyc

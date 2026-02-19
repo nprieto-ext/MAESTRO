@@ -1,0 +1,9 @@
+{
+  "type": "license",
+  "machine_id": "TEST123",
+  "created_utc": 1770985610.559178,
+  "expiry_utc": 1802521610.559178,
+  "last_launch_utc": 1770985610.559178,
+  "last_monotonic": 0,
+  "signature": "a5b7d5596f7b0368b33a0a18cfd6f41d85c07dbc3cb13ee72057c3f619d82b0610587527e26e5435a9ab6ee3b4b65df6d382dcd1d7b67ba302ec8cad58515509"
+}

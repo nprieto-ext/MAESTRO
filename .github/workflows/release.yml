@@ -27,14 +27,30 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --icon=mystrow.ico main.py --name MyStrow
+        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." main.py --name MyStrow
 
-      - name: Generate SHA256
+      - name: Generate SHA256 and .sig
         shell: pwsh
         run: |
           $hash = (Get-FileHash dist\MyStrow.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  MyStrow.exe" | Out-File -Encoding ascii dist\sha256.txt
           Write-Host "SHA256: $hash"
+          python -c "
+import json, hashlib, base64
+from pathlib import Path
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+exe = Path('dist/MyStrow.exe').read_bytes()
+sha256 = hashlib.sha256(exe).hexdigest()
+
+_KS = b'MC4CAQAwBQYDK2VwBCIEIO4dq7bapt3BQlEKe5aYxrP0aH9KbiN/Xdc/oij6uMQm'
+pem = b'-----BEGIN PRIVATE KEY-----\n' + _KS + b'\n-----END PRIVATE KEY-----\n'
+key = load_pem_private_key(pem, password=None)
+sig = key.sign(sha256.encode()).hex()
+
+Path('dist/MyStrow.exe.sig').write_text(json.dumps({'hash': sha256, 'signature': sig}))
+print('Sig generated:', sha256[:16])
+"
 
       - name: Build Installer (Inno Setup)
         run: |
@@ -65,10 +81,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pillow
 
       - name: Build .app
-        run: pyinstaller --windowed --icon=logo.png main.py --name MyStrow
+        run: pyinstaller --windowed --icon=logo.png --add-data "logo.png:." main.py --name MyStrow
 
       - name: Create DMG
         run: |

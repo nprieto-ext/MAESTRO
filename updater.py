@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QScreen, QPixmap
 
-from core import VERSION
+from core import VERSION, resource_path
 
 # === CONSTANTES ===
 GITHUB_API_URL = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
@@ -67,7 +67,7 @@ class SplashScreen(QWidget):
         # --- Logo ---
         self.logo_label = QLabel()
         self.logo_label.setAlignment(Qt.AlignCenter)
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        logo_path = resource_path("logo.png")
         if os.path.exists(logo_path):
             px = QPixmap(logo_path)
             px = px.scaledToHeight(80, Qt.SmoothTransformation)

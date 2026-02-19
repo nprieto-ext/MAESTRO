@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
         self._license = license_result or LicenseResult(
             state=LicenseState.NOT_ACTIVATED,
             dmx_allowed=False, watermark_required=True,
-            message="Logiciel non active", action_label="Activer"
+            message="Connectez-vous a votre compte MyStrow", action_label="Connexion"
         )
 
         # Icone de l'application
@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
         self.FADER_GROUPS = {
             0: ["face"],
             1: ["contre", "lat"],
-            2: ["douche1"],
+            2: ["douche1", "douche2", "douche3"],
             3: ["public"],
             4: None,  # Memoire 1
             5: None,  # Memoire 2
@@ -401,6 +401,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction("📥 Importer une configuration...", self.import_akai_config)
         file_menu.addAction("📤 Exporter une configuration...", self.export_akai_config)
         file_menu.addSeparator()
+        file_menu.addAction("🎨 Charger les configurations par defaut", self.load_default_presets)
+        file_menu.addSeparator()
         file_menu.addAction("❌ Quitter", self.close)
 
         edit_menu = bar.addMenu("✏️ Edition")
@@ -415,15 +417,14 @@ class MainWindow(QMainWindow):
         params_menu.addAction("⌨️ Raccourcis", self.show_shortcuts_dialog)
 
         conn_menu = bar.addMenu("🔗 Connexion")
-        conn_menu.setStyleSheet("QMenu { min-width: 280px; }")
 
         akai_menu = conn_menu.addMenu("🎹 Entrée Akai")
         akai_menu.addAction("🔍 Tester la connexion", self.test_akai_connection)
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
 
-        self.node_menu = conn_menu.addMenu("🌐 Sortie DMX")
+        self.node_menu = conn_menu.addMenu("🌐 Sortie Node")
         self.node_menu.addAction("🔍 Tester la connexion", self.test_node_connection)
-        self.node_menu.addAction("⚙️ Parametrer NODE", self.configure_node)
+        self.node_menu.addAction("⚙️ Paramétrer la sortie", self.open_node_connection)
 
         audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
         audio_menu.addAction("🔉 Envoi un son de test", self.play_test_sound)
@@ -773,14 +774,16 @@ class MainWindow(QMainWindow):
                         lambda pos, mc=mem_col, mr=r, btn=b: self._show_memory_context_menu(pos, mc, mr, btn)
                     )
 
-                pads.addWidget(b, r, c)
+                grid_col = c if c < 4 else c + 1  # colonne 4 = separateur
+                pads.addWidget(b, r, grid_col)
                 self.pads[(r, c)] = b
 
             effect_btn = EffectButton(r)
             effect_btn.clicked.connect(lambda _, idx=r: self.toggle_effect(idx))
             self.effect_buttons.append(effect_btn)
-            pads.addWidget(effect_btn, r, 8)
+            pads.addWidget(effect_btn, r, 9)
 
+        pads.setColumnMinimumWidth(4, 8)  # espace entre col 4 et col 5
         layout.addLayout(pads)
         layout.addSpacing(10)
 
@@ -801,6 +804,9 @@ class MainWindow(QMainWindow):
             col_layout.addWidget(fader)
 
             fader_container.addLayout(col_layout)
+
+            if i == 3:
+                fader_container.addSpacing(8)  # separation visuelle col 4 / col 5
 
         # Fader effet
         effect_col = QVBoxLayout()
@@ -1081,7 +1087,7 @@ class MainWindow(QMainWindow):
     def activate_pad(self, btn, col_idx):
         """Active un pad dans sa colonne (independant par colonne)"""
         color = btn.property("base_color")
-        groups = {0: ["face"], 1: ["contre", "lat"], 2: ["douche1"], 3: ["public"]}
+        groups = {0: ["face"], 1: ["contre", "lat"], 2: ["douche1", "douche2", "douche3"], 3: ["public"]}
         target_groups = groups.get(col_idx, [])
 
         # Desactiver l'ancien pad de CETTE colonne uniquement
@@ -1146,39 +1152,74 @@ class MainWindow(QMainWindow):
                             )
 
     def _activate_memory_pad(self, btn, mem_col, row):
-        """Active un pad memoire (radio par colonne) et applique au plan de feu"""
+        """Active un pad memoire - radio GLOBAL sur les 4 colonnes memoire.
+        L'appui sur un pad desactive tous les autres pads actifs (toutes colonnes),
+        puis active le nouveau. Cliquer sur le pad deja actif ne fait rien."""
         col_akai = 4 + mem_col
+
+        # Clic sur le pad deja actif → rien
+        if self.active_memory_pads.get(col_akai) == row:
+            return
+
+        # Activation impossible si aucune memoire stockee
         if self.memories[mem_col][row] is None:
             return
 
-        # Desactiver l'ancien pad actif de cette colonne
-        prev_row = self.active_memory_pads.get(col_akai)
-        if prev_row is not None and prev_row != row:
-            self._style_memory_pad(mem_col, prev_row, active=False)
-            self._update_memory_pad_led(mem_col, prev_row, active=False)
+        # Desactiver TOUS les pads actifs sur les 4 colonnes memoire
+        for mc in range(4):
+            ca = 4 + mc
+            prev_row = self.active_memory_pads.pop(ca, None)
+            if prev_row is not None:
+                self._clear_memory_from_projectors(mc, prev_row)
+                self._style_memory_pad(mc, prev_row, active=False)
+                self._update_memory_pad_led(mc, prev_row, active=False)
 
-        if prev_row == row:
-            # Desactiver si on reclique sur le meme
-            del self.active_memory_pads[col_akai]
-            self._style_memory_pad(mem_col, row, active=False)
-            self._update_memory_pad_led(mem_col, row, active=False)
-        else:
-            # Activer le nouveau
-            self.active_memory_pads[col_akai] = row
-            self._style_memory_pad(mem_col, row, active=True)
-            self._update_memory_pad_led(mem_col, row, active=True)
-            # Appliquer le snapshot aux projecteurs et rafraichir le plan de feu
-            self._apply_memory_to_projectors(mem_col, row)
-        # Sauvegarde auto immediate
+        # Activer le nouveau pad
+        self.active_memory_pads[col_akai] = row
+        self._style_memory_pad(mem_col, row, active=True)
+        self._update_memory_pad_led(mem_col, row, active=True)
+        self._apply_memory_to_projectors(mem_col, row)
         self._save_akai_config_auto()
 
-    def _apply_memory_to_projectors(self, mem_col, row):
-        """Active une memoire - le merge HTP se fait dans send_dmx_update.
-        Les faders couleur (0-3) ne sont PAS modifies, chaque fader reste independant.
-        Le plan de feu est rafraichi automatiquement par le timer 25fps."""
+    def _clear_memory_from_projectors(self, mem_col, row):
+        """Remet a zero les projecteurs actifs (level > 0) d'une memoire."""
         mem = self.memories[mem_col][row]
         if not mem:
             return
+        for i, proj_state in enumerate(mem["projectors"]):
+            if i >= len(self.projectors):
+                break
+            if proj_state["level"] > 0:
+                p = self.projectors[i]
+                p.level = 0
+                p.color = QColor("black")
+
+    def _apply_memory_to_projectors(self, mem_col, row):
+        """Applique directement une memoire sur les projecteurs.
+        Seuls les projecteurs avec level > 0 dans le snapshot sont modifies,
+        ce qui preserves les faders couleur (0-3) independants.
+        L'ecriture directe de p.level permet aux effets de detecter ces projecteurs."""
+        mem = self.memories[mem_col][row]
+        if not mem:
+            return
+        col_akai = 4 + mem_col
+        fader_value = self.faders[col_akai].value if col_akai in self.faders else 100
+        brightness = fader_value / 100.0
+        for i, proj_state in enumerate(mem["projectors"]):
+            if i >= len(self.projectors):
+                break
+            if proj_state["level"] <= 0:
+                continue
+            p = self.projectors[i]
+            level = int(proj_state["level"] * brightness)
+            base_color = QColor(proj_state["base_color"])
+            p.level = level
+            p.base_color = base_color
+            p.color = QColor(
+                int(base_color.red() * level / 100.0),
+                int(base_color.green() * level / 100.0),
+                int(base_color.blue() * level / 100.0)
+            )
 
     def _style_memory_pad(self, mem_col, row, active):
         """Style visuel d'un pad memoire"""
@@ -1382,6 +1423,20 @@ class MainWindow(QMainWindow):
 
     def toggle_mute(self, index, active):
         """Gere les mutes - chaque fader est independant"""
+        if index in (4, 5, 6, 7):
+            # Faders memoire : muter les projecteurs actifs du snapshot courant
+            mem_col = index - 4
+            active_row = self.active_memory_pads.get(index)
+            if active_row is None or not self.memories[mem_col][active_row]:
+                return
+            mem = self.memories[mem_col][active_row]
+            for i, proj_state in enumerate(mem["projectors"]):
+                if i >= len(self.projectors):
+                    break
+                if proj_state["level"] > 0:
+                    self.projectors[i].muted = active
+            return
+
         groups = self.FADER_GROUPS.get(index)
         if not groups:
             return
@@ -1411,6 +1466,10 @@ class MainWindow(QMainWindow):
             self.active_effect = None
             self.stop_effect()
         btn.update_style()
+        # Mise a jour LED AKAI (utile quand l'effet est toggle depuis l'UI)
+        if MIDI_AVAILABLE and self.midi_handler.midi_out and effect_idx < 8:
+            velocity = 1 if btn.active else 0
+            self.midi_handler.set_pad_led(effect_idx, 8, velocity, brightness_percent=100)
 
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
@@ -2341,9 +2400,8 @@ class MainWindow(QMainWindow):
                     c = custom_colors_data[mc][mr]
                     self.memory_custom_colors[mc][mr] = QColor(c) if c else None
 
-        if active_pads_data and isinstance(active_pads_data, dict):
-            for k, v in active_pads_data.items():
-                self.active_memory_pads[int(k)] = v
+        # active_memory_pads non restaure : toujours demarrer sans pad actif
+        # (evite le pad du haut "toujours enclenche" au demarrage)
 
         # Rafraichir l'affichage des pads memoire
         for mc in range(4):
@@ -2362,15 +2420,192 @@ class MainWindow(QMainWindow):
             print(f"Erreur sauvegarde config AKAI: {e}")
 
     def _load_akai_config_auto(self):
-        """Charge automatique de la config AKAI au demarrage"""
+        """Charge automatique de la config AKAI au demarrage.
+        Premier lancement (pas de fichier) : applique les presets par defaut."""
         try:
             if not os.path.exists(self._AKAI_CONFIG_PATH):
-                return
-            with open(self._AKAI_CONFIG_PATH, 'r') as f:
-                config = json.load(f)
-            self._apply_akai_config(config)
+                # Premier lancement : charger les presets par defaut
+                print("Premier lancement : application des presets AKAI par defaut")
+                self._apply_akai_config(self._build_default_akai_presets())
+                self._save_akai_config_auto()
+            else:
+                with open(self._AKAI_CONFIG_PATH, 'r') as f:
+                    config = json.load(f)
+                self._apply_akai_config(config)
+                self._migrate_missing_pad_colors()
+            # Toujours activer le pad du haut de chaque colonne memoire au demarrage
+            self._activate_top_pads_default()
         except Exception as e:
             print(f"Erreur chargement config AKAI: {e}")
+
+    # Couleurs de rangee par defaut (meme ordre que la grille AKAI cols 0-3)
+    _DEFAULT_PAD_ROW_COLORS = [
+        "#ffffff", "#ff0000", "#ff8800", "#ffdd00",
+        "#00ff00", "#00dddd", "#0000ff", "#ff00ff",
+    ]
+
+    def _migrate_missing_pad_colors(self):
+        """Migration : pour toute colonne memoire sans couleurs ou sans memoires,
+        applique les presets par defaut (couleurs de rangee + snapshots DMX).
+        S'execute une seule fois apres chargement d'un ancien fichier de config."""
+        needs_save = False
+        _presets = None  # charge les presets une seule fois si necessaire
+
+        for mc in range(4):
+            has_colors   = any(self.memory_custom_colors[mc][mr] is not None for mr in range(8))
+            has_memories = any(self.memories[mc][mr] is not None for mr in range(8))
+
+            if not has_colors or not has_memories:
+                if _presets is None:
+                    _presets = self._build_default_akai_presets()
+
+                if not has_memories:
+                    for mr in range(8):
+                        self.memories[mc][mr] = _presets["memories"][mc][mr]
+
+                if not has_colors:
+                    for mr in range(8):
+                        self.memory_custom_colors[mc][mr] = QColor(self._DEFAULT_PAD_ROW_COLORS[mr])
+
+                col_akai = 4 + mc
+                for mr in range(8):
+                    is_active = self.active_memory_pads.get(col_akai) == mr
+                    self._style_memory_pad(mc, mr, active=is_active)
+
+                needs_save = True
+                print(f"Migration : colonne memoire {mc + 5} mise a jour")
+
+        if needs_save:
+            self._save_akai_config_auto()
+
+    def _activate_top_pads_default(self):
+        """Active le pad du haut (rangee 0) de chaque colonne memoire.
+        Appele au demarrage. Les LEDs physiques AKAI sont envoyees par
+        activate_default_white_pads() qui se declenche 100ms apres l'init."""
+        for mc in range(4):
+            if self.memories[mc][0] is not None:
+                col_akai = 4 + mc
+                self.active_memory_pads[col_akai] = 0
+                self._style_memory_pad(mc, 0, active=True)
+                self._apply_memory_to_projectors(mc, 0)
+
+    def _build_default_akai_presets(self) -> dict:
+        """
+        Construit les presets LAT & CONTRE par defaut pour les colonnes 5-8 (mem_col 0-3).
+
+        Toutes les colonnes : LAT bicouleur symetrique + CONTRE bicouleur symetrique.
+        (LAT gauche=dom / droite=acc ; CONTRE pattern D-A-D | D-A-D symetrique)
+
+        Les 4 colonnes se distinguent par l'accord de couleur (accent) :
+          Col 5 (mc=0) : Dominant + Harmonique adjacent  (teintes proches, doux)
+          Col 6 (mc=1) : Dominant + Blanc pur            (effet naturel/scenique)
+          Col 7 (mc=2) : Dominant + Complementaire       (contraste fort)
+          Col 8 (mc=3) : Dominant + Split-comp / froid   (creatif)
+
+        8 rangees = 8 couleurs dominantes = couleurs des pads.
+        """
+
+        # (dom, [acc_col5, acc_col6, acc_col7, acc_col8])
+        ROW_DATA = [
+            ("#ffffff", ["#aabbff", "#ffe8aa", "#ffdd00", "#ff88cc"]),  # blanc   → bleu lavande / blanc chaud / jaune / rose
+            ("#ff0000", ["#ff8800", "#ffffff", "#00dddd", "#ff00ff"]),  # rouge   → orange / blanc / cyan / magenta
+            ("#ff8800", ["#ffdd00", "#ffffff", "#0000ff", "#ff0000"]),  # orange  → jaune / blanc / bleu / rouge
+            ("#ffdd00", ["#ff8800", "#ffffff", "#8800ff", "#00ff00"]),  # jaune   → orange / blanc / violet / vert
+            ("#00ff00", ["#00dddd", "#ffffff", "#ff00ff", "#0000ff"]),  # vert    → cyan / blanc / magenta / bleu
+            ("#00dddd", ["#0000ff", "#ffffff", "#ff0000", "#8800ff"]),  # cyan    → bleu / blanc / rouge / violet
+            ("#0000ff", ["#8800ff", "#ffffff", "#ff8800", "#00dddd"]),  # bleu    → violet / blanc / orange / cyan
+            ("#ff00ff", ["#ff0000", "#ffffff", "#00ff00", "#0000ff"]),  # magenta → rouge / blanc / vert / bleu
+        ]
+
+        # Structure projectors : 23 dans l'ordre de _create_projectors()
+        # [0-3]   FACE (4)
+        # [4-6]   DOUCHE1 (3), [7-9] DOUCHE2 (3), [10-12] DOUCHE3 (3)
+        # [13-14] LAT (2)   : [13]=gauche, [14]=droite
+        # [15-20] CONTRE (6): [15-17]=gauche, [18-20]=droite
+        # [21]    PUBLIC (1), [22] FUMEE (1)
+
+        def proj(group, color, level=100):
+            return {"group": group, "base_color": color, "level": level}
+
+        def off(group):
+            return {"group": group, "base_color": "#000000", "level": 0}
+
+        def make_snapshot(dom, acc):
+            snapshot = []
+
+            # FACE + DOUCHES : off
+            for _ in range(4):
+                snapshot.append(off("face"))
+            for grp in ("douche1", "douche2", "douche3"):
+                for _ in range(3):
+                    snapshot.append(off(grp))
+
+            # LAT bicouleur symetrique (gauche=dom, droite=acc)
+            snapshot.append(proj("lat", dom))
+            snapshot.append(proj("lat", acc))
+
+            # CONTRE bicouleur symetrique : pattern D-A-D | D-A-D
+            for _ in range(2):  # gauche x3 puis droite x3
+                snapshot.append(proj("contre", dom))
+                snapshot.append(proj("contre", acc))
+                snapshot.append(proj("contre", dom))
+
+            snapshot.append(off("public"))
+            snapshot.append(off("fumee"))
+
+            return {"projectors": snapshot}
+
+        memories      = [[None] * 8 for _ in range(4)]
+        custom_colors = [[None] * 8 for _ in range(4)]
+
+        for mc in range(4):
+            for row in range(8):
+                dom, accs = ROW_DATA[row]
+                acc = accs[mc]
+                memories[mc][row] = make_snapshot(dom, acc)
+                custom_colors[mc][row] = dom  # couleur du pad = dominant
+
+        return {
+            "memories": memories,
+            "memory_custom_colors": custom_colors,
+            "active_memory_pads": {},
+        }
+
+    def load_default_presets(self):
+        """Charge (ou restaure) les configurations par defaut LAT & CONTRE."""
+        reply = QMessageBox.question(
+            self,
+            "Configurations par defaut",
+            "Charger les presets LAT & CONTRE par defaut ?\n\n"
+            "Les memoires des colonnes 5 a 8 seront remplacees.\n"
+            "Les colonnes 1 a 4 (couleurs) ne sont pas modifiees.",
+            QMessageBox.Yes | QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        presets = self._build_default_akai_presets()
+
+        # Fusionner : ne remplacer que les 4 colonnes memoire, conserver le reste
+        for mc in range(4):
+            for mr in range(8):
+                self.memories[mc][mr] = presets["memories"][mc][mr]
+                c = presets["memory_custom_colors"][mc][mr]
+                self.memory_custom_colors[mc][mr] = QColor(c) if c else None
+                col_akai = mc + 4
+                is_active = self.active_memory_pads.get(col_akai) == mr
+                self._style_memory_pad(mc, mr, active=is_active)
+                self._update_memory_pad_led(mc, mr, active=is_active)
+
+        self._save_akai_config_auto()
+        QMessageBox.information(
+            self, "Configurations par defaut",
+            "Presets LAT & CONTRE charges avec succes !\n\n"
+            "Col 5 : LAT couleur\n"
+            "Col 6 : LAT bicouleur symetrique\n"
+            "Col 7 : CONTRE couleur\n"
+            "Col 8 : CONTRE bicouleur symetrique"
+        )
 
     def export_akai_config(self):
         """Exporte la configuration AKAI dans un fichier"""
@@ -3890,6 +4125,12 @@ class MainWindow(QMainWindow):
                     if col_idx in self.faders:
                         self.faders[col_idx].set_value(p.level)
                     break
+
+    def open_node_connection(self):
+        """Ouvre l'assistant de connexion et configuration du Node DMX."""
+        from node_connection import NodeConnectionDialog
+        dlg = NodeConnectionDialog(self)
+        dlg.exec()
 
     def test_node_connection(self):
         """Teste la connexion au Node DMX par ping"""

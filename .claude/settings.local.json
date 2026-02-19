@@ -25,7 +25,13 @@
       "Bash(powershell -Command:*)",
       "Bash(grep:*)",
       "Bash(cmd //c \"if exist C:\\\\Users\\\\nikop\\\\.maestro_license.dat \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")",
-      "Bash(cmd //c \"if exist \"\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\MyStrow\\\\cache\\\\.sys\"\" \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")"
+      "Bash(cmd //c \"if exist \"\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\MyStrow\\\\cache\\\\.sys\"\" \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")",
+      "WebFetch(domain:dmx-tools.electroconcept.fr)",
+      "WebSearch",
+      "WebFetch(domain:www.electroconcept.fr)",
+      "Bash(git -C \"C:/Users/nikop/Desktop/MyStrow\" show HEAD:main_window.py)",
+      "Bash(python -m pip install:*)",
+      "Bash(/c/Users/nikop/AppData/Local/Programs/Python/Python312/python.exe -m pip install:*)"
     ]
   }
 }

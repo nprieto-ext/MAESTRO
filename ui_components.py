@@ -69,7 +69,7 @@ EFFECT_PRESETS = [
 # Effet par defaut pour chaque bouton (index 0-8)
 DEFAULT_EFFECTS = [
     "Strobe", "Flash", "Pulse", "Wave",
-    "Random", "Rainbow", "Sparkle", "Fire", None
+    "Random", "Rainbow", "Sparkle", "Fire", "Strobe"
 ]
 
 def get_effect_emoji(effect_name):
