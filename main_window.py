@@ -2804,6 +2804,12 @@ class MainWindow(QMainWindow):
         if not found:
             QMessageBox.information(self, "Mises a jour",
                 f"Version actuelle : {VERSION}\nVous etes a jour !")
+        elif not self.update_bar.isVisible():
+            # Nouvelle version détectée mais l'exe n'est pas encore prêt au téléchargement
+            QMessageBox.information(self, "Mise a jour disponible",
+                f"Version {version} disponible.\n\n"
+                f"Le téléchargement n'est pas encore prêt.\n"
+                f"Réessayez dans quelques minutes.")
 
     def on_update_available(self, version, exe_url, hash_url):
         """Signal du checker async - montre la barre verte"""

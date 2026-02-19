@@ -29,28 +29,12 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." main.py --name MyStrow
 
-      - name: Generate SHA256 and .sig
+      - name: Generate SHA256
         shell: pwsh
         run: |
           $hash = (Get-FileHash dist\MyStrow.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  MyStrow.exe" | Out-File -Encoding ascii dist\sha256.txt
           Write-Host "SHA256: $hash"
-          python -c "
-import json, hashlib, base64
-from pathlib import Path
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
-exe = Path('dist/MyStrow.exe').read_bytes()
-sha256 = hashlib.sha256(exe).hexdigest()
-
-_KS = b'MC4CAQAwBQYDK2VwBCIEIO4dq7bapt3BQlEKe5aYxrP0aH9KbiN/Xdc/oij6uMQm'
-pem = b'-----BEGIN PRIVATE KEY-----\n' + _KS + b'\n-----END PRIVATE KEY-----\n'
-key = load_pem_private_key(pem, password=None)
-sig = key.sign(sha256.encode()).hex()
-
-Path('dist/MyStrow.exe.sig').write_text(json.dumps({'hash': sha256, 'signature': sig}))
-print('Sig generated:', sha256[:16])
-"
 
       - name: Build Installer (Inno Setup)
         run: |
@@ -115,6 +99,8 @@ print('Sig generated:', sha256[:16])
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
+      - uses: actions/checkout@v4
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -125,3 +111,16 @@ print('Sig generated:', sha256[:16])
             windows-installer/MyStrow.exe
             windows-installer/sha256.txt
             mac-dmg/MyStrow_Installer.dmg
+
+      - name: Supprimer les anciennes releases (garder 1)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT_TAG="${{ github.ref_name }}"
+          gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | \
+          while read tag; do
+            if [ "$tag" != "$CURRENT_TAG" ]; then
+              echo "Suppression de la release $tag..."
+              gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
+            fi
+          done

@@ -225,7 +225,9 @@ class UpdateChecker(QThread):
                 self.update_available.emit(remote_version, exe_url, hash_url)
                 self.check_finished.emit(True, remote_version)
             else:
-                self.check_finished.emit(False, remote_version)
+                # Nouvelle version détectée mais l'exe n'est pas encore disponible
+                # (GitHub Actions pas encore terminé ou asset manquant)
+                self.check_finished.emit(True, remote_version)
         except Exception:
             self.check_finished.emit(False, "")
 
