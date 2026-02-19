@@ -185,7 +185,8 @@ class UpdateChecker(QThread):
     """Verifie les releases GitHub en arriere-plan"""
 
     update_available = Signal(str, str, str)  # version, exe_url, hash_url
-    check_finished = Signal(bool, str)        # found, version (pour check manuel)
+    check_finished   = Signal(bool, str)       # found, remote_version
+    check_error      = Signal(str)             # message d'erreur lisible
 
     def __init__(self, force=False):
         super().__init__()
@@ -201,11 +202,15 @@ class UpdateChecker(QThread):
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": "MyStrow-Updater"}
             )
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             tag = data.get("tag_name", "")
             remote_version = tag.lstrip("v")
+
+            if not remote_version:
+                self.check_error.emit("Aucune release trouvée sur GitHub.")
+                return
 
             if not version_gt(remote_version, VERSION):
                 self.check_finished.emit(False, remote_version)
@@ -225,11 +230,14 @@ class UpdateChecker(QThread):
                 self.update_available.emit(remote_version, exe_url, hash_url)
                 self.check_finished.emit(True, remote_version)
             else:
-                # Nouvelle version détectée mais l'exe n'est pas encore disponible
-                # (GitHub Actions pas encore terminé ou asset manquant)
+                # Version détectée mais installeur pas encore prêt (CI en cours)
                 self.check_finished.emit(True, remote_version)
-        except Exception:
-            self.check_finished.emit(False, "")
+        except urllib.error.HTTPError as e:
+            self.check_error.emit(f"HTTP {e.code} — {e.reason}")
+        except urllib.error.URLError as e:
+            self.check_error.emit(f"Réseau inaccessible : {e.reason}")
+        except Exception as e:
+            self.check_error.emit(str(e))
 
     def _reminder_active(self):
         try:
@@ -626,6 +634,7 @@ class AboutDialog(QDialog):
         self._checker = UpdateChecker(force=True)
         self._checker.update_available.connect(self._on_update_available)
         self._checker.check_finished.connect(self._on_check_finished)
+        self._checker.check_error.connect(self._on_check_error)
         self._checker.start()
 
     def _on_update_available(self, version, exe_url, hash_url):
@@ -647,7 +656,8 @@ class AboutDialog(QDialog):
                 "QWidget { background: #111; border: 1px solid #2a4a2a; border-radius: 6px; }"
             )
             self.status_lbl.setStyleSheet("color: #4CAF50; background: transparent; border: none;")
-            self.status_lbl.setText("✓  Vous êtes à jour !")
+            suffix = f"  (GitHub : v{version})" if version else ""
+            self.status_lbl.setText(f"✓  Vous êtes à jour !{suffix}")
         elif not self._exe_url:
             # Version détectée mais l'installeur n'est pas encore prêt (CI en cours)
             self._update_box.setStyleSheet(
@@ -655,6 +665,14 @@ class AboutDialog(QDialog):
             )
             self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
             self.status_lbl.setText(f"Version {version} disponible  —  bientôt prêt")
+
+    def _on_check_error(self, error: str):
+        self.btn_recheck.setEnabled(True)
+        self._update_box.setStyleSheet(
+            "QWidget { background: #111; border: 1px solid #6b2a2a; border-radius: 6px; }"
+        )
+        self.status_lbl.setStyleSheet("color: #e57373; background: transparent; border: none;")
+        self.status_lbl.setText(f"⚠️  {error}")
 
     def _on_download(self):
         parent   = self.parent()

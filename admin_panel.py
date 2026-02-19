@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QDialog, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
+    QProgressBar,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor
@@ -1087,15 +1088,24 @@ class AdminPanel(QMainWindow):
 class ReleaseWorker(QObject):
     """Exécute le pipeline de release dans un QThread séparé."""
     log      = Signal(str)
-    finished = Signal(bool, str)   # succès, message
+    progress = Signal(int)    # 0-100
+    step     = Signal(str)    # libellé étape courante
+    finished = Signal(bool, str)
 
     def __init__(self, version: str, action: str, parent=None):
         super().__init__(parent)
         self._version = version
         self._action  = action   # "local" | "github" | "both"
+        self._m: dict = {}
 
     def _p(self, msg: str):
         self.log.emit(msg)
+
+    def _prog(self, pct: int):
+        self.progress.emit(pct)
+
+    def _step(self, label: str):
+        self.step.emit(label)
 
     def _run_cmd(self, cmd: str, allow_fail: bool = False, cwd=None) -> int:
         self._p(f">>> {cmd}")
@@ -1117,35 +1127,65 @@ class ReleaseWorker(QObject):
     def run(self):
         try:
             v = self._version
+            a = self._action
             self._p(f"=== RELEASE MYSTROW v{v} ===\n")
+
+            # Jalons de progression selon l'action
+            if a == "local":
+                self._m = {
+                    "ver": 5, "clean": 8, "pyinst": 65,
+                    "sig": 68, "inno": 92, "copy": 100,
+                }
+            elif a == "github":
+                self._m = {
+                    "ver": 5, "git_add": 15, "git_commit": 25,
+                    "git_tag": 30, "git_push1": 55, "git_push2": 70,
+                    "ci_start": 70, "ci_done": 100,
+                }
+            else:  # both
+                self._m = {
+                    "ver": 2, "clean": 4, "pyinst": 42,
+                    "sig": 44, "inno": 56, "copy": 58,
+                    "git_add": 63, "git_commit": 68, "git_tag": 71,
+                    "git_push1": 80, "git_push2": 87,
+                    "ci_start": 87, "ci_done": 100,
+                }
+
+            self._step("Mise à jour des versions...")
             self._p("Mise à jour des fichiers de version...")
             update_version(v)
             self._p(f"  core.py + maestro.iss → v{v}\n")
+            self._prog(self._m["ver"])
 
-            if self._action in ("local", "both"):
+            if a in ("local", "both"):
                 self._build_local(v)
 
-            if self._action in ("github", "both"):
+            if a in ("github", "both"):
                 self._push_github(v)
                 self._watch_actions(v)
 
+            self._prog(100)
             self.finished.emit(True, f"Release v{v} terminée avec succès !")
         except Exception as exc:
             self.finished.emit(False, str(exc))
 
     def _build_local(self, version: str):
+        m = self._m
         self._p("\n========== BUILD INSTALLEUR LOCAL ==========")
         dist_exe      = _RELEASE_DIR / "dist" / "MyStrow.exe"
         installer_out = _RELEASE_DIR / "installer" / "installer_output" / "MyStrow_Setup.exe"
 
         # Nettoyage
+        self._step("Nettoyage...")
         self._p("Nettoyage dist/ et build/...")
         for d in ("dist", "build"):
             p = _RELEASE_DIR / d
             if p.exists():
                 shutil.rmtree(p)
+        self._prog(m["clean"])
 
         # PyInstaller via .bat (contourne MINGW)
+        self._step("PyInstaller (peut prendre ~2 min)...")
         self._p("\n--- PyInstaller ---")
         python_win = sys.executable.replace("/", "\\")
         base_win   = str(_RELEASE_DIR).replace("/", "\\")
@@ -1171,11 +1211,16 @@ class ReleaseWorker(QObject):
 
         if not dist_exe.exists():
             raise RuntimeError("MyStrow.exe introuvable après PyInstaller.")
+        self._prog(m["pyinst"])
 
+        # Signature
+        self._step("Génération .sig...")
         self._p("\nGénération du fichier .sig...")
         generate_sig_file(dist_exe)
+        self._prog(m["sig"])
 
         # Inno Setup
+        self._step("Inno Setup — packaging installeur...")
         self._p("\n--- Inno Setup ---")
         iscc_candidates = [
             Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -1185,28 +1230,51 @@ class ReleaseWorker(QObject):
         iscc = next((p for p in iscc_candidates if p.exists()), None)
         if iscc is None:
             raise RuntimeError("Inno Setup (ISCC.exe) introuvable.")
-
         self._run_cmd(f'"{iscc}" installer\\maestro.iss', cwd=_RELEASE_DIR)
-
         if not installer_out.exists():
             raise RuntimeError("MyStrow_Setup.exe introuvable après Inno Setup.")
+        self._prog(m["inno"])
 
+        # Copie Bureau
+        self._step("Copie sur le Bureau...")
         desktop = Path.home() / "Desktop"
         dest    = desktop / f"MyStrow_Setup_{version}.exe"
         shutil.copy2(installer_out, dest)
         self._p(f"\nInstalleur copié sur le bureau : {dest}")
+        self._prog(m["copy"])
 
     def _push_github(self, version: str):
+        m = self._m
         self._p("\n========== PUSH GITHUB ==========")
-        self._run_cmd("git add -A",                                       cwd=_RELEASE_DIR)
+
+        self._step("git add...")
+        self._run_cmd("git add -A", cwd=_RELEASE_DIR)
+        self._prog(m["git_add"])
+
+        self._step("git commit...")
         self._run_cmd(f'git commit -m "Release {version}"', allow_fail=True, cwd=_RELEASE_DIR)
-        self._run_cmd(f"git tag v{version}",                              cwd=_RELEASE_DIR)
-        self._run_cmd("git push origin main",                             cwd=_RELEASE_DIR)
-        self._run_cmd(f"git push origin v{version}",                      cwd=_RELEASE_DIR)
+        self._prog(m["git_commit"])
+
+        self._step("git tag...")
+        self._run_cmd(f"git tag v{version}", cwd=_RELEASE_DIR)
+        self._prog(m["git_tag"])
+
+        self._step("git push origin main...")
+        self._run_cmd("git push origin main", cwd=_RELEASE_DIR)
+        self._prog(m["git_push1"])
+
+        self._step(f"git push tag v{version}...")
+        self._run_cmd(f"git push origin v{version}", cwd=_RELEASE_DIR)
+        self._prog(m["git_push2"])
         self._p(f"\n=== TAG v{version} POUSSÉ ===")
 
     def _watch_actions(self, version: str):
         from datetime import datetime as _dt
+        m        = self._m
+        ci_start = m["ci_start"]
+        ci_done  = m["ci_done"]
+
+        self._step("GitHub Actions — attente démarrage...")
         self._p("\nSuivi GitHub Actions (attente démarrage)...")
         run_id = None
         for _ in range(30):
@@ -1249,6 +1317,11 @@ class ReleaseWorker(QObject):
             cur_state  = {j["name"]: (j["status"], j.get("conclusion")) for j in jobs}
 
             if cur_state != last_state:
+                done_count = sum(1 for j in jobs if j["status"] == "completed")
+                total      = max(len(jobs), 1)
+                ci_pct     = ci_start + int((ci_done - ci_start) * done_count / total)
+                self._prog(ci_pct)
+                self._step(f"GitHub Actions — {done_count}/{total} jobs terminés")
                 lines = []
                 for job in jobs:
                     js   = job["status"]
@@ -1278,7 +1351,7 @@ class ReleaseDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Release MyStrow")
-        self.setMinimumSize(720, 540)
+        self.setMinimumSize(720, 580)
         self._thread = None
         self._worker = None
         self._build_ui()
@@ -1286,7 +1359,7 @@ class ReleaseDialog(QDialog):
     def _build_ui(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 20, 20, 16)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
 
         title = QLabel("Release MyStrow")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
@@ -1333,6 +1406,42 @@ class ReleaseDialog(QDialog):
         btns.addStretch()
         lay.addLayout(btns)
 
+        # Barre de progression
+        prog_lay = QHBoxLayout()
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedHeight(10)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: #222;
+                border: none;
+                border-radius: 5px;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}, stop:1 #0088aa
+                );
+                border-radius: 5px;
+            }}
+        """)
+        self.pct_label = QLabel("0 %")
+        self.pct_label.setFixedWidth(38)
+        self.pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.pct_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 10px;")
+        prog_lay.addWidget(self.progress_bar)
+        prog_lay.addSpacing(6)
+        prog_lay.addWidget(self.pct_label)
+        lay.addLayout(prog_lay)
+
+        # Étape courante
+        self.step_label = QLabel("")
+        self.step_label.setFont(QFont("Segoe UI", 9))
+        self.step_label.setStyleSheet(f"color: {TEXT_DIM};")
+        lay.addWidget(self.step_label)
+
         # Log
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
@@ -1354,16 +1463,25 @@ class ReleaseDialog(QDialog):
         self.btn_start.setEnabled(False)
         self.btn_start.setText("En cours…")
         self.log_edit.clear()
+        self.progress_bar.setValue(0)
+        self.pct_label.setText("0 %")
+        self.step_label.setText("")
 
         self._thread = QThread(self)
         self._worker = ReleaseWorker(version, action)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.log.connect(self._append_log)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.step.connect(self.step_label.setText)
         self._worker.finished.connect(self._on_finished)
         self._worker.finished.connect(self._thread.quit)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
+
+    def _on_progress(self, pct: int):
+        self.progress_bar.setValue(pct)
+        self.pct_label.setText(f"{pct} %")
 
     def _append_log(self, text: str):
         self.log_edit.append(text)
@@ -1374,8 +1492,13 @@ class ReleaseDialog(QDialog):
         self.btn_start.setEnabled(True)
         self.btn_start.setText("Lancer la release")
         if success:
+            self._on_progress(100)
+            self.step_label.setText("Terminé !")
+            self.step_label.setStyleSheet("color: #4CAF50; font-size: 9px;")
             self._append_log(f"\n{msg}")
         else:
+            self.step_label.setText("Erreur")
+            self.step_label.setStyleSheet(f"color: {RED}; font-size: 9px;")
             self._append_log(f"\nERREUR : {msg}")
             QMessageBox.critical(self, "Erreur release", msg)
 
