@@ -27,7 +27,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from core import (
     APP_NAME, VERSION, MIDI_AVAILABLE,
-    rgb_to_akai_velocity, fmt_time, create_icon, media_icon
+    rgb_to_akai_velocity, fmt_time, create_icon, media_icon, resource_path
 )
 from projector import Projector
 from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode, profile_name, profile_display_text
@@ -336,18 +336,10 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(base)
 
     def _create_window_icon(self):
-        """Cree l'icone de la fenetre"""
-        icon_pixmap = QPixmap(64, 64)
-        icon_pixmap.fill(Qt.transparent)
-        painter = QPainter(icon_pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#4a8aaa"))
-        painter.drawEllipse(12, 12, 40, 40)
-        painter.setBrush(QColor("#ffdd00"))
-        painter.drawPolygon(QPolygon([QPoint(32, 12), QPoint(42, 2), QPoint(52, 12)]))
-        painter.end()
-        self.setWindowIcon(QIcon(icon_pixmap))
+        """Charge l'icone de la fenetre depuis mystrow.ico"""
+        ico_path = resource_path("mystrow.ico")
+        if os.path.exists(ico_path):
+            self.setWindowIcon(QIcon(ico_path))
 
     def _create_projectors(self):
         """Cree les projecteurs"""
