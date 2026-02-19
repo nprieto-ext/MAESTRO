@@ -276,36 +276,41 @@ def _watch_github_actions(version):
 # RELEASE
 # ------------------------------------------------------------------
 
-print("========== RELEASE MYSTROW ==========")
+def main():
+    print("========== RELEASE MYSTROW ==========")
 
-current_version = get_current_version()
-print(f"Version actuelle : {current_version}")
+    current_version = get_current_version()
+    print(f"Version actuelle : {current_version}")
 
-new_version = input(f"Nouvelle version ? [{bump_version(current_version)}] : ").strip()
-if not new_version:
-    new_version = bump_version(current_version)
+    new_version = input(f"Nouvelle version ? [{bump_version(current_version)}] : ").strip()
+    if not new_version:
+        new_version = bump_version(current_version)
 
-print("\nQue veux-tu faire ?")
-print("  1) Installeur local seulement (Bureau)")
-print("  2) Push GitHub seulement (CI build)")
-print("  3) Les deux")
-choix = input("Choix [3] : ").strip() or "3"
+    print("\nQue veux-tu faire ?")
+    print("  1) Installeur local seulement (Bureau)")
+    print("  2) Push GitHub seulement (CI build)")
+    print("  3) Les deux")
+    choix = input("Choix [3] : ").strip() or "3"
 
-if choix not in ("1", "2", "3"):
-    print("Choix invalide. Arret.")
-    sys.exit(1)
+    if choix not in ("1", "2", "3"):
+        print("Choix invalide. Arret.")
+        sys.exit(1)
 
-print(f"\nMise a jour vers {new_version}...")
-update_version(new_version)
+    print(f"\nMise a jour vers {new_version}...")
+    update_version(new_version)
 
-if choix in ("1", "3"):
-    build_local_installer(new_version)
+    if choix in ("1", "3"):
+        build_local_installer(new_version)
 
-if choix in ("2", "3"):
-    run("git add -A")
-    run(f'git commit -m "Release {new_version}"', allow_fail=True)
-    run(f"git tag v{new_version}")
-    run("git push origin main")
-    run(f"git push origin v{new_version}")
-    print(f"\n========== TAG v{new_version} POUSSE ==========")
-    _watch_github_actions(new_version)
+    if choix in ("2", "3"):
+        run("git add -A")
+        run(f'git commit -m "Release {new_version}"', allow_fail=True)
+        run(f"git tag v{new_version}")
+        run("git push origin main")
+        run(f"git push origin v{new_version}")
+        print(f"\n========== TAG v{new_version} POUSSE ==========")
+        _watch_github_actions(new_version)
+
+
+if __name__ == "__main__":
+    main()

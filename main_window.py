@@ -38,7 +38,7 @@ from plan_de_feu import PlanDeFeu, ColorPickerBlock
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
-from updater import UpdateBar, UpdateChecker, download_update
+from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
 from license_manager import LicenseState, LicenseResult, verify_license
 from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog
 
@@ -438,8 +438,7 @@ class MainWindow(QMainWindow):
         self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
 
         about_menu = bar.addMenu("ℹ️ A propos")
-        about_menu.addAction("📌 Version", self.show_version)
-        about_menu.addAction("🔄 Vérifier les mises à jour", self.check_updates)
+        about_menu.addAction("ℹ️ A propos / Mises à jour", self.show_about)
         about_menu.addSeparator()
         about_menu.addAction("🔑 Licence", self._open_activation_dialog)
 
@@ -2785,31 +2784,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Non applicable",
                 "Cette fonction est disponible pour les images et les pauses.")
 
-    def show_version(self):
-        """Affiche la version"""
-        QMessageBox.information(self, "A propos",
-            f"Maestro Light Control\nVersion {VERSION}\n\nDeveloppe par Nicolas PRIETO")
-
-    def check_updates(self):
-        """Verifie les mises a jour (force, ignore reminder)"""
-        checker = UpdateChecker(force=True)
-        checker.update_available.connect(self.on_update_available)
-        checker.check_finished.connect(self._on_manual_check_finished)
-        checker._manual = True
-        self._manual_checker = checker
-        checker.start()
-
-    def _on_manual_check_finished(self, found, version):
-        """Resultat du check manuel depuis le menu"""
-        if not found:
-            QMessageBox.information(self, "Mises a jour",
-                f"Version actuelle : {VERSION}\nVous etes a jour !")
-        elif not self.update_bar.isVisible():
-            # Nouvelle version détectée mais l'exe n'est pas encore prêt au téléchargement
-            QMessageBox.information(self, "Mise a jour disponible",
-                f"Version {version} disponible.\n\n"
-                f"Le téléchargement n'est pas encore prêt.\n"
-                f"Réessayez dans quelques minutes.")
+    def show_about(self):
+        """Ouvre le dialogue A propos / mises à jour"""
+        AboutDialog(self).exec()
 
     def on_update_available(self, version, exe_url, hash_url):
         """Signal du checker async - montre la barre verte"""
@@ -4139,32 +4116,146 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def test_node_connection(self):
-        """Teste la connexion au Node DMX par ping"""
+        """Diagnostic Node DMX : carte reseau + node"""
         if not self._license.dmx_allowed:
             QMessageBox.warning(self, "Sortie DMX",
                 "Votre periode d'essai est terminee ou le logiciel n'est pas active.\nActivez une licence pour utiliser la sortie Art-Net.")
             return
 
-        import subprocess
-        import platform
+        import socket as _socket
+        from node_connection import _get_ethernet_adapters, _artpoll_packet, TARGET_IP, TARGET_PORT
 
-        target = self.dmx.target_ip
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnostic Node DMX")
+        dlg.setFixedSize(430, 250)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setStyleSheet(
+            "QDialog { background: #1a1a1a; }"
+            "QLabel { color: #cccccc; border: none; background: transparent; }"
+        )
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(28, 22, 28, 18)
+        root.setSpacing(16)
+
+        title = QLabel("Diagnostic de la sortie Node DMX")
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title.setStyleSheet("color: #00d4ff;")
+        root.addWidget(title)
+
+        def _make_check_row(label_text):
+            row = QHBoxLayout()
+            row.setSpacing(14)
+            icon = QLabel("…")
+            icon.setFont(QFont("Segoe UI", 16))
+            icon.setFixedWidth(26)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setStyleSheet("color: #555555;")
+            row.addWidget(icon)
+            col = QVBoxLayout()
+            col.setSpacing(1)
+            lbl = QLabel(label_text)
+            lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            col.addWidget(lbl)
+            detail = QLabel("Vérification en cours...")
+            detail.setFont(QFont("Segoe UI", 9))
+            detail.setStyleSheet("color: #555555;")
+            col.addWidget(detail)
+            row.addLayout(col, 1)
+            root.addLayout(row)
+            return icon, detail
+
+        icon_net, detail_net = _make_check_row("Carte réseau")
+        icon_node, detail_node = _make_check_row("Node DMX")
+
+        root.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_config = QPushButton("Ouvrir l'assistant de connexion")
+        btn_config.setFixedHeight(30)
+        btn_config.setStyleSheet(
+            "QPushButton { background: #1e3a4a; color: #00d4ff; border: 1px solid #00d4ff;"
+            " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+            "QPushButton:hover { background: #254a5a; }"
+        )
+        btn_config.hide()
+        btn_config.clicked.connect(lambda: (dlg.accept(), self.open_node_connection()))
+        btn_row.addWidget(btn_config)
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(30)
+        btn_close.setStyleSheet(
+            "QPushButton { background: #2a2a2a; color: #aaaaaa; border: 1px solid #3a3a3a;"
+            " border-radius: 4px; padding: 0 14px; font-size: 10px; }"
+            "QPushButton:hover { background: #333333; color: white; }"
+        )
+        btn_close.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+        dlg.show()
+        QApplication.processEvents()
+
+        # --- Vérification 1 : carte réseau ---
+        adapters = _get_ethernet_adapters()
+        ok_adapters = [(n, ip) for n, ip in adapters if ip.startswith("2.")]
+
+        if ok_adapters:
+            name, ip = ok_adapters[0]
+            icon_net.setText("✓")
+            icon_net.setStyleSheet("color: #4CAF50;")
+            detail_net.setText(f"{name}  —  IP : {ip}")
+            detail_net.setStyleSheet("color: #4CAF50;")
+            net_ok = True
+        elif adapters:
+            names = "  /  ".join(n for n, _ in adapters[:2])
+            icon_net.setText("⚠")
+            icon_net.setStyleSheet("color: #ff9800;")
+            detail_net.setText(f"{names}  —  IP non configurée en 2.x.x.x")
+            detail_net.setStyleSheet("color: #ff9800;")
+            net_ok = False
+        else:
+            icon_net.setText("✗")
+            icon_net.setStyleSheet("color: #f44336;")
+            detail_net.setText("Aucune carte Ethernet détectée — vérifiez le câble RJ45")
+            detail_net.setStyleSheet("color: #f44336;")
+            net_ok = False
+
+        QApplication.processEvents()
+
+        # --- Vérification 2 : node ArtPoll ---
+        node_ok = False
         try:
-            param = '-n' if platform.system().lower() == 'windows' else '-c'
-            command = ['ping', param, '1', '-w', '1000', target]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=3)
-            if result.returncode == 0:
-                if not self.dmx.connected:
-                    self.dmx.connect()
-                QMessageBox.information(self, "NODE",
-                    f"Node DMX accessible a {target} !\n\n"
-                    f"Connexion Art-Net: {'Active' if self.dmx.connected else 'Inactive'}")
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.settimeout(1.5)
+            s.sendto(_artpoll_packet(), (TARGET_IP, TARGET_PORT))
+            data, _ = s.recvfrom(256)
+            s.close()
+            node_ok = data[:8] == b'Art-Net\x00'
+        except Exception:
+            node_ok = False
+
+        if node_ok:
+            icon_node.setText("✓")
+            icon_node.setStyleSheet("color: #4CAF50;")
+            detail_node.setText(f"Répond sur {TARGET_IP}  —  Art-Net opérationnel")
+            detail_node.setStyleSheet("color: #4CAF50;")
+            if not self.dmx.connected:
+                self.dmx.connect()
+        else:
+            icon_node.setText("✗")
+            icon_node.setStyleSheet("color: #f44336;")
+            if net_ok:
+                detail_node.setText(f"Pas de réponse sur {TARGET_IP}  —  vérifiez que le boîtier est allumé")
             else:
-                QMessageBox.warning(self, "NODE",
-                    f"Node DMX non accessible a {target}.\n\n"
-                    "Verifiez le cablage Ethernet et la configuration IP.")
-        except Exception as e:
-            QMessageBox.warning(self, "NODE", f"Erreur de test: {e}")
+                detail_node.setText(f"Impossible de contacter {TARGET_IP}  —  configurez d'abord la carte réseau")
+            detail_node.setStyleSheet("color: #f44336;")
+
+        if not net_ok or not node_ok:
+            btn_config.show()
+
+        QApplication.processEvents()
+        dlg.exec()
 
     def configure_node(self):
         """Configure les parametres du Node DMX"""

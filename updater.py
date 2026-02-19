@@ -499,6 +499,172 @@ def download_update(parent, version, exe_url, hash_url):
         ))
 
 
+# ============================================================
+# ABOUT DIALOG
+# ============================================================
+class AboutDialog(QDialog):
+    """Dialogue A propos : version actuelle + vérification des mises à jour."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("A propos de MyStrow")
+        self.setFixedSize(360, 320)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog, QWidget {
+                background: #1a1a1a;
+                color: #cccccc;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QLabel  { border: none; background: transparent; }
+        """)
+        self._new_version = ""
+        self._exe_url     = ""
+        self._hash_url    = ""
+        self._build_ui()
+        self._start_check()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 22, 28, 18)
+        lay.setSpacing(0)
+
+        # Logo
+        logo_lbl = QLabel()
+        logo_lbl.setAlignment(Qt.AlignCenter)
+        logo_path = resource_path("logo.png")
+        if os.path.exists(logo_path):
+            px = QPixmap(logo_path)
+            px = px.scaledToHeight(64, Qt.SmoothTransformation)
+            logo_lbl.setPixmap(px)
+        lay.addWidget(logo_lbl)
+        lay.addSpacing(10)
+
+        # Nom
+        name_lbl = QLabel("MyStrow")
+        name_lbl.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        name_lbl.setStyleSheet("color: #00d4ff;")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(name_lbl)
+
+        # Version
+        ver_lbl = QLabel(f"v{VERSION}")
+        ver_lbl.setFont(QFont("Segoe UI", 10))
+        ver_lbl.setStyleSheet("color: #555;")
+        ver_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(ver_lbl)
+        lay.addSpacing(18)
+
+        # Cadre état mise à jour
+        self._update_box = QWidget()
+        self._update_box.setFixedHeight(72)
+        self._update_box.setStyleSheet(
+            "QWidget { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; }"
+        )
+        box_lay = QVBoxLayout(self._update_box)
+        box_lay.setContentsMargins(12, 6, 12, 6)
+        box_lay.setSpacing(4)
+
+        self.status_lbl = QLabel("Vérification des mises à jour...")
+        self.status_lbl.setFont(QFont("Segoe UI", 9))
+        self.status_lbl.setStyleSheet("color: #555; background: transparent; border: none;")
+        self.status_lbl.setAlignment(Qt.AlignCenter)
+        box_lay.addWidget(self.status_lbl)
+
+        self.btn_download = QPushButton()
+        self.btn_download.setFixedHeight(26)
+        self.btn_download.setStyleSheet("""
+            QPushButton {
+                background: #2d7a3a; color: white; border: none;
+                border-radius: 4px; font-weight: bold; font-size: 10px;
+            }
+            QPushButton:hover { background: #3a9a4a; }
+        """)
+        self.btn_download.clicked.connect(self._on_download)
+        self.btn_download.hide()
+        box_lay.addWidget(self.btn_download)
+        lay.addWidget(self._update_box)
+        lay.addSpacing(6)
+
+        # Lien revérifier
+        self.btn_recheck = QPushButton("↻  Revérifier")
+        self.btn_recheck.setFixedHeight(24)
+        self.btn_recheck.setEnabled(False)
+        self.btn_recheck.setStyleSheet("""
+            QPushButton          { background: transparent; color: #444; border: none; font-size: 10px; }
+            QPushButton:hover:enabled { color: #aaa; }
+            QPushButton:disabled { color: #333; }
+        """)
+        self.btn_recheck.clicked.connect(self._start_check)
+        lay.addWidget(self.btn_recheck, alignment=Qt.AlignCenter)
+        lay.addStretch()
+
+        # Fermer
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(34)
+        btn_close.setStyleSheet("""
+            QPushButton       { background: #2a2a2a; color: #888; border: 1px solid #3a3a3a;
+                                border-radius: 4px; font-size: 11px; }
+            QPushButton:hover { background: #333; color: #ccc; }
+        """)
+        btn_close.clicked.connect(self.accept)
+        lay.addWidget(btn_close)
+
+    # ------------------------------------------------------------------
+
+    def _start_check(self):
+        self.btn_recheck.setEnabled(False)
+        self.btn_download.hide()
+        self._new_version = ""
+        self._exe_url     = ""
+        self._hash_url    = ""
+        self._update_box.setStyleSheet(
+            "QWidget { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; }"
+        )
+        self.status_lbl.setStyleSheet("color: #555; background: transparent; border: none;")
+        self.status_lbl.setText("Vérification des mises à jour...")
+        self._checker = UpdateChecker(force=True)
+        self._checker.update_available.connect(self._on_update_available)
+        self._checker.check_finished.connect(self._on_check_finished)
+        self._checker.start()
+
+    def _on_update_available(self, version, exe_url, hash_url):
+        self._new_version = version
+        self._exe_url     = exe_url
+        self._hash_url    = hash_url
+        self._update_box.setStyleSheet(
+            "QWidget { background: #111; border: 1px solid #005f6b; border-radius: 6px; }"
+        )
+        self.status_lbl.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
+        self.status_lbl.setText(f"Version {version} disponible")
+        self.btn_download.setText(f"Télécharger v{version}")
+        self.btn_download.show()
+
+    def _on_check_finished(self, found, version):
+        self.btn_recheck.setEnabled(True)
+        if not found:
+            self._update_box.setStyleSheet(
+                "QWidget { background: #111; border: 1px solid #2a4a2a; border-radius: 6px; }"
+            )
+            self.status_lbl.setStyleSheet("color: #4CAF50; background: transparent; border: none;")
+            self.status_lbl.setText("✓  Vous êtes à jour !")
+        elif not self._exe_url:
+            # Version détectée mais l'installeur n'est pas encore prêt (CI en cours)
+            self._update_box.setStyleSheet(
+                "QWidget { background: #111; border: 1px solid #5a4a15; border-radius: 6px; }"
+            )
+            self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
+            self.status_lbl.setText(f"Version {version} disponible  —  bientôt prêt")
+
+    def _on_download(self):
+        parent   = self.parent()
+        version  = self._new_version
+        exe_url  = self._exe_url
+        hash_url = self._hash_url
+        self.accept()
+        QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
+
+
 def _create_updater_batch(new_exe, current_exe):
     """Cree le script batch de mise a jour"""
     batch_path = Path(tempfile.gettempdir()) / "mystrow_update" / "update_mystrow.bat"

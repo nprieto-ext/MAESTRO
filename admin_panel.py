@@ -10,13 +10,17 @@ import secrets
 import string
 import urllib.request
 from datetime import datetime, timezone
+import subprocess
+import shutil
+import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QDialog, QLineEdit, QTableWidget, QTableWidgetItem,
-    QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox,
+    QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor
@@ -24,6 +28,17 @@ from PySide6.QtGui import QFont, QColor
 import firebase_client as fc
 from core import FIREBASE_PROJECT_ID
 import email_sender
+
+try:
+    from release import (
+        get_current_version, bump_version, update_version,
+        generate_sig_file, GITHUB_REPO,
+        BASE_DIR as _RELEASE_DIR,
+        _gh_api as _release_gh_api,
+    )
+    _RELEASE_OK = True
+except Exception:
+    _RELEASE_OK = False
 
 # Firebase Admin SDK (suppression compte Auth)
 try:
@@ -160,6 +175,14 @@ _BTN_RED = f"""
         border-radius: 4px; font-size: 11px; padding: 5px 10px;
     }}
     QPushButton:hover {{ background: #cc3333; }}
+    QPushButton:disabled {{ background: #555; color: #888; }}
+"""
+_BTN_ORANGE = f"""
+    QPushButton {{
+        background: {ORANGE}; color: white; border: none;
+        border-radius: 4px; font-weight: bold; font-size: 12px; padding: 8px 16px;
+    }}
+    QPushButton:hover {{ background: #d4901e; }}
     QPushButton:disabled {{ background: #555; color: #888; }}
 """
 
@@ -879,6 +902,21 @@ class AdminPanel(QMainWindow):
         self.btn_delete.clicked.connect(self._on_delete)
         f_lay.addWidget(self.btn_delete)
 
+        f_lay.addSpacing(12)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("QFrame { color: #333; }")
+        f_lay.addWidget(sep)
+        f_lay.addSpacing(12)
+
+        self.btn_release = QPushButton("⚙  Release…")
+        self.btn_release.setStyleSheet(_BTN_ORANGE)
+        self.btn_release.setFixedHeight(36)
+        self.btn_release.setEnabled(_RELEASE_OK)
+        self.btn_release.setToolTip("" if _RELEASE_OK else "release.py introuvable")
+        self.btn_release.clicked.connect(self._on_release)
+        f_lay.addWidget(self.btn_release)
+
         f_lay.addStretch()
 
         self.count_lbl = QLabel("")
@@ -1036,6 +1074,310 @@ class AdminPanel(QMainWindow):
         _clear_admin_cache()
         self.close()
         _show_login_then_panel()
+
+    def _on_release(self):
+        dlg = ReleaseDialog(self)
+        dlg.exec()
+
+
+# ---------------------------------------------------------------
+# Release Worker & Dialog
+# ---------------------------------------------------------------
+
+class ReleaseWorker(QObject):
+    """Exécute le pipeline de release dans un QThread séparé."""
+    log      = Signal(str)
+    finished = Signal(bool, str)   # succès, message
+
+    def __init__(self, version: str, action: str, parent=None):
+        super().__init__(parent)
+        self._version = version
+        self._action  = action   # "local" | "github" | "both"
+
+    def _p(self, msg: str):
+        self.log.emit(msg)
+
+    def _run_cmd(self, cmd: str, allow_fail: bool = False, cwd=None) -> int:
+        self._p(f">>> {cmd}")
+        proc = subprocess.Popen(
+            cmd, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            cwd=str(cwd or _RELEASE_DIR),
+        )
+        for line in iter(proc.stdout.readline, ""):
+            stripped = line.rstrip()
+            if stripped:
+                self._p(stripped)
+        proc.wait()
+        if proc.returncode != 0 and not allow_fail:
+            raise RuntimeError(f"Commande échouée (code {proc.returncode}) : {cmd}")
+        return proc.returncode
+
+    def run(self):
+        try:
+            v = self._version
+            self._p(f"=== RELEASE MYSTROW v{v} ===\n")
+            self._p("Mise à jour des fichiers de version...")
+            update_version(v)
+            self._p(f"  core.py + maestro.iss → v{v}\n")
+
+            if self._action in ("local", "both"):
+                self._build_local(v)
+
+            if self._action in ("github", "both"):
+                self._push_github(v)
+                self._watch_actions(v)
+
+            self.finished.emit(True, f"Release v{v} terminée avec succès !")
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+    def _build_local(self, version: str):
+        self._p("\n========== BUILD INSTALLEUR LOCAL ==========")
+        dist_exe      = _RELEASE_DIR / "dist" / "MyStrow.exe"
+        installer_out = _RELEASE_DIR / "installer" / "installer_output" / "MyStrow_Setup.exe"
+
+        # Nettoyage
+        self._p("Nettoyage dist/ et build/...")
+        for d in ("dist", "build"):
+            p = _RELEASE_DIR / d
+            if p.exists():
+                shutil.rmtree(p)
+
+        # PyInstaller via .bat (contourne MINGW)
+        self._p("\n--- PyInstaller ---")
+        python_win = sys.executable.replace("/", "\\")
+        base_win   = str(_RELEASE_DIR).replace("/", "\\")
+        bat_path   = _RELEASE_DIR / "_build_tmp.bat"
+        bat_path.write_text(
+            f"@echo off\r\n"
+            f"cd /d \"{base_win}\"\r\n"
+            f"\"{python_win}\" -m PyInstaller "
+            f"--onefile --windowed "
+            f"--icon=mystrow.ico "
+            f"--add-data \"logo.png;.\" "
+            f"--add-data \"mystrow.ico;.\" "
+            f"--name=MyStrow "
+            f"--paths=\"{base_win}\" "
+            f"--noconfirm main.py\r\n",
+            encoding="utf-8",
+        )
+        bat_win = str(bat_path).replace("/", "\\")
+        try:
+            self._run_cmd(f'cmd.exe /c "{bat_win}"', cwd=_RELEASE_DIR)
+        finally:
+            bat_path.unlink(missing_ok=True)
+
+        if not dist_exe.exists():
+            raise RuntimeError("MyStrow.exe introuvable après PyInstaller.")
+
+        self._p("\nGénération du fichier .sig...")
+        generate_sig_file(dist_exe)
+
+        # Inno Setup
+        self._p("\n--- Inno Setup ---")
+        iscc_candidates = [
+            Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+            Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+            Path(r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe"),
+        ]
+        iscc = next((p for p in iscc_candidates if p.exists()), None)
+        if iscc is None:
+            raise RuntimeError("Inno Setup (ISCC.exe) introuvable.")
+
+        self._run_cmd(f'"{iscc}" installer\\maestro.iss', cwd=_RELEASE_DIR)
+
+        if not installer_out.exists():
+            raise RuntimeError("MyStrow_Setup.exe introuvable après Inno Setup.")
+
+        desktop = Path.home() / "Desktop"
+        dest    = desktop / f"MyStrow_Setup_{version}.exe"
+        shutil.copy2(installer_out, dest)
+        self._p(f"\nInstalleur copié sur le bureau : {dest}")
+
+    def _push_github(self, version: str):
+        self._p("\n========== PUSH GITHUB ==========")
+        self._run_cmd("git add -A",                                       cwd=_RELEASE_DIR)
+        self._run_cmd(f'git commit -m "Release {version}"', allow_fail=True, cwd=_RELEASE_DIR)
+        self._run_cmd(f"git tag v{version}",                              cwd=_RELEASE_DIR)
+        self._run_cmd("git push origin main",                             cwd=_RELEASE_DIR)
+        self._run_cmd(f"git push origin v{version}",                      cwd=_RELEASE_DIR)
+        self._p(f"\n=== TAG v{version} POUSSÉ ===")
+
+    def _watch_actions(self, version: str):
+        from datetime import datetime as _dt
+        self._p("\nSuivi GitHub Actions (attente démarrage)...")
+        run_id = None
+        for _ in range(30):
+            time.sleep(2)
+            data = _release_gh_api("/actions/runs?event=push&per_page=10")
+            if data:
+                for wr in data.get("workflow_runs", []):
+                    if (wr.get("name") == "Build & Release" and
+                            version in wr.get("head_commit", {}).get("message", "")):
+                        run_id = wr["id"]
+                        break
+                if not run_id:
+                    for wr in data.get("workflow_runs", []):
+                        if (wr.get("name") == "Build & Release" and
+                                wr.get("status") in ("queued", "in_progress")):
+                            run_id = wr["id"]
+                            break
+            if run_id:
+                break
+            self._p("  ...")
+
+        if not run_id:
+            self._p(f"⚠️  Workflow introuvable. Suivi manuel :\n  https://github.com/{GITHUB_REPO}/actions")
+            return
+
+        self._p(f"  Workflow : https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
+        last_state: dict = {}
+        ICONS   = {"queued": "⏳", "in_progress": "↻"}
+        C_ICONS = {"success": "✅", "failure": "❌", "cancelled": "⚠️", "skipped": "⏭️", None: "↻"}
+
+        while True:
+            time.sleep(5)
+            run_data = _release_gh_api(f"/actions/runs/{run_id}")
+            if not run_data:
+                continue
+            status     = run_data.get("status", "")
+            conclusion = run_data.get("conclusion")
+            jobs_data  = _release_gh_api(f"/actions/runs/{run_id}/jobs")
+            jobs       = (jobs_data or {}).get("jobs", [])
+            cur_state  = {j["name"]: (j["status"], j.get("conclusion")) for j in jobs}
+
+            if cur_state != last_state:
+                lines = []
+                for job in jobs:
+                    js   = job["status"]
+                    jc   = job.get("conclusion")
+                    icon = C_ICONS.get(jc, "❓") if js == "completed" else ICONS.get(js, "⏳")
+                    dur  = ""
+                    if js == "completed" and job.get("started_at") and job.get("completed_at"):
+                        t1   = _dt.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+                        t2   = _dt.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+                        secs = int((t2 - t1).total_seconds())
+                        dur  = f"  ({secs // 60}m{secs % 60:02d}s)"
+                    lines.append(f"  {icon}  {job['name']}{dur}")
+                self._p("\n".join(lines))
+                last_state = cur_state
+
+            if status == "completed":
+                if conclusion == "success":
+                    self._p(f"\n✅  Release v{version} créée !")
+                    self._p(f"    https://github.com/{GITHUB_REPO}/releases/tag/v{version}")
+                else:
+                    self._p(f"\n❌  Build échoué ({conclusion})")
+                    self._p(f"    https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
+                break
+
+
+class ReleaseDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Release MyStrow")
+        self.setMinimumSize(720, 540)
+        self._thread = None
+        self._worker = None
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 16)
+        lay.setSpacing(12)
+
+        title = QLabel("Release MyStrow")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        # Version
+        v_lay = QHBoxLayout()
+        current = get_current_version() or "?"
+        v_lay.addWidget(QLabel(f"Version actuelle :  <b>{current}</b>", textFormat=Qt.RichText))
+        v_lay.addSpacing(24)
+        v_lay.addWidget(QLabel("Nouvelle version :"))
+        self.version_edit = QLineEdit(bump_version(current) if current != "?" else "")
+        self.version_edit.setFixedWidth(110)
+        self.version_edit.setMinimumHeight(32)
+        v_lay.addWidget(self.version_edit)
+        v_lay.addStretch()
+        lay.addLayout(v_lay)
+
+        # Action
+        a_lay = QHBoxLayout()
+        a_lay.addWidget(QLabel("Action :"))
+        self.action_combo = QComboBox()
+        self.action_combo.addItem("Installeur local + Push GitHub", "both")
+        self.action_combo.addItem("Installeur local seulement (Bureau)", "local")
+        self.action_combo.addItem("Push GitHub seulement (CI)", "github")
+        self.action_combo.setMinimumWidth(300)
+        a_lay.addWidget(self.action_combo)
+        a_lay.addStretch()
+        lay.addLayout(a_lay)
+
+        # Boutons
+        btns = QHBoxLayout()
+        self.btn_start = QPushButton("Lancer la release")
+        self.btn_start.setStyleSheet(_BTN_PRIMARY)
+        self.btn_start.setFixedHeight(36)
+        self.btn_start.clicked.connect(self._on_start)
+        btns.addWidget(self.btn_start)
+        self.btn_close = QPushButton("Fermer")
+        self.btn_close.setStyleSheet(_BTN_SECONDARY)
+        self.btn_close.setFixedHeight(36)
+        self.btn_close.clicked.connect(self.accept)
+        btns.addWidget(self.btn_close)
+        btns.addStretch()
+        lay.addLayout(btns)
+
+        # Log
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setFont(QFont("Consolas", 9))
+        self.log_edit.setStyleSheet(
+            "QTextEdit {"
+            f"  background: #0d0d0d; color: #cccccc;"
+            f"  border: 1px solid #333; border-radius: 4px;"
+            "}"
+        )
+        lay.addWidget(self.log_edit)
+
+    def _on_start(self):
+        version = self.version_edit.text().strip()
+        if not version:
+            QMessageBox.warning(self, "Version manquante", "Veuillez saisir un numéro de version.")
+            return
+        action = self.action_combo.currentData()
+        self.btn_start.setEnabled(False)
+        self.btn_start.setText("En cours…")
+        self.log_edit.clear()
+
+        self._thread = QThread(self)
+        self._worker = ReleaseWorker(version, action)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.log.connect(self._append_log)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
+
+    def _append_log(self, text: str):
+        self.log_edit.append(text)
+        sb = self.log_edit.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _on_finished(self, success: bool, msg: str):
+        self.btn_start.setEnabled(True)
+        self.btn_start.setText("Lancer la release")
+        if success:
+            self._append_log(f"\n{msg}")
+        else:
+            self._append_log(f"\nERREUR : {msg}")
+            QMessageBox.critical(self, "Erreur release", msg)
 
 
 # ---------------------------------------------------------------
