@@ -4414,12 +4414,6 @@ class MainWindow(QMainWindow):
         self.plan_de_feu.set_htp_overrides(overrides if overrides else None)
 
         if self.plan_de_feu.is_dmx_enabled() and self.dmx.connected:
-            # Mode Manuel = pas d'envoi DMX
-            if self.seq.current_row >= 0:
-                dmx_mode = self.seq.get_dmx_mode(self.seq.current_row)
-                if dmx_mode == "Manuel":
-                    return
-
             # Appliquer temporairement HTP pour l'envoi DMX
             if overrides:
                 saved = self._apply_htp_to_projectors(overrides)
