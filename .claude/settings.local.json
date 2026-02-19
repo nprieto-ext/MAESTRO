@@ -31,7 +31,14 @@
       "WebFetch(domain:www.electroconcept.fr)",
       "Bash(git -C \"C:/Users/nikop/Desktop/MyStrow\" show HEAD:main_window.py)",
       "Bash(python -m pip install:*)",
-      "Bash(/c/Users/nikop/AppData/Local/Programs/Python/Python312/python.exe -m pip install:*)"
+      "Bash(/c/Users/nikop/AppData/Local/Programs/Python/Python312/python.exe -m pip install:*)",
+      "Bash(C:UsersnikopAppDataLocalProgramsPythonPython313python.exe -m pip install pyinstaller)",
+      "Bash(\"/c/Users/nikop/AppData/Local/Programs/Python/Python313/python.exe\" -m pip install pyinstaller)",
+      "Bash(gh release view:*)",
+      "Bash(gh release list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh api:*)"
     ]
   }
 }

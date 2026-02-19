@@ -333,22 +333,75 @@ def download_update(parent, version, exe_url, hash_url):
 
     dlg = QDialog(parent)
     dlg.setWindowTitle(f"Mise a jour v{version}")
-    dlg.setFixedSize(420, 130)
+    dlg.setFixedSize(460, 200)
     dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+    dlg.setStyleSheet("background: #1e1e1e; color: #cccccc;")
 
     layout = QVBoxLayout(dlg)
-    layout.setContentsMargins(20, 15, 20, 15)
+    layout.setContentsMargins(24, 20, 24, 20)
+    layout.setSpacing(10)
 
-    status_label = QLabel("Preparation du telechargement...")
-    status_label.setFont(QFont("Segoe UI", 10))
-    layout.addWidget(status_label)
+    # --- Titre ---
+    title = QLabel(f"Mise a jour vers v{version}")
+    title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+    title.setStyleSheet("color: #00d4ff;")
+    layout.addWidget(title)
 
+    # --- Etapes visuelles ---
+    steps_layout = QHBoxLayout()
+    steps_layout.setSpacing(0)
+
+    def _make_step(text):
+        lbl = QLabel(text)
+        lbl.setFont(QFont("Segoe UI", 9))
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet("color: #555555; padding: 4px 10px;")
+        return lbl
+
+    step_dl   = _make_step("⬇  Telechargement")
+    step_check = _make_step("🔍  Verification")
+    step_inst  = _make_step("⚙  Installation")
+
+    for s in (step_dl, step_check, step_inst):
+        steps_layout.addWidget(s, 1)
+    layout.addLayout(steps_layout)
+
+    # --- Barre de progression ---
     progress = QProgressBar()
     progress.setRange(0, 100)
     progress.setValue(0)
-    progress.setFixedHeight(20)
+    progress.setFixedHeight(14)
+    progress.setTextVisible(False)
+    progress.setStyleSheet("""
+        QProgressBar {
+            background: #333333;
+            border: none;
+            border-radius: 7px;
+        }
+        QProgressBar::chunk {
+            background: #00d4ff;
+            border-radius: 7px;
+        }
+    """)
     layout.addWidget(progress)
 
+    # --- Label de detail ---
+    status_label = QLabel("Preparation...")
+    status_label.setFont(QFont("Segoe UI", 9))
+    status_label.setStyleSheet("color: #888888;")
+    status_label.setAlignment(Qt.AlignCenter)
+    layout.addWidget(status_label)
+
+    def _set_step(active_step):
+        """Met en evidence l'etape active"""
+        for s in (step_dl, step_check, step_inst):
+            s.setStyleSheet("color: #555555; padding: 4px 10px;")
+        active_step.setStyleSheet(
+            "color: #00d4ff; font-weight: bold; padding: 4px 10px; "
+            "border-bottom: 2px solid #00d4ff;"
+        )
+
+    _set_step(step_dl)
     dlg.show()
     QApplication.processEvents()
 
@@ -367,13 +420,13 @@ def download_update(parent, version, exe_url, hash_url):
             progress.setValue(pct)
             size_mb = total_size / (1024 * 1024)
             dl_mb = min(block_num * block_size, total_size) / (1024 * 1024)
-            status_label.setText(f"Telechargement... {dl_mb:.1f} / {size_mb:.1f} Mo")
+            status_label.setText(f"{dl_mb:.1f} Mo / {size_mb:.1f} Mo")
         else:
             status_label.setText("Telechargement en cours...")
         QApplication.processEvents()
 
     try:
-        status_label.setText(f"Telechargement de {filename}...")
+        status_label.setText(f"Connexion au serveur...")
         QApplication.processEvents()
         urllib.request.urlretrieve(exe_url, str(new_file), reporthook)
     except Exception as e:
@@ -383,11 +436,14 @@ def download_update(parent, version, exe_url, hash_url):
         return
 
     # --- Verification SHA256 (seulement si sha256.txt dispo) ---
+    _set_step(step_check)
+    progress.setRange(0, 0)  # indetermine pendant la verif
+    status_label.setText("Verification de l'integrite...")
+    QApplication.processEvents()
+
     if hash_url and not is_installer:
         expected_hash = ""
         try:
-            status_label.setText("Verification SHA256...")
-            QApplication.processEvents()
             with urllib.request.urlopen(hash_url, timeout=10) as resp:
                 content = resp.read().decode("utf-8").strip()
                 expected_hash = content.split()[0].lower()
@@ -395,8 +451,6 @@ def download_update(parent, version, exe_url, hash_url):
             expected_hash = ""
 
         if expected_hash:
-            progress.setValue(100)
-            QApplication.processEvents()
             sha = hashlib.sha256()
             with open(new_file, "rb") as f:
                 for chunk in iter(lambda: f.read(8192), b""):
@@ -414,8 +468,10 @@ def download_update(parent, version, exe_url, hash_url):
                                      f"Obtenu:   {actual_hash[:16]}...")
                 return
 
-    status_label.setText("Lancement de l'installation...")
-    progress.setValue(100)
+    # --- Installation ---
+    _set_step(step_inst)
+    progress.setRange(0, 0)
+    status_label.setText("Lancement de l'installeur...")
     QApplication.processEvents()
 
     if not getattr(sys, 'frozen', False):
@@ -425,20 +481,22 @@ def download_update(parent, version, exe_url, hash_url):
                                 f"(Installation automatique desactivee en mode dev)")
         return
 
-    dlg.close()
+    # Petite pause pour que l'utilisateur voit l'etape installation
+    QTimer.singleShot(800, dlg.close)
+    QTimer.singleShot(800, QApplication.quit)
 
     if is_installer:
-        # Lancer l'installeur Inno Setup en mode silencieux et quitter
-        subprocess.Popen([str(new_file), "/SILENT", "/CLOSEAPPLICATIONS"])
+        # Lancer l'installeur Inno Setup et quitter
+        QTimer.singleShot(400, lambda: subprocess.Popen(
+            [str(new_file), "/SILENT", "/CLOSEAPPLICATIONS"]
+        ))
     else:
         # Fallback : batch replace (exe brut)
         batch_path = _create_updater_batch(str(new_file), sys.executable)
-        subprocess.Popen(
+        QTimer.singleShot(400, lambda: subprocess.Popen(
             ["cmd.exe", "/c", str(batch_path)],
             creationflags=subprocess.CREATE_NEW_CONSOLE
-        )
-
-    QApplication.quit()
+        ))
 
 
 def _create_updater_batch(new_exe, current_exe):

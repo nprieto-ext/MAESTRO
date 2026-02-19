@@ -305,6 +305,7 @@ if choix in ("2", "3"):
     run("git add -A")
     run(f'git commit -m "Release {new_version}"', allow_fail=True)
     run(f"git tag v{new_version}")
-    run("git push origin main --tags")
+    run("git push origin main")
+    run(f"git push origin v{new_version}")
     print(f"\n========== TAG v{new_version} POUSSE ==========")
     _watch_github_actions(new_version)

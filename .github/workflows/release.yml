@@ -119,10 +119,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CURRENT_TAG="${{ github.ref_name }}"
+          CURRENT_VER="${CURRENT_TAG#v}"
           gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | \
           while read tag; do
             if [ "$tag" != "$CURRENT_TAG" ]; then
-              echo "Suppression de la release $tag..."
-              gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
+              TAG_VER="${tag#v}"
+              # Ne supprimer que si le tag est plus ancien (sort -V place le plus vieux en premier)
+              OLDEST=$(printf "%s\n%s" "$TAG_VER" "$CURRENT_VER" | sort -V | head -1)
+              if [ "$OLDEST" = "$TAG_VER" ]; then
+                echo "Suppression de la release $tag (plus ancienne que $CURRENT_TAG)..."
+                gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
+              else
+                echo "Conservation de la release $tag (plus recente que $CURRENT_TAG, ignoree)"
+              fi
             fi
           done
