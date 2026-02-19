@@ -29,12 +29,13 @@ jobs:
       - name: Build EXE
         run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." main.py --name MyStrow
 
-      - name: Generate SHA256
+      - name: Generate SHA256 and .sig
         shell: pwsh
         run: |
           $hash = (Get-FileHash dist\MyStrow.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  MyStrow.exe" | Out-File -Encoding ascii dist\sha256.txt
           Write-Host "SHA256: $hash"
+          python _gen_sig.py dist/MyStrow.exe
 
       - name: Build Installer (Inno Setup)
         run: |
@@ -48,6 +49,7 @@ jobs:
           path: |
             installer/installer_output/MyStrow_Setup.exe
             dist/MyStrow.exe
+            dist/MyStrow.exe.sig
             dist/sha256.txt
 
   # ─────────────────────────────────────────────

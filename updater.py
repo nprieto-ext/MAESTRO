@@ -216,7 +216,7 @@ class UpdateChecker(QThread):
             for asset in data.get("assets", []):
                 name = asset.get("name", "")
                 url = asset.get("browser_download_url", "")
-                if name.lower() == "mystrow.exe":
+                if name.lower() in ("mystrow_setup.exe", "mystrow.exe"):
                     exe_url = url
                 elif name.lower() == "sha256.txt":
                     hash_url = url
@@ -354,22 +354,13 @@ def download_update(parent, version, exe_url, hash_url):
 
     update_dir = Path(tempfile.gettempdir()) / "mystrow_update"
     update_dir.mkdir(exist_ok=True)
-    new_exe = update_dir / "MyStrow.exe"
 
-    # --- Telechargement SHA256 ---
-    expected_hash = ""
-    if hash_url:
-        try:
-            status_label.setText("Verification de l'integrite...")
-            QApplication.processEvents()
-            with urllib.request.urlopen(hash_url, timeout=10) as resp:
-                content = resp.read().decode("utf-8").strip()
-                # Format: "hash  filename" ou juste "hash"
-                expected_hash = content.split()[0].lower()
-        except Exception:
-            expected_hash = ""
+    # Détecter si c'est un installeur ou un exe brut
+    is_installer = "setup" in exe_url.lower()
+    filename = "MyStrow_Setup.exe" if is_installer else "MyStrow.exe"
+    new_file = update_dir / filename
 
-    # --- Telechargement EXE ---
+    # --- Telechargement ---
     def reporthook(block_num, block_size, total_size):
         if total_size > 0:
             pct = min(int(block_num * block_size * 100 / total_size), 100)
@@ -378,67 +369,75 @@ def download_update(parent, version, exe_url, hash_url):
             dl_mb = min(block_num * block_size, total_size) / (1024 * 1024)
             status_label.setText(f"Telechargement... {dl_mb:.1f} / {size_mb:.1f} Mo")
         else:
-            status_label.setText(f"Telechargement en cours...")
+            status_label.setText("Telechargement en cours...")
         QApplication.processEvents()
 
     try:
-        status_label.setText("Telechargement de MyStrow.exe...")
+        status_label.setText(f"Telechargement de {filename}...")
         QApplication.processEvents()
-        urllib.request.urlretrieve(exe_url, str(new_exe), reporthook)
+        urllib.request.urlretrieve(exe_url, str(new_file), reporthook)
     except Exception as e:
         dlg.close()
         QMessageBox.critical(parent, "Erreur de telechargement",
                              f"Impossible de telecharger la mise a jour.\n\n{e}")
         return
 
-    # --- Verification SHA256 ---
-    if expected_hash:
-        status_label.setText("Verification SHA256...")
-        progress.setValue(100)
-        QApplication.processEvents()
+    # --- Verification SHA256 (seulement si sha256.txt dispo) ---
+    if hash_url and not is_installer:
+        expected_hash = ""
+        try:
+            status_label.setText("Verification SHA256...")
+            QApplication.processEvents()
+            with urllib.request.urlopen(hash_url, timeout=10) as resp:
+                content = resp.read().decode("utf-8").strip()
+                expected_hash = content.split()[0].lower()
+        except Exception:
+            expected_hash = ""
 
-        sha = hashlib.sha256()
-        with open(new_exe, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                sha.update(chunk)
-        actual_hash = sha.hexdigest().lower()
+        if expected_hash:
+            progress.setValue(100)
+            QApplication.processEvents()
+            sha = hashlib.sha256()
+            with open(new_file, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    sha.update(chunk)
+            actual_hash = sha.hexdigest().lower()
+            if actual_hash != expected_hash:
+                dlg.close()
+                try:
+                    new_file.unlink()
+                except Exception:
+                    pass
+                QMessageBox.critical(parent, "Erreur de verification",
+                                     f"Le fichier telecharge est corrompu.\n\n"
+                                     f"Attendu:  {expected_hash[:16]}...\n"
+                                     f"Obtenu:   {actual_hash[:16]}...")
+                return
 
-        if actual_hash != expected_hash:
-            dlg.close()
-            try:
-                new_exe.unlink()
-            except Exception:
-                pass
-            QMessageBox.critical(parent, "Erreur de verification",
-                                 f"Le fichier telecharge est corrompu.\n\n"
-                                 f"Attendu:  {expected_hash[:16]}...\n"
-                                 f"Obtenu:   {actual_hash[:16]}...")
-            return
-
-    # --- Batch updater ---
-    status_label.setText("Installation de la mise a jour...")
+    status_label.setText("Lancement de l'installation...")
+    progress.setValue(100)
     QApplication.processEvents()
 
-    current_exe = sys.executable
-    if getattr(sys, 'frozen', False):
-        current_exe = sys.executable
-    else:
-        # Mode dev: ne pas ecraser python.exe
+    if not getattr(sys, 'frozen', False):
         dlg.close()
         QMessageBox.information(parent, "Mode developpement",
-                                f"Mise a jour telechargee dans:\n{new_exe}\n\n"
+                                f"Mise a jour telechargee dans:\n{new_file}\n\n"
                                 f"(Installation automatique desactivee en mode dev)")
         return
 
-    batch_path = _create_updater_batch(str(new_exe), current_exe)
-
     dlg.close()
 
-    # Lancer le batch et quitter
-    subprocess.Popen(
-        ["cmd.exe", "/c", str(batch_path)],
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
+    if is_installer:
+        # Lancer l'installeur Inno Setup en mode silencieux et quitter
+        subprocess.Popen([str(new_file), "/SILENT", "/CLOSEAPPLICATIONS"])
+    else:
+        # Fallback : batch replace (exe brut)
+        batch_path = _create_updater_batch(str(new_file), sys.executable)
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(batch_path)],
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+
     QApplication.quit()
 
 

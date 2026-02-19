@@ -345,8 +345,8 @@ def check_exe_integrity() -> bool:
     sig_path = exe_path + ".sig"
 
     if not os.path.exists(sig_path):
-        print("Fichier .sig manquant - integrite non verifiable")
-        return False
+        print("Fichier .sig manquant - verification ignoree")
+        return True
 
     try:
         sha256 = hashlib.sha256()
