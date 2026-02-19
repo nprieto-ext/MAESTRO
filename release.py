@@ -4,6 +4,9 @@ import re
 import shutil
 import hashlib
 import json
+import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 # ------------------------------------------------------------------
@@ -163,6 +166,113 @@ def build_local_installer(version):
 
 
 # ------------------------------------------------------------------
+# SUIVI GITHUB ACTIONS
+# ------------------------------------------------------------------
+
+GITHUB_REPO = "nprieto-ext/MAESTRO"
+
+
+def _gh_api(path):
+    """Appel API GitHub (sans auth, limite 60 req/h)"""
+    url = f"https://api.github.com/repos/{GITHUB_REPO}{path}"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "MyStrow-Release"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def _watch_github_actions(version):
+    from datetime import datetime
+    tag = f"v{version}"
+    ICONS = {"queued": "⏳", "in_progress": "🔄"}
+    CONCLUSION_ICONS = {"success": "✅", "failure": "❌", "cancelled": "⚠️",
+                        "skipped": "⏭️", None: "🔄"}
+
+    print("\nAttente du démarrage de GitHub Actions", end="", flush=True)
+
+    # Attendre que le workflow apparaisse (max 60s)
+    run_id = None
+    for _ in range(30):
+        time.sleep(2)
+        data = _gh_api("/actions/runs?event=push&per_page=10")
+        if data:
+            for wr in data.get("workflow_runs", []):
+                commit_msg = wr.get("head_commit", {}).get("message", "")
+                if wr.get("name") == "Build & Release" and version in commit_msg:
+                    run_id = wr["id"]
+                    break
+            if not run_id:
+                for wr in data.get("workflow_runs", []):
+                    if wr.get("name") == "Build & Release" and wr.get("status") in ("queued", "in_progress"):
+                        run_id = wr["id"]
+                        break
+        if run_id:
+            break
+        print(".", end="", flush=True)
+
+    if not run_id:
+        print(f"\n\nImpossible de trouver le workflow. Suivi manuel :")
+        print(f"  https://github.com/{GITHUB_REPO}/actions")
+        return
+
+    print(f"\n\nWorkflow démarré → https://github.com/{GITHUB_REPO}/actions/runs/{run_id}\n")
+
+    last_jobs_state = {}
+    spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    spin_i = 0
+
+    while True:
+        time.sleep(5)
+
+        run_data = _gh_api(f"/actions/runs/{run_id}")
+        if not run_data:
+            continue
+
+        status     = run_data.get("status", "")
+        conclusion = run_data.get("conclusion")
+
+        jobs_data = _gh_api(f"/actions/runs/{run_id}/jobs")
+        jobs = jobs_data.get("jobs", []) if jobs_data else []
+
+        jobs_state = {j["name"]: (j["status"], j.get("conclusion")) for j in jobs}
+        if jobs_state != last_jobs_state:
+            print(f"  Build & Release  {spinner[spin_i % len(spinner)]}")
+            for job in jobs:
+                name    = job["name"]
+                jstatus = job["status"]
+                jconc   = job.get("conclusion")
+                if jstatus == "completed":
+                    icon = CONCLUSION_ICONS.get(jconc, "❓")
+                else:
+                    icon = ICONS.get(jstatus, "⏳")
+                duration = ""
+                if jstatus == "completed" and job.get("started_at") and job.get("completed_at"):
+                    t1 = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+                    t2 = datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+                    secs = int((t2 - t1).total_seconds())
+                    duration = f"  ({secs//60}m{secs%60:02d}s)"
+                print(f"    {icon}  {name}{duration}")
+            last_jobs_state = jobs_state
+
+        spin_i += 1
+
+        if status == "completed":
+            print()
+            if conclusion == "success":
+                print(f"✅  Release v{version} créée avec succès !")
+                print(f"    https://github.com/{GITHUB_REPO}/releases/tag/{tag}")
+            else:
+                print(f"❌  Build échoué (conclusion: {conclusion})")
+                print(f"    https://github.com/{GITHUB_REPO}/actions/runs/{run_id}")
+            break
+
+
+# ------------------------------------------------------------------
 # RELEASE
 # ------------------------------------------------------------------
 
@@ -197,8 +307,4 @@ if choix in ("2", "3"):
     run(f"git tag v{new_version}")
     run("git push origin main --tags")
     print(f"\n========== TAG v{new_version} POUSSE ==========")
-    print("GitHub Actions va maintenant builder:")
-    print("  - Windows (EXE + Installer)")
-    print("  - Mac (DMG)")
-    print("La release GitHub sera creee automatiquement.")
-    print(f"\nSuivre le build: https://github.com/nprieto-ext/MAESTRO/actions")
+    _watch_github_actions(new_version)

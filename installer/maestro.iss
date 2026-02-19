@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=2.7.6
+AppVersion=2.7.7
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -13,7 +13,6 @@ WizardStyle=modern
 
 [Files]
 Source: "..\dist\MyStrow.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\MyStrow.exe.sig"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"
