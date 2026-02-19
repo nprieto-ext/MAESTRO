@@ -220,10 +220,11 @@ class UpdateChecker(QThread):
             hash_url = ""
             for asset in data.get("assets", []):
                 name = asset.get("name", "")
+                name_lc = name.lower()
                 url = asset.get("browser_download_url", "")
-                if name.lower() in ("mystrow_setup.exe", "mystrow.exe"):
+                if name_lc.endswith(".exe") and "mystrow" in name_lc:
                     exe_url = url
-                elif name.lower() == "sha256.txt":
+                elif name_lc in ("sha256.txt", "mystrow.exe.sig"):
                     hash_url = url
 
             if exe_url:
