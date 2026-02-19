@@ -42,15 +42,20 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\maestro.iss
         shell: pwsh
 
+      - name: Collect artifacts (dossier plat)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item "installer\installer_output\MyStrow_Setup.exe" "artifacts\"
+          Copy-Item "dist\MyStrow.exe" "artifacts\"
+          Copy-Item "dist\MyStrow.exe.sig" "artifacts\"
+          Copy-Item "dist\sha256.txt" "artifacts\"
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: |
-            installer/installer_output/MyStrow_Setup.exe
-            dist/MyStrow.exe
-            dist/MyStrow.exe.sig
-            dist/sha256.txt
+          path: artifacts/
 
   # ─────────────────────────────────────────────
   # BUILD MAC (.app + DMG)
@@ -103,11 +108,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-installer
+          path: windows-installer/
 
       - name: Download Mac artifacts (optionnel)
         uses: actions/download-artifact@v4
         with:
           name: mac-dmg
+          path: mac-dmg/
         continue-on-error: true  # Silencieux si le build Mac a échoué
 
       - name: Create GitHub Release

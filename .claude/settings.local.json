@@ -38,7 +38,8 @@
       "Bash(gh release list:*)",
       "Bash(gh run list:*)",
       "Bash(gh run view:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(curl:*)"
     ]
   }
 }
