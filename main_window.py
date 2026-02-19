@@ -4405,8 +4405,41 @@ class MainWindow(QMainWindow):
                 proj.base_color = base
         return saved
 
+    def _apply_pad_overrides_htp(self):
+        """Applique les pads AKAI actifs en HTP par-dessus l'etat courant des projecteurs.
+        Retourne la liste des etats sauvegardes pour restauration apres envoi DMX."""
+        _PAD_GROUPS = {
+            0: ["face"],
+            1: ["contre", "lat"],
+            2: ["douche1", "douche2", "douche3"],
+            3: ["public"],
+        }
+        saved = []
+        for col_idx, btn in self.active_pads.items():
+            if btn is None:
+                continue
+            color = btn.property("base_color")
+            if color is None:
+                continue
+            fader_value = self.faders[col_idx].value if col_idx in self.faders else 0
+            if fader_value <= 0:
+                continue
+            brightness = fader_value / 100.0
+            pad_color = QColor(
+                int(color.red() * brightness),
+                int(color.green() * brightness),
+                int(color.blue() * brightness),
+            )
+            for i, proj in enumerate(self.projectors):
+                if proj.group in _PAD_GROUPS.get(col_idx, []) and fader_value > proj.level:
+                    saved.append((i, proj.level, proj.color, proj.base_color))
+                    proj.level = fader_value
+                    proj.color = pad_color
+                    proj.base_color = color
+        return saved
+
     def send_dmx_update(self):
-        """Envoie les donnees DMX avec HTP memoires + refresh plan de feu sans flicker"""
+        """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
         # Calculer les overrides HTP sans modifier les projecteurs
         overrides = self._compute_htp_overrides()
 
@@ -4414,18 +4447,27 @@ class MainWindow(QMainWindow):
         self.plan_de_feu.set_htp_overrides(overrides if overrides else None)
 
         if self.plan_de_feu.is_dmx_enabled() and self.dmx.connected:
-            # Appliquer temporairement HTP pour l'envoi DMX
+            # Appliquer temporairement HTP memoires
             if overrides:
-                saved = self._apply_htp_to_projectors(overrides)
+                saved_htp = self._apply_htp_to_projectors(overrides)
+
+            # Appliquer temporairement les pads AKAI en HTP (fonctionne dans TOUS les modes)
+            saved_pads = self._apply_pad_overrides_htp()
 
             # Envoyer DMX
             self.dmx.update_from_projectors(self.projectors, self.effect_speed)
             self.dmx.send_dmx()
 
-            # Restaurer etat direct
+            # Restaurer etat pads
+            for i, level, color, base_color in saved_pads:
+                self.projectors[i].level = level
+                self.projectors[i].color = color
+                self.projectors[i].base_color = base_color
+
+            # Restaurer etat HTP memoires
             if overrides:
                 for i, proj in enumerate(self.projectors):
-                    proj.level, proj.color, proj.base_color = saved[i]
+                    proj.level, proj.color, proj.base_color = saved_htp[i]
 
     def stop_recording(self):
         """Arrete l'enregistrement"""
