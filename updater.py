@@ -19,13 +19,14 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QProgressBar, QDialog, QMessageBox, QApplication
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QScreen, QPixmap
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
+from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
 
 from core import VERSION, resource_path
 
 # === CONSTANTES ===
-GITHUB_API_URL = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
+GITHUB_API_URL      = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
+GITHUB_RELEASES_URL = "https://github.com/nprieto-ext/MAESTRO/releases/latest"
 REMINDER_FILE = Path.home() / ".maestro_update_reminder.json"
 
 
@@ -660,12 +661,14 @@ class AboutDialog(QDialog):
             suffix = f"  (GitHub : v{version})" if version else ""
             self.status_lbl.setText(f"✓  Vous êtes à jour !{suffix}")
         elif not self._exe_url:
-            # Version détectée mais l'installeur n'est pas encore prêt (CI en cours)
+            # Version détectée mais l'installeur absent des assets → ouvrir la page releases
             self._update_box.setStyleSheet(
-                "QWidget { background: #111; border: 1px solid #5a4a15; border-radius: 6px; }"
+                "QWidget { background: #111; border: 1px solid #005f6b; border-radius: 6px; }"
             )
-            self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
-            self.status_lbl.setText(f"Version {version} disponible  —  bientôt prêt")
+            self.status_lbl.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
+            self.status_lbl.setText(f"Version {version} disponible")
+            self.btn_download.setText("Télécharger sur GitHub →")
+            self.btn_download.show()
 
     def _on_check_error(self, error: str):
         self.btn_recheck.setEnabled(True)
@@ -676,12 +679,15 @@ class AboutDialog(QDialog):
         self.status_lbl.setText(f"⚠️  {error}")
 
     def _on_download(self):
-        parent   = self.parent()
-        version  = self._new_version
-        exe_url  = self._exe_url
-        hash_url = self._hash_url
-        self.accept()
-        QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
+        if self._exe_url:
+            parent   = self.parent()
+            version  = self._new_version
+            exe_url  = self._exe_url
+            hash_url = self._hash_url
+            self.accept()
+            QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
+        else:
+            QDesktopServices.openUrl(QUrl(GITHUB_RELEASES_URL))
 
 
 def _create_updater_batch(new_exe, current_exe):
