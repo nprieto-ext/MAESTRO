@@ -57,6 +57,7 @@ jobs:
   # ─────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
+    continue-on-error: true  # Ne bloque pas la release si le build Mac échoue
     steps:
       - uses: actions/checkout@v4
 
@@ -95,17 +96,26 @@ jobs:
   # CREATE GITHUB RELEASE
   # ─────────────────────────────────────────────
   release:
-    needs: [build-windows, build-mac]
+    needs: [build-windows]  # Mac ne bloque plus la release Windows
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+
+      - name: Download Mac artifacts (optionnel)
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-dmg
+        continue-on-error: true  # Silencieux si le build Mac a échoué
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: "MyStrow ${{ github.ref_name }}"
-          body: "Release ${{ github.ref_name }}\n\n**Downloads:**\n- Windows: `MyStrow_Setup.exe`\n- Mac: `MyStrow_Installer.dmg`"
+          body: "Release ${{ github.ref_name }}\n\n**Downloads:**\n- Windows: `MyStrow_Setup.exe`\n- Mac: `MyStrow_Installer.dmg` (si disponible)"
+          fail_on_unmatched_files: false  # Ignore le DMG s'il n'est pas disponible
           files: |
             windows-installer/MyStrow_Setup.exe
             windows-installer/MyStrow.exe
