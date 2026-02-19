@@ -11,6 +11,7 @@ import json
 import hashlib
 import tempfile
 import subprocess
+import ssl
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -193,6 +194,18 @@ class UpdateChecker(QThread):
         super().__init__()
         self.force = force
 
+    @staticmethod
+    def _ssl_context():
+        """Contexte SSL compatible PyInstaller/Windows.
+        En mode compilé (PyInstaller), le bundle certifi n'est pas disponible,
+        donc on désactive la vérification pour éviter les erreurs de chemin AppData."""
+        if getattr(sys, 'frozen', False):
+            return ssl._create_unverified_context()
+        try:
+            return ssl.create_default_context()
+        except Exception:
+            return ssl._create_unverified_context()
+
     def run(self):
         if self._reminder_active() and not self.force:
             self.check_finished.emit(False, "")
@@ -203,7 +216,8 @@ class UpdateChecker(QThread):
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": "MyStrow-Updater"}
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with urllib.request.urlopen(req, timeout=8,
+                                        context=self._ssl_context()) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             tag = data.get("tag_name", "")
@@ -219,27 +233,46 @@ class UpdateChecker(QThread):
 
             exe_url = ""
             hash_url = ""
-            for asset in data.get("assets", []):
-                name = asset.get("name", "")
+            assets = data.get("assets", [])
+            for asset in assets:
+                name    = asset.get("name", "")
                 name_lc = name.lower()
-                url = asset.get("browser_download_url", "")
+                url     = asset.get("browser_download_url", "")
                 if name_lc.endswith(".exe") and "mystrow" in name_lc:
                     exe_url = url
                 elif name_lc in ("sha256.txt", "mystrow.exe.sig"):
                     hash_url = url
 
-            if exe_url:
-                self.update_available.emit(remote_version, exe_url, hash_url)
-                self.check_finished.emit(True, remote_version)
-            else:
-                # Version détectée mais installeur pas encore prêt (CI en cours)
-                self.check_finished.emit(True, remote_version)
+            if not exe_url:
+                # Asset non trouvé dans la liste → fallback URL construite depuis le tag
+                # (fonctionne si le fichier suit la convention MyStrow_Setup.exe)
+                exe_url = (
+                    f"https://github.com/nprieto-ext/MAESTRO/releases/download"
+                    f"/v{remote_version}/MyStrow_Setup.exe"
+                )
+                if not assets:
+                    self.check_error.emit(
+                        f"v{remote_version} détectée mais aucun asset dans la release.\n"
+                        f"Vérifiez que la release GitHub n'est pas en draft."
+                    )
+                    return
+
+            self.update_available.emit(remote_version, exe_url, hash_url)
+            self.check_finished.emit(True, remote_version)
         except urllib.error.HTTPError as e:
             self.check_error.emit(f"HTTP {e.code} — {e.reason}")
         except urllib.error.URLError as e:
-            self.check_error.emit(f"Réseau inaccessible : {e.reason}")
+            reason = str(e.reason)
+            if "AppData" in reason or "cacert" in reason.lower() or "SSL" in reason.upper():
+                self.check_error.emit("Erreur SSL — impossible de vérifier les certificats.")
+            else:
+                self.check_error.emit(f"Réseau inaccessible : {e.reason}")
         except Exception as e:
-            self.check_error.emit(str(e))
+            msg = str(e)
+            if "AppData" in msg or "cacert" in msg.lower():
+                self.check_error.emit("Erreur SSL — impossible de vérifier les certificats.")
+            else:
+                self.check_error.emit(msg)
 
     def _reminder_active(self):
         try:
@@ -567,18 +600,19 @@ class AboutDialog(QDialog):
 
         # Cadre état mise à jour
         self._update_box = QWidget()
-        self._update_box.setFixedHeight(72)
+        self._update_box.setMinimumHeight(52)
         self._update_box.setStyleSheet(
             "QWidget { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; }"
         )
         box_lay = QVBoxLayout(self._update_box)
-        box_lay.setContentsMargins(12, 6, 12, 6)
+        box_lay.setContentsMargins(12, 8, 12, 8)
         box_lay.setSpacing(4)
 
         self.status_lbl = QLabel("Vérification des mises à jour...")
         self.status_lbl.setFont(QFont("Segoe UI", 9))
         self.status_lbl.setStyleSheet("color: #555; background: transparent; border: none;")
         self.status_lbl.setAlignment(Qt.AlignCenter)
+        self.status_lbl.setWordWrap(True)
         box_lay.addWidget(self.status_lbl)
 
         self.btn_download = QPushButton()
@@ -661,14 +695,12 @@ class AboutDialog(QDialog):
             suffix = f"  (GitHub : v{version})" if version else ""
             self.status_lbl.setText(f"✓  Vous êtes à jour !{suffix}")
         elif not self._exe_url:
-            # Version détectée mais l'installeur absent des assets → ouvrir la page releases
+            # Ne devrait plus arriver (fallback URL dans UpdateChecker)
             self._update_box.setStyleSheet(
-                "QWidget { background: #111; border: 1px solid #005f6b; border-radius: 6px; }"
+                "QWidget { background: #111; border: 1px solid #5a4a15; border-radius: 6px; }"
             )
-            self.status_lbl.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
-            self.status_lbl.setText(f"Version {version} disponible")
-            self.btn_download.setText("Télécharger sur GitHub →")
-            self.btn_download.show()
+            self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
+            self.status_lbl.setText(f"Version {version} disponible — installeur introuvable")
 
     def _on_check_error(self, error: str):
         self.btn_recheck.setEnabled(True)
@@ -679,15 +711,12 @@ class AboutDialog(QDialog):
         self.status_lbl.setText(f"⚠️  {error}")
 
     def _on_download(self):
-        if self._exe_url:
-            parent   = self.parent()
-            version  = self._new_version
-            exe_url  = self._exe_url
-            hash_url = self._hash_url
-            self.accept()
-            QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
-        else:
-            QDesktopServices.openUrl(QUrl(GITHUB_RELEASES_URL))
+        parent   = self.parent()
+        version  = self._new_version
+        exe_url  = self._exe_url
+        hash_url = self._hash_url
+        self.accept()
+        QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
 
 
 def _create_updater_batch(new_exe, current_exe):

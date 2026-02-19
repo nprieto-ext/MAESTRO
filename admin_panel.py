@@ -835,6 +835,14 @@ class AdminPanel(QMainWindow):
         h_lay.addWidget(self.btn_refresh)
         h_lay.addSpacing(6)
 
+        btn_restart = QPushButton("⟳  Redémarrer")
+        btn_restart.setStyleSheet(_BTN_SECONDARY)
+        btn_restart.setFixedHeight(32)
+        btn_restart.setToolTip("Relance admin_panel.py pour prendre en compte les modifications")
+        btn_restart.clicked.connect(self._on_restart)
+        h_lay.addWidget(btn_restart)
+        h_lay.addSpacing(6)
+
         btn_logout = QPushButton("Déconnexion")
         btn_logout.setStyleSheet(_BTN_RED)
         btn_logout.setFixedHeight(32)
@@ -1070,6 +1078,9 @@ class AdminPanel(QMainWindow):
     def _on_delete_error(self, msg: str):
         self.btn_delete.setEnabled(True)
         QMessageBox.critical(self, "Erreur suppression", msg)
+
+    def _on_restart(self):
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _on_logout(self):
         _clear_admin_cache()
