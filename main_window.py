@@ -3999,17 +3999,10 @@ class MainWindow(QMainWindow):
             print("DMX bloque par la licence")
             return
 
-        try:
-            import subprocess
-            import platform
-            param = '-n' if platform.system().lower() == 'windows' else '-c'
-            command = ['ping', param, '1', '-w', '500', '2.0.0.15']
-            result = subprocess.run(command, capture_output=True, text=True, timeout=2)
-            if result.returncode == 0:
-                if self.dmx.connect():
-                    self.update_connection_indicators()
-        except:
-            pass
+        # Creer le socket UDP inconditionnellement (Art-Net = UDP sans confirmation,
+        # pas besoin de ping pour ouvrir le socket)
+        if self.dmx.connect():
+            self.update_connection_indicators()
 
     def update_connection_indicators(self):
         """Met a jour les indicateurs de connexion"""
