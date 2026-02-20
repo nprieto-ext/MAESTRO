@@ -50,7 +50,12 @@ try:
 except ImportError:
     _ADMIN_SDK_AVAILABLE = False
 
-SERVICE_ACCOUNT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "service_account.json")
+# En mode exe frozen, chercher service_account.json à côté de l'exe
+if getattr(sys, 'frozen', False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SERVICE_ACCOUNT_PATH = os.path.join(_BASE_DIR, "service_account.json")
 _fa_app = None
 
 

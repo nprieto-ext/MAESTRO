@@ -114,6 +114,9 @@ def build_local_installer(version):
         f"--add-data \"mystrow.ico;.\" "
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
+        f"--hidden-import=rtmidi "
+        f"--hidden-import=rtmidi._rtmidi "
+        f"--collect-all rtmidi "
         f"--noconfirm main.py\n"
     )
 
@@ -163,6 +166,66 @@ def build_local_installer(version):
     dest = DESKTOP / f"MyStrow_Setup_{version}.exe"
     shutil.copy2(installer_out, dest)
     print(f"\nInstalleur copie sur le bureau : {dest}")
+
+
+def build_admin_panel_exe():
+    print("\n========== BUILD ADMIN PANEL EXE ==========")
+    dist_exe = BASE_DIR / "dist" / "MyStrow_Admin.exe"
+
+    # Nettoyage partiel (garder dist si MyStrow.exe deja build)
+    build_dir = BASE_DIR / "build"
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
+
+    print("\n--- PyInstaller (admin_panel) ---")
+    python_win = sys.executable.replace("/", "\\")
+    base_win = str(BASE_DIR).replace("/", "\\")
+
+    bat_path = BASE_DIR / "_build_admin_tmp.bat"
+    bat_path.write_text(
+        f"@echo off\n"
+        f"cd /d \"{base_win}\"\n"
+        f"\"{python_win}\" -m PyInstaller "
+        f"--onefile --windowed "
+        f"--icon=mystrow.ico "
+        f"--add-data \"logo.png;.\" "
+        f"--add-data \"mystrow.ico;.\" "
+        f"--name=MyStrow_Admin "
+        f"--paths=\"{base_win}\" "
+        f"--hidden-import=firebase_admin "
+        f"--hidden-import=firebase_admin.credentials "
+        f"--hidden-import=firebase_admin.auth "
+        f"--hidden-import=firebase_admin._auth_utils "
+        f"--hidden-import=firebase_admin._http_client "
+        f"--hidden-import=google.auth "
+        f"--hidden-import=google.auth.transport.requests "
+        f"--hidden-import=google.oauth2 "
+        f"--hidden-import=google.oauth2.service_account "
+        f"--hidden-import=smtp_config "
+        f"--collect-all firebase_admin "
+        f"--collect-all google.auth "
+        f"--noconfirm admin_panel.py\n"
+    )
+
+    result = subprocess.run(
+        ["cmd.exe", "/c", str(bat_path).replace("/", "\\")],
+        cwd=str(BASE_DIR),
+    )
+    bat_path.unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        print("ERREUR PyInstaller admin_panel. Arret.")
+        sys.exit(1)
+
+    if not dist_exe.exists():
+        print("ERREUR: MyStrow_Admin.exe non trouve apres PyInstaller.")
+        sys.exit(1)
+
+    # Copie sur le Bureau
+    dest = DESKTOP / "MyStrow_Admin.exe"
+    shutil.copy2(dist_exe, dest)
+    print(f"\nAdmin panel copie sur le bureau : {dest}")
+    print("IMPORTANT: Placer service_account.json dans le meme dossier que l'exe.")
 
 
 # ------------------------------------------------------------------
@@ -290,11 +353,16 @@ def main():
     print("  1) Installeur local seulement (Bureau)")
     print("  2) Push GitHub seulement (CI build)")
     print("  3) Les deux")
+    print("  4) Admin panel exe seulement (Bureau)")
     choix = input("Choix [3] : ").strip() or "3"
 
-    if choix not in ("1", "2", "3"):
+    if choix not in ("1", "2", "3", "4"):
         print("Choix invalide. Arret.")
         sys.exit(1)
+
+    if choix == "4":
+        build_admin_panel_exe()
+        return
 
     print(f"\nMise a jour vers {new_version}...")
     update_version(new_version)
