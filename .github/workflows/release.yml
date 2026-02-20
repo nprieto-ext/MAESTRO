@@ -27,7 +27,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --noconfirm main.py --name MyStrow
+        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --collect-all=rtmidi2 --hidden-import=miniaudio --noconfirm main.py --name MyStrow
 
       - name: Generate SHA256 and .sig
         shell: pwsh

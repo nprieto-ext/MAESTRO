@@ -1209,6 +1209,8 @@ class ReleaseWorker(QObject):
             f"--icon=mystrow.ico "
             f"--add-data \"logo.png;.\" "
             f"--add-data \"mystrow.ico;.\" "
+            f"--collect-all=rtmidi2 "
+            f"--hidden-import=miniaudio "
             f"--name=MyStrow "
             f"--paths=\"{base_win}\" "
             f"--noconfirm main.py\r\n",
@@ -1394,9 +1396,9 @@ class ReleaseDialog(QDialog):
         a_lay = QHBoxLayout()
         a_lay.addWidget(QLabel("Action :"))
         self.action_combo = QComboBox()
-        self.action_combo.addItem("Installeur local + Push GitHub  (Windows + Mac via CI)", "both")
-        self.action_combo.addItem("Installeur local seulement  (Windows uniquement)", "local")
-        self.action_combo.addItem("Push GitHub seulement  (Windows + Mac via CI)", "github")
+        self.action_combo.addItem("Push GitHub", "github")
+        self.action_combo.addItem("Version Install Bureau", "local")
+        self.action_combo.addItem("Les 2", "both")
         self.action_combo.setMinimumWidth(340)
         a_lay.addWidget(self.action_combo)
         a_lay.addStretch()
