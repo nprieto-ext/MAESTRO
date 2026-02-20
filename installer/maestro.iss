@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=2.9.10
+AppVersion=2.9.11
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -20,4 +20,4 @@ Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"
 Name: "{commondesktop}\MyStrow"; Filename: "{app}\MyStrow.exe"
 
 [Run]
-Filename: "{app}\MyStrow.exe"; Description: "Lancer MyStrow"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MyStrow.exe"; Description: "Lancer MyStrow"; Flags: nowait postinstall

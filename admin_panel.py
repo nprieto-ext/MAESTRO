@@ -1394,13 +1394,19 @@ class ReleaseDialog(QDialog):
         a_lay = QHBoxLayout()
         a_lay.addWidget(QLabel("Action :"))
         self.action_combo = QComboBox()
-        self.action_combo.addItem("Installeur local + Push GitHub", "both")
-        self.action_combo.addItem("Installeur local seulement (Bureau)", "local")
-        self.action_combo.addItem("Push GitHub seulement (CI)", "github")
-        self.action_combo.setMinimumWidth(300)
+        self.action_combo.addItem("Installeur local + Push GitHub  (Windows + Mac via CI)", "both")
+        self.action_combo.addItem("Installeur local seulement  (Windows uniquement)", "local")
+        self.action_combo.addItem("Push GitHub seulement  (Windows + Mac via CI)", "github")
+        self.action_combo.setMinimumWidth(340)
         a_lay.addWidget(self.action_combo)
         a_lay.addStretch()
         lay.addLayout(a_lay)
+
+        self._mac_note = QLabel("ℹ️  Mac : uniquement buildé par GitHub CI — impossible depuis Windows.")
+        self._mac_note.setStyleSheet("color: #555; font-size: 10px; padding-left: 2px;")
+        self._mac_note.setVisible(False)
+        lay.addWidget(self._mac_note)
+        self.action_combo.currentIndexChanged.connect(self._on_action_changed)
 
         # Boutons
         btns = QHBoxLayout()
@@ -1464,6 +1470,10 @@ class ReleaseDialog(QDialog):
             "}"
         )
         lay.addWidget(self.log_edit)
+
+    def _on_action_changed(self, index):
+        action = self.action_combo.itemData(index)
+        self._mac_note.setVisible(action == "local")
 
     def _on_start(self):
         version = self.version_edit.text().strip()
