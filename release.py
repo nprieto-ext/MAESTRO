@@ -117,6 +117,7 @@ def build_local_installer(version):
         f"--hidden-import=rtmidi "
         f"--hidden-import=rtmidi._rtmidi "
         f"--collect-all rtmidi "
+        f"--noupx "
         f"--noconfirm main.py\n"
     )
 

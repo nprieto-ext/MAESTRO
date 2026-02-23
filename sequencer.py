@@ -1422,13 +1422,17 @@ class Sequencer(QFrame):
         import math
         import random
 
-        track_to_indices = {
-            'Face': list(range(0, 4)),
-            'Douche 1': list(range(4, 7)),
-            'Douche 2': list(range(7, 10)),
-            'Douche 3': list(range(10, 13)),
-            'Contres': list(range(15, 21))
-        }
+        main_win = self.player_ui
+        if hasattr(main_win, 'get_track_to_indices'):
+            track_to_indices = main_win.get_track_to_indices()
+        else:
+            track_to_indices = {
+                'Face': list(range(0, 4)),
+                'Douche 1': list(range(4, 7)),
+                'Douche 2': list(range(7, 10)),
+                'Douche 3': list(range(10, 13)),
+                'Contres': list(range(15, 21))
+            }
 
         tick = getattr(self, '_timeline_tick', 0)
 
@@ -1479,6 +1483,23 @@ class Sequencer(QFrame):
                     if tick % speed_factor == 0:
                         if random.random() > 0.5:
                             intensity = 0
+                elif effect == "Sparkle":
+                    # Chaque projecteur scintille independamment et aleatoirement
+                    spark_period = max(1, speed_factor)
+                    spark_tick = tick // spark_period
+                    rng = random.Random(spark_tick * 100 + idx_position * 37)
+                    if rng.random() > 0.5:
+                        intensity = 0
+                elif effect == "Rainbow":
+                    # Cycle chromatique continu, decale par projecteur
+                    hue = (tick * 4 // max(1, speed_factor) + idx_position * 40) % 360
+                    color = QColor.fromHsv(hue, 255, 255)
+                elif effect == "Fire":
+                    # Scintillement dans les tons chauds rouge/orange
+                    rng = random.Random((tick + idx_position * 7) * 3)
+                    r = min(255, 175 + int(rng.random() * 80))
+                    g = int(rng.random() * 80)
+                    color = QColor(r, g, 0)
 
                 proj.level = intensity
                 proj.base_color = color

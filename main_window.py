@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QSplitter, QScrollArea, QSlider,
     QToolButton, QMenu, QMenuBar, QFileDialog, QMessageBox, QDialog,
-    QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction,
+    QComboBox, QTableWidget, QTableWidgetItem, QWidgetAction, QSpinBox,
     QTabWidget, QProgressBar, QApplication, QLineEdit, QStackedWidget,
     QHeaderView
 )
@@ -34,7 +34,7 @@ from artnet_dmx import ArtNetDMX, DMX_PROFILES, CHANNEL_TYPES, profile_for_mode,
 from audio_ai import AudioColorAI
 from midi_handler import MIDIHandler
 from ui_components import DualColorButton, EffectButton, FaderButton, ApcFader, CartoucheButton
-from plan_de_feu import PlanDeFeu, ColorPickerBlock
+from plan_de_feu import PlanDeFeu, ColorPickerBlock, _PatchCanvasProxy
 from recording_waveform import RecordingWaveform
 from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
@@ -165,8 +165,8 @@ class MainWindow(QMainWindow):
         # Icone de l'application
         self._create_window_icon()
 
-        # Creation des projecteurs
-        self._create_projectors()
+        # Creation des projecteurs (fixtures)
+        self._load_default_fixtures()
 
         # Variables d'etat
         self.active_pads = {}  # {col_idx: QPushButton} - un pad actif par colonne
@@ -341,36 +341,67 @@ class MainWindow(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-    def _create_projectors(self):
-        """Cree les projecteurs"""
+    # Mapping nom de groupe -> nom d'affichage dans la timeline
+    GROUP_DISPLAY = {
+        "face": "Groupe A",
+        "douche1": "Groupe B",
+        "douche2": "Groupe C",
+        "douche3": "Groupe D",
+        "lat": "Groupe E",
+        "contre": "Groupe F",
+        "public": "Groupe G",
+        "fumee": "Fumee",
+        "lyre": "Lyres",
+        "barre": "Barres",
+        "strobe": "Strobos",
+    }
+
+    # Fixtures par defaut (nom, type, groupe interne)
+    _DEFAULT_FIXTURES = [
+        ("Face 1",   "PAR LED", "face"),
+        ("Face 2",   "PAR LED", "face"),
+        ("Face 3",   "PAR LED", "face"),
+        ("Face 4",   "PAR LED", "face"),
+        ("Douche 1", "PAR LED", "douche1"),
+        ("Douche 2", "PAR LED", "douche2"),
+        ("Douche 3", "PAR LED", "douche3"),
+        ("Lat 1",    "PAR LED", "lat"),
+        ("Lat 2",    "PAR LED", "lat"),
+        ("Contre 1", "PAR LED", "contre"),
+        ("Contre 2", "PAR LED", "contre"),
+        ("Contre 3", "PAR LED", "contre"),
+        ("Contre 4", "PAR LED", "contre"),
+        ("Contre 5", "PAR LED", "contre"),
+        ("Contre 6", "PAR LED", "contre"),
+        ("Public",   "PAR LED", "public"),
+        ("Fumee",    "Machine a fumee", "fumee"),
+    ]
+
+    # Canaux par type (pour adressage compact)
+    _FIXTURE_CH = {
+        "PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
+        "Stroboscope": 2, "Machine a fumee": 2,
+    }
+
+    def _load_default_fixtures(self):
+        """Cree les fixtures par defaut avec adressage compact"""
         self.projectors = []
+        addr = 1
+        for name, ftype, group in self._DEFAULT_FIXTURES:
+            p = Projector(group, name=name, fixture_type=ftype)
+            p.start_address = addr
+            addr += self._FIXTURE_CH.get(ftype, 5)
+            self.projectors.append(p)
+        # Attribut special fumee
+        self.projectors[-1].fan_speed = 0
 
-        # 4 FACE
-        for _ in range(4):
-            self.projectors.append(Projector("face"))
-
-        # 3 x 3 DOUCHES
-        for _ in range(3):
-            self.projectors.append(Projector("douche1"))
-        for _ in range(3):
-            self.projectors.append(Projector("douche2"))
-        for _ in range(3):
-            self.projectors.append(Projector("douche3"))
-
-        # 2 LAT
-        for _ in range(2):
-            self.projectors.append(Projector("lat"))
-
-        # 6 CONTRE
-        for _ in range(6):
-            self.projectors.append(Projector("contre"))
-
-        # 1 PUBLIC
-        self.projectors.append(Projector("public"))   # index 21
-
-        # 1 FUMEE
-        self.projectors.append(Projector("fumee"))     # index 22
-        self.projectors[-1].fan_speed = 0              # attribut special fumee
+    def get_track_to_indices(self):
+        """Retourne le mapping nom_affichage_groupe -> [indices projecteurs]"""
+        mapping = {}
+        for i, proj in enumerate(self.projectors):
+            group_name = self.GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
+            mapping.setdefault(group_name, []).append(i)
+        return mapping
 
     def _create_menu(self):
         """Cree la barre de menu"""
@@ -398,15 +429,14 @@ class MainWindow(QMainWindow):
         file_menu.addAction("❌ Quitter", self.close)
 
         edit_menu = bar.addMenu("✏️ Edition")
-        edit_menu.addAction("🔴 REC Lumière", self.open_light_editor)
+        edit_menu.addAction("🔌 Patch DMX", self.show_dmx_patch_config)
         edit_menu.addSeparator()
+        edit_menu.addAction("🔴 REC Lumière", self.open_light_editor)
         edit_menu.addAction("🔊 Volume", self._edit_current_volume)
         edit_menu.addAction("⏱ Définir la durée", self._edit_current_duration)
-
-        params_menu = bar.addMenu("⚙️ Paramètres")
-        params_menu.addAction("🔌 Patch DMX", self.show_dmx_patch_config)
-        params_menu.addAction("💡 IA Lumière", self.show_ia_lumiere_config)
-        params_menu.addAction("⌨️ Raccourcis", self.show_shortcuts_dialog)
+        edit_menu.addSeparator()
+        edit_menu.addAction("💡 IA Lumière", self.show_ia_lumiere_config)
+        edit_menu.addAction("⌨️ Raccourcis", self.show_shortcuts_dialog)
 
         conn_menu = bar.addMenu("🔗 Connexion")
 
@@ -621,7 +651,7 @@ class MainWindow(QMainWindow):
 
         right = QSplitter(Qt.Vertical)
         right.setHandleWidth(2)
-        right.setMinimumWidth(320)
+        right.setMinimumWidth(240)
         right.addWidget(plan_scroll)
         right.addWidget(self.color_picker_block)
         right.addWidget(self.video_frame)
@@ -643,7 +673,7 @@ class MainWindow(QMainWindow):
         main_split.addWidget(mid)
         main_split.addWidget(right)
         main_split.setStretchFactor(0, 0)  # AKAI = taille fixe
-        main_split.setStretchFactor(1, 3)
+        main_split.setStretchFactor(1, 5)  # Sequenceur = priorite
         main_split.setStretchFactor(2, 2)
         main_split.setCollapsible(0, False)
         main_split.setCollapsible(1, False)
@@ -680,7 +710,7 @@ class MainWindow(QMainWindow):
         total_w = self._main_split.width()
         if total_w > 0:
             akai_w = 370
-            right_w = max(350, int(total_w * 0.3))
+            right_w = max(260, int(total_w * 0.22))
             mid_w = total_w - akai_w - right_w
             if mid_w < 200:
                 mid_w = 200
@@ -1399,6 +1429,13 @@ class MainWindow(QMainWindow):
                 for p in self.projectors:
                     if p.group in groups:
                         p.base_color = color
+        elif index in self.active_pads and value > 0 and index <= 3:
+            # Resync base_color sur tous les projecteurs du groupe avec la couleur du pad actif
+            # (une mémoire HTP peut avoir changé base_color d'un projecteur individuellement)
+            active_color = self.active_pads[index].property("base_color")
+            for p in self.projectors:
+                if p.group in groups:
+                    p.base_color = active_color
 
         brightness = value / 100.0 if value > 0 else 0
         for p in self.projectors:
@@ -2780,9 +2817,9 @@ class MainWindow(QMainWindow):
         """Ouvre le dialogue A propos / mises à jour"""
         AboutDialog(self).exec()
 
-    def on_update_available(self, version, exe_url, hash_url):
+    def on_update_available(self, version, exe_url, hash_url, sig_url=""):
         """Signal du checker async - montre la barre verte"""
-        self.update_bar.set_info(version, exe_url, hash_url)
+        self.update_bar.set_info(version, exe_url, hash_url, sig_url)
         self.update_bar.show()
 
     def _on_update_later(self):
@@ -2795,7 +2832,8 @@ class MainWindow(QMainWindow):
         download_update(self,
             self.update_bar.version,
             self.update_bar.exe_url,
-            self.update_bar.hash_url)
+            self.update_bar.hash_url,
+            self.update_bar.sig_url)
 
     # ==================== LICENCE ====================
 
@@ -3400,256 +3438,1203 @@ class MainWindow(QMainWindow):
         if self.load_dmx_patch_config():
             return
 
-        default_profile = DMX_PROFILES["RGBDS"]
-        dmx_addr = 1
+        # Appliquer le patch depuis start_address de chaque fixture
         for i, proj in enumerate(self.projectors):
             proj_key = f"{proj.group}_{i}"
-            profile = list(default_profile)
-
-            # Fumee -> profil 2CH_FUMEE
-            if proj.group == "fumee":
+            if proj.group == "fumee" or proj.fixture_type == "Machine a fumee":
                 profile = list(DMX_PROFILES["2CH_FUMEE"])
+            elif proj.fixture_type == "Moving Head":
+                profile = list(DMX_PROFILES["MOVING_8CH"])
+            elif proj.fixture_type == "Barre LED":
+                profile = list(DMX_PROFILES["LED_BAR_RGB"])
+            elif proj.fixture_type == "Stroboscope":
+                profile = list(DMX_PROFILES["STROBE_2CH"])
+            else:
+                profile = list(DMX_PROFILES["RGBDS"])
 
             nb_ch = len(profile)
-            channels = [dmx_addr + c for c in range(nb_ch)]
+            channels = [proj.start_address + c for c in range(nb_ch)]
             self.dmx.set_projector_patch(proj_key, channels, profile=profile)
-            dmx_addr += 10
 
     def show_dmx_patch_config(self):
-        """Interface de configuration DMX avec profils flexibles"""
+        """Interface de configuration DMX — master-detail + Plan de feu"""
+        from plan_de_feu import FixtureCanvas, NewPlanWizard
+
+        # ── Dialog ────────────────────────────────────────────────────────
         dialog = QDialog(self)
         dialog.setWindowTitle("Patch DMX")
-        dialog.setMinimumSize(750, 520)
-        dialog.setStyleSheet("""
-            QDialog { background: #1a1a1a; color: #e0e0e0; }
-            QLabel { color: #e0e0e0; }
-            QScrollArea { border: none; background: #1a1a1a; }
-            QWidget#scroll_content { background: #1a1a1a; }
-            QComboBox {
-                background: #2a2a2a; color: #ffffff;
-                border: 1px solid #4a4a4a; border-radius: 4px;
-                padding: 6px 12px; min-width: 100px;
-                font-weight: bold; font-size: 13px;
-            }
-            QComboBox:hover { border: 1px solid #00d4ff; }
-            QComboBox::drop-down {
-                border: none; width: 24px;
-            }
-            QComboBox::down-arrow {
-                image: none; border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #888; margin-right: 6px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2a2a; color: #ffffff;
-                border: 1px solid #4a4a4a; selection-background-color: #00d4ff;
-                selection-color: #000000; outline: none;
-            }
-        """)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
+        screen = QApplication.primaryScreen().availableGeometry()
+        dw = max(1000, min(1350, screen.width() - 120))
+        dh = max(650,  min(860,  screen.height() - 120))
+        dialog.resize(dw, dh)
+        dialog.move(screen.x() + (screen.width() - dw) // 2, screen.y() + (screen.height() - dh) // 2)
 
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
+        _SS = """
+            QDialog { background:#0f0f0f; color:#e0e0e0; }
+            QTabWidget::pane { border:none; background:#0f0f0f; }
+            QTabBar::tab { background:#181818; color:#444; padding:10px 26px;
+                border:none; border-bottom:2px solid transparent; font-size:12px; }
+            QTabBar::tab:selected { color:#fff; border-bottom:2px solid #00d4ff; background:#0f0f0f; }
+            QTabBar::tab:hover { color:#aaa; background:#1c1c1c; }
+            QScrollArea { border:none; background:transparent; }
+            QScrollBar:vertical { background:#0a0a0a; width:5px; border-radius:2px; }
+            QScrollBar::handle:vertical { background:#252525; border-radius:2px; min-height:20px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+            QLineEdit { background:#171717; color:#fff; border:1px solid #242424;
+                border-radius:7px; padding:7px 13px; font-size:13px; }
+            QLineEdit:focus { border:1px solid #00d4ff44; background:#14141c; }
+            QComboBox { background:#171717; color:#ddd; border:1px solid #242424;
+                border-radius:7px; padding:7px 12px; font-size:12px; }
+            QComboBox:focus { border-color:#00d4ff44; }
+            QComboBox::drop-down { border:none; width:18px; }
+            QComboBox QAbstractItemView { background:#1e1e1e; color:#e0e0e0;
+                border:1px solid #333; selection-background-color:#00d4ff22;
+                selection-color:#00d4ff; outline:none; padding:4px; }
+            QComboBox QAbstractItemView::item { padding:6px 12px; border-radius:4px; }
+            QSpinBox { background:#171717; color:#00d4ff; border:1px solid #242424;
+                border-radius:7px; padding:6px 10px; font-size:17px; font-weight:bold; }
+            QSpinBox:focus { border-color:#00d4ff44; }
+            QSpinBox::up-button, QSpinBox::down-button { width:0; height:0; }
+            QPushButton { background:#181818; color:#888; border:1px solid #242424;
+                border-radius:6px; padding:6px 16px; font-size:12px; }
+            QPushButton:hover { border-color:#00d4ff33; color:#ddd; background:#1e1e28; }
+            QPushButton:pressed { background:#00d4ff11; }
+            QLabel { color:#e0e0e0; }
+            QFrame[frameShape="4"] { color:#1e1e1e; }
+            QFrame[frameShape="5"] { color:#1e1e1e; }
+        """
+        dialog.setStyleSheet(_SS)
 
-        title = QLabel("Patch DMX")
-        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #ffffff; padding-bottom: 4px;")
-        layout.addWidget(title)
+        _GC = {
+            "face": "#ff8844", "contre": "#4488ff",
+            "douche1": "#44cc88", "douche2": "#44cc88", "douche3": "#44cc88",
+            "lat": "#aa55ff", "lyre": "#ff44cc", "barre": "#44aaff",
+            "strobe": "#ffee44", "fumee": "#88aaaa", "public": "#ff6655",
+        }
+        GROUP_LETTERS = {
+            "face": "A", "douche1": "B", "douche2": "C", "douche3": "D",
+            "lat": "E", "contre": "F", "public": "G",
+            "fumee": "Fumée", "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
+        }
+        FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
+        CH_COLORS = {
+            "R": "#cc3333", "G": "#33aa44", "B": "#3366cc", "W": "#aaaaaa",
+            "Dim": "#ddaa22", "Strobe": "#cc55cc", "UV": "#7744cc",
+            "Ambre": "#cc7722", "Orange": "#dd5522", "Pan": "#44aacc",
+            "Tilt": "#44ccaa", "Smoke": "#77aaaa", "Fan": "#557788",
+            "Gobo1": "#aa6677", "Gobo2": "#996677", "Shutter": "#aaaa33",
+            "Speed": "#778844", "Mode": "#667788", "ColorWheel": "#aa44aa",
+            "Prism": "#4488aa", "Focus": "#888844", "PanFine": "#33aacc", "TiltFine": "#33ccaa",
+        }
 
-        info = QLabel("Adressage auto : 1, 11, 21, 31...")
-        info.setAlignment(Qt.AlignCenter)
-        info.setStyleSheet("color: #666; font-size: 12px; padding-bottom: 8px;")
-        layout.addWidget(info)
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Toolbar ───────────────────────────────────────────────────────
+        toolbar = QWidget()
+        toolbar.setFixedHeight(56)
+        toolbar.setStyleSheet("background:#090909; border-bottom:1px solid #181818;")
+        th = QHBoxLayout(toolbar)
+        th.setContentsMargins(20, 0, 20, 0)
+        th.setSpacing(8)
+        lbl_ttl = QLabel("Patch DMX")
+        lbl_ttl.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        lbl_ttl.setStyleSheet("color:white; padding-right:16px;")
+        th.addWidget(lbl_ttl)
+
+        def _tbar_btn(text, color):
+            b = QPushButton(text)
+            b.setFixedHeight(34)
+            b.setStyleSheet(
+                f"QPushButton {{ background:transparent; color:{color}; border:1px solid {color}33;"
+                f" border-radius:6px; padding:6px 16px; font-size:12px; }}"
+                f"QPushButton:hover {{ background:{color}18; border-color:{color}66; }}"
+            )
+            return b
+
+        btn_new  = _tbar_btn("✨  Nouveau plan", "#00d4ff")
+        btn_add  = _tbar_btn("➕  Ajouter",       "#55cc77")
+        btn_auto = _tbar_btn("⚡  Auto-addr.",    "#ffaa44")
+        btn_dflt = _tbar_btn("↺  Défauts",        "#888888")
+        btn_undo = _tbar_btn("↩  Annuler",        "#888888")
+        th.addWidget(btn_new)
+        th.addWidget(btn_add)
+        th.addWidget(btn_auto)
+        th.addWidget(btn_dflt)
+        th.addWidget(btn_undo)
+        th.addStretch()
+        close_btn = QPushButton("Fermer")
+        close_btn.setFixedHeight(34)
+        close_btn.setStyleSheet(
+            "QPushButton { background:#181818; color:#777; border:1px solid #252525;"
+            " border-radius:6px; padding:6px 22px; }"
+            "QPushButton:hover { color:#fff; border-color:#444; }"
+        )
+        close_btn.clicked.connect(dialog.accept)
+        th.addWidget(close_btn)
+        root.addWidget(toolbar)
+
+        # ── Bandeau conflits ──────────────────────────────────────────────
+        conflict_banner = QLabel()
+        conflict_banner.setFixedHeight(30)
+        conflict_banner.setStyleSheet(
+            "background:#1a0d00; color:#ffaa44; padding:0 20px; font-size:11px;"
+            " border-bottom:1px solid #2e1800;"
+        )
+        conflict_banner.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        conflict_banner.setVisible(False)
+        root.addWidget(conflict_banner)
+
+        # ── Tabs ──────────────────────────────────────────────────────────
+        tabs = QTabWidget()
+        root.addWidget(tabs)
+
+        # ════════════════════════════════════════════════════════════════
+        # TAB 0 — FIXTURES  (master-detail)
+        # ════════════════════════════════════════════════════════════════
+        tab_fx = QWidget()
+        tab_fx.setStyleSheet("background:#0f0f0f;")
+        fx_root = QVBoxLayout(tab_fx)
+        fx_root.setContentsMargins(0, 0, 0, 0)
+        fx_root.setSpacing(0)
+
+        spl = QSplitter(Qt.Horizontal)
+        spl.setHandleWidth(1)
+        spl.setStyleSheet("QSplitter::handle{background:#181818;}")
+
+        # ── Panneau gauche : cards ────────────────────────────────────────
+        left_w = QWidget()
+        left_w.setMinimumWidth(240)
+        left_w.setMaximumWidth(320)
+        left_w.setStyleSheet("background:#090909;")
+        lv = QVBoxLayout(left_w)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(0)
+
+        filter_bar = QLineEdit()
+        filter_bar.setPlaceholderText("  🔍  Filtrer...")
+        filter_bar.setFixedHeight(40)
+        filter_bar.setStyleSheet(
+            "QLineEdit { background:#0e0e0e; color:#777; border:none;"
+            " border-bottom:1px solid #181818; border-radius:0; padding:0 16px; font-size:12px; }"
+            "QLineEdit:focus { color:#fff; border-bottom:1px solid #00d4ff33; }"
+        )
+        lv.addWidget(filter_bar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll_content = QWidget()
-        scroll_content.setObjectName("scroll_content")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(4)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_w = QWidget()
+        scroll_w.setStyleSheet("background:#090909;")
+        card_vl = QVBoxLayout(scroll_w)
+        card_vl.setContentsMargins(0, 4, 0, 4)
+        card_vl.setSpacing(1)
+        card_vl.addStretch()
+        scroll.setWidget(scroll_w)
+        lv.addWidget(scroll, 1)
 
-        self._profile_inputs = {}  # i -> {"combo": QComboBox, "label": QLabel, "custom": list|None}
+        bstrip = QWidget()
+        bstrip.setFixedHeight(40)
+        bstrip.setStyleSheet("background:#060606; border-top:1px solid #141414;")
+        bsv = QHBoxLayout(bstrip)
+        bsv.setContentsMargins(8, 0, 8, 0)
+        bsv.setSpacing(4)
 
-        current_group = None
-        for i, proj in enumerate(self.projectors):
-            if proj.group != current_group:
-                current_group = proj.group
-                group_label = QLabel(f"  {current_group.upper()}")
-                group_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
-                group_label.setStyleSheet("color: #00d4ff; padding: 8px 0 2px 0;")
-                scroll_layout.addWidget(group_label)
+        lbl_cnt = QLabel("")
+        lbl_cnt.setStyleSheet("color:#333333; font-size:10px; padding-left:8px;")
+        bsv.addWidget(lbl_cnt)
+        bsv.addStretch()
+        lv.addWidget(bstrip)
+        spl.addWidget(left_w)
 
-            proj_frame = QFrame()
-            proj_frame.setStyleSheet("""
-                QFrame {
-                    background: #222222; border-radius: 6px;
-                    padding: 6px 12px; margin: 1px 0;
-                }
-                QFrame:hover { background: #2a2a2a; }
-            """)
-            proj_layout = QHBoxLayout(proj_frame)
-            proj_layout.setContentsMargins(8, 4, 8, 4)
+        # ── Panneau droit : formulaire d'édition ──────────────────────────
+        right_w = QWidget()
+        right_w.setStyleSheet("background:#0f0f0f;")
+        rv = QVBoxLayout(right_w)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(0)
 
-            dot = QLabel("\u25cf")
-            dot.setFixedWidth(16)
-            dot.setStyleSheet("color: #00d4ff; font-size: 14px;")
-            proj_layout.addWidget(dot)
+        no_sel_w = QWidget()
+        no_sel_w.setStyleSheet("background:#0f0f0f;")
+        nsl = QVBoxLayout(no_sel_w)
+        nsl.setAlignment(Qt.AlignCenter)
+        lbl_nosel = QLabel("← Sélectionnez une fixture\npour la modifier")
+        lbl_nosel.setAlignment(Qt.AlignCenter)
+        lbl_nosel.setStyleSheet("color:#1e1e1e; font-size:16px;")
+        nsl.addWidget(lbl_nosel)
 
-            proj_name = f"{proj.group.capitalize()} #{i+1}"
-            name_label = QLabel(proj_name)
-            name_label.setMinimumWidth(140)
-            name_label.setStyleSheet("color: #cccccc; font-size: 13px;")
-            proj_layout.addWidget(name_label)
+        detail_w = QWidget()
+        detail_w.setStyleSheet("background:#0f0f0f;")
 
-            dmx_addr = (i * 10) + 1
-            addr_label = QLabel(f"CH {dmx_addr}")
-            addr_label.setMinimumWidth(70)
-            addr_label.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 13px;")
-            proj_layout.addWidget(addr_label)
+        det_hbar = QWidget()
+        det_hbar.setFixedHeight(54)
+        det_hbar.setStyleSheet("background:#090909; border-bottom:1px solid #181818;")
+        dth = QHBoxLayout(det_hbar)
+        dth.setContentsMargins(28, 0, 20, 0)
+        dth.setSpacing(8)
+        lbl_det_name = QLabel()
+        lbl_det_name.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        lbl_det_name.setStyleSheet("color:#fff; border:none; background:transparent;")
+        lbl_det_group = QLabel()
+        lbl_det_group.setStyleSheet("font-size:12px; border:none; background:transparent;")
+        dth.addWidget(lbl_det_name)
+        dth.addWidget(lbl_det_group)
+        dth.addStretch()
+        btn_det_del = QPushButton("🗑  Supprimer")
+        btn_det_del.setFixedHeight(30)
+        btn_det_del.setStyleSheet(
+            "QPushButton { background:transparent; color:#664444; border:1px solid #2e1818;"
+            " border-radius:6px; padding:4px 14px; font-size:11px; }"
+            "QPushButton:hover { color:#ff7777; border-color:#662222; background:#1a0808; }"
+        )
+        dth.addWidget(btn_det_del)
 
-            proj_layout.addStretch()
+        form_scroll = QScrollArea()
+        form_scroll.setWidgetResizable(True)
+        form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        form_w = QWidget()
+        form_w.setStyleSheet("background:#0f0f0f;")
+        fv = QVBoxLayout(form_w)
+        fv.setContentsMargins(28, 22, 28, 22)
+        fv.setSpacing(5)
+        form_scroll.setWidget(form_w)
 
-            proj_key = f"{proj.group}_{i}"
-            current_profile = self.dmx._get_profile(proj_key)
-            current_name = profile_name(current_profile)
+        def _sec(txt):
+            l = QLabel(txt.upper())
+            l.setStyleSheet(
+                "color:#252525; font-size:9px; font-weight:bold; letter-spacing:2px;"
+                " padding:10px 0 3px 0; border:none; background:transparent;"
+            )
+            return l
 
-            profile_combo = QComboBox()
-            profile_combo.setMinimumWidth(160)
-            # Profils pre-definis avec nom lisible
-            for pname, pchannels in DMX_PROFILES.items():
-                display = profile_display_text(pchannels)
-                profile_combo.addItem(display, pname)
-            # Profils custom sauvegardes
-            custom_profiles = getattr(self, '_saved_custom_profiles', {})
-            for cname, cchannels in custom_profiles.items():
-                display = f"{cname}  ({profile_display_text(cchannels)})"
-                profile_combo.addItem(display, f"__saved__{cname}")
-            profile_combo.addItem("Custom...", "__custom__")
+        def _hdiv():
+            f = QFrame()
+            f.setFrameShape(QFrame.HLine)
+            f.setStyleSheet("color:#181818; max-height:1px; margin:8px 0;")
+            return f
 
-            chan_label = QLabel()
-            chan_label.setMinimumWidth(200)
+        fv.addWidget(_sec("Identité"))
+        det_name_e = QLineEdit()
+        det_name_e.setPlaceholderText("Nom de la fixture")
+        det_name_e.setFixedHeight(44)
+        det_name_e.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        det_name_e.setStyleSheet(
+            "QLineEdit { background:#141414; color:#fff; border:1px solid #202020;"
+            " border-radius:8px; padding:8px 16px; font-size:14px; }"
+            "QLineEdit:focus { border:1px solid #00d4ff33; background:#14141c; }"
+        )
+        fv.addWidget(det_name_e)
+        fv.addSpacing(6)
 
-            entry = {"combo": profile_combo, "label": chan_label, "custom": None, "custom_name": None}
-            self._profile_inputs[i] = entry
+        tg_row = QHBoxLayout()
+        tg_row.setSpacing(10)
+        det_type_cb  = QComboBox()
+        det_type_cb.setFixedHeight(38)
+        for ft in FIXTURE_TYPES:
+            det_type_cb.addItem(ft)
+        det_group_cb = QComboBox()
+        det_group_cb.setFixedHeight(38)
+        tg_row.addWidget(det_type_cb, 1)
+        tg_row.addWidget(det_group_cb, 1)
+        fv.addLayout(tg_row)
+        fv.addWidget(_hdiv())
 
-            # Si le profil actuel est custom (pas dans DMX_PROFILES)
-            if current_name is None:
-                entry["custom"] = list(current_profile)
-                # Chercher si c'est un custom sauvegarde
-                custom_saved_name = None
-                for cname, cchannels in custom_profiles.items():
-                    if cchannels == current_profile:
-                        custom_saved_name = cname
-                        break
-                if custom_saved_name:
-                    entry["custom_name"] = custom_saved_name
-                    idx_c = profile_combo.findData(f"__saved__{custom_saved_name}")
-                    if idx_c >= 0:
-                        profile_combo.setCurrentIndex(idx_c)
-                else:
-                    display = profile_display_text(current_profile)
-                    profile_combo.insertItem(profile_combo.count() - 1, display, "__current_custom__")
-                    idx_c = profile_combo.findData("__current_custom__")
-                    profile_combo.setCurrentIndex(idx_c)
+        fv.addWidget(_sec("Adresse DMX"))
+        addr_row = QHBoxLayout()
+        addr_row.setSpacing(6)
+        btn_am = QPushButton("−")
+        btn_am.setFixedSize(36, 36)
+        btn_am.setStyleSheet(
+            "QPushButton { background:#141414; color:#555; border:1px solid #202020;"
+            " border-radius:7px; font-size:19px; font-weight:bold; padding:0; }"
+            "QPushButton:hover { color:#ccc; border-color:#3a3a3a; background:#1a1a1a; }"
+        )
+        addr_sb = QSpinBox()
+        addr_sb.setRange(1, 512)
+        addr_sb.setFixedHeight(36)
+        addr_sb.setAlignment(Qt.AlignCenter)
+        addr_sb.setFixedWidth(72)
+        btn_ap = QPushButton("+")
+        btn_ap.setFixedSize(36, 36)
+        btn_ap.setStyleSheet(btn_am.styleSheet())
+        lbl_addr_range = QLabel()
+        lbl_addr_range.setStyleSheet("color:#2a2a2a; font-size:12px; padding-left:6px; border:none;")
+        addr_row.addWidget(btn_am)
+        addr_row.addWidget(addr_sb)
+        addr_row.addWidget(btn_ap)
+        addr_row.addWidget(lbl_addr_range)
+        addr_row.addStretch()
+        fv.addLayout(addr_row)
+        lbl_conflict_det = QLabel()
+        lbl_conflict_det.setStyleSheet("color:#ff6644; font-size:11px; padding:2px 0; border:none;")
+        lbl_conflict_det.setVisible(False)
+        fv.addWidget(lbl_conflict_det)
+        fv.addWidget(_hdiv())
+
+        fv.addWidget(_sec("Profil DMX"))
+        det_profile_cb = QComboBox()
+        det_profile_cb.setFixedHeight(38)
+        for pname, pchannels in DMX_PROFILES.items():
+            det_profile_cb.addItem(f"{pname}  —  {profile_display_text(pchannels)}", pname)
+        det_profile_cb.addItem("Custom...", "__custom__")
+        fv.addWidget(det_profile_cb)
+
+        chips_w = QWidget()
+        chips_w.setStyleSheet("background:transparent;")
+        chips_vl = QVBoxLayout(chips_w)
+        chips_vl.setContentsMargins(0, 8, 0, 0)
+        chips_vl.setSpacing(4)
+        fv.addWidget(chips_w)
+        fv.addStretch()
+
+        dv_outer = QVBoxLayout(detail_w)
+        dv_outer.setContentsMargins(0, 0, 0, 0)
+        dv_outer.setSpacing(0)
+        dv_outer.addWidget(det_hbar)
+        dv_outer.addWidget(form_scroll, 1)
+
+        det_stack = QStackedWidget()
+        det_stack.addWidget(no_sel_w)
+        det_stack.addWidget(detail_w)
+        det_stack.setCurrentIndex(0)
+        rv.addWidget(det_stack, 1)
+
+        spl.addWidget(right_w)
+        spl.setSizes([280, dw - 282])
+        fx_root.addWidget(spl)
+
+        tabs.addTab(tab_fx, "📋  Fixtures")
+
+        # ── Onglet 2 : Plan de feu ─────────────────────────────────────
+        tab_canvas = QWidget()
+        tab_canvas.setStyleSheet("background: #0a0a0a;")
+        vl_canvas = QVBoxLayout(tab_canvas)
+        vl_canvas.setContentsMargins(0, 0, 0, 0)
+        vl_canvas.setSpacing(0)
+
+        # ── Barre d'édition inline ────────────────────────────────
+        _ES = (  # Selection buttons style — neutral
+            "QPushButton { background:#111111; color:#4a4a4a; border:1px solid #1c1c1c;"
+            " border-radius:5px; padding:3px 12px; font-size:11px; }"
+            "QPushButton:hover { background:#1a1a1a; color:#888888; border-color:#2a2a2a; }"
+            "QPushButton:pressed { background:#0e0e0e; }"
+        )
+        _EA = (  # Action buttons — blue tint
+            "QPushButton { background:#0d1520; color:#4488bb; border:1px solid #1a2d40;"
+            " border-radius:5px; padding:3px 14px; font-size:11px; }"
+            "QPushButton:hover { background:#142030; color:#66aadd; border-color:#2a5070; }"
+            "QPushButton:pressed { background:#090e18; }"
+        )
+        _ED = (  # Destructive button style — red
+            "QPushButton { background:#130606; color:#663333; border:1px solid #220d0d;"
+            " border-radius:5px; padding:3px 12px; font-size:11px; }"
+            "QPushButton:hover { background:#1c0808; color:#dd4444; border-color:#551111; }"
+            "QPushButton:pressed { background:#0e0404; }"
+        )
+
+        edit_strip = QWidget()
+        edit_strip.setFixedHeight(42)
+        edit_strip.setStyleSheet("background:#0c0c0c; border-bottom:1px solid #161616;")
+        es = QHBoxLayout(edit_strip)
+        es.setContentsMargins(10, 0, 10, 0)
+        es.setSpacing(6)
+
+        def _vsep():
+            s = QFrame()
+            s.setFrameShape(QFrame.VLine)
+            s.setStyleSheet("QFrame{color:#1a1a1a;max-width:1px;margin:8px 4px;}")
+            return s
+
+        # ── Alignement ────────────────────────────────────────────────
+        btn_align_row  = QPushButton("⟶  Aligner")
+        btn_align_row.setToolTip("Aligner les fixtures sélectionnées sur la même ligne horizontale")
+        btn_distribute = QPushButton("⟺  Centrer")
+        btn_distribute.setToolTip("Centrer et répartir à espacement égal les fixtures sélectionnées")
+        for b in [btn_align_row, btn_distribute]:
+            b.setStyleSheet(_EA)
+            b.setFixedHeight(28)
+            es.addWidget(b)
+
+        es.addWidget(_vsep())
+
+        # ── Sélection ─────────────────────────────────────────────────
+        btn_sel_all_c = QPushButton("Tout sél.")
+        btn_desel_c   = QPushButton("Désél.")
+        btn_groups_c  = QPushButton("Groupes  ▾")
+        for b in [btn_sel_all_c, btn_desel_c, btn_groups_c]:
+            b.setStyleSheet(_ES)
+            b.setFixedHeight(28)
+            es.addWidget(b)
+
+        es.addStretch()
+
+        # ── Réinitialiser positions ───────────────────────────────────
+        btn_reset_pos_c = QPushButton("↺  Positions auto")
+        btn_reset_pos_c.setToolTip("Remettre toutes les fixtures à leur position par défaut")
+        btn_reset_pos_c.setStyleSheet(_ES)
+        btn_reset_pos_c.setFixedHeight(28)
+        es.addWidget(btn_reset_pos_c)
+
+        vl_canvas.addWidget(edit_strip)
+
+        proxy = _PatchCanvasProxy(self.projectors, self)
+        canvas = FixtureCanvas(proxy)
+        vl_canvas.addWidget(canvas)
+
+        canvas_timer = QTimer(dialog)
+        canvas_timer.timeout.connect(canvas.update)
+        canvas_timer.start(80)
+
+        tabs.addTab(tab_canvas, "🎭  Plan de feu")
+
+        # ════════════════════════════════════════════════════════════════
+        # DONNÉES + HELPERS
+        # ════════════════════════════════════════════════════════════════
+        fixture_data = []
+        _sel     = [None]
+        _cards   = []
+        _history = []
+
+        def _rebuild_fd():
+            fixture_data.clear()
+            for i, proj in enumerate(self.projectors):
+                fixture_data.append({
+                    'name':          proj.name or proj.group,
+                    'fixture_type':  getattr(proj, 'fixture_type', 'PAR LED'),
+                    'group':         proj.group,
+                    'start_address': proj.start_address,
+                    'profile':       list(self.dmx._get_profile(f"{proj.group}_{i}")),
+                })
+
+        _rebuild_fd()
+
+        def _push_history():
+            snap = []
+            for i, fd in enumerate(fixture_data):
+                entry = dict(fd)
+                if i < len(self.projectors):
+                    p = self.projectors[i]
+                    entry['canvas_x'] = getattr(p, 'canvas_x', None)
+                    entry['canvas_y'] = getattr(p, 'canvas_y', None)
+                snap.append(entry)
+            _history.append(snap)
+            if len(_history) > 40:
+                _history.pop(0)
+
+        def _undo():
+            if not _history: return
+            snap = _history.pop()
+            del self.projectors[:]
+            fixture_data.clear()
+            for fd_s in snap:
+                p = Projector(fd_s['group'], name=fd_s['name'], fixture_type=fd_s['fixture_type'])
+                p.start_address = fd_s['start_address']
+                p.canvas_x = fd_s.get('canvas_x')
+                p.canvas_y = fd_s.get('canvas_y')
+                if p.fixture_type == "Machine a fumee":
+                    p.fan_speed = 0
+                self.projectors.append(p)
+                fixture_data.append({
+                    'name':          fd_s['name'],
+                    'fixture_type':  fd_s['fixture_type'],
+                    'group':         fd_s['group'],
+                    'start_address': fd_s['start_address'],
+                    'profile':       fd_s.get('profile', []),
+                })
+            self._rebuild_dmx_patch()
+            _build_cards(filter_bar.text())
+            _sel[0] = None
+            det_stack.setCurrentIndex(0)
+            proxy.selected_lamps.clear()
+            canvas.update()
+
+        def _get_conflicts():
+            occ = {}
+            for i, fd in enumerate(fixture_data):
+                for c in range(fd['start_address'], fd['start_address'] + len(fd['profile'])):
+                    occ.setdefault(c, []).append(i)
+            return {i for lst in occ.values() if len(lst) > 1 for i in lst}
+
+        def _update_conflict_banner(conflicts):
+            if conflicts and tabs.currentIndex() == 0:
+                n = len(conflicts)
+                conflict_banner.setText(
+                    f"  ⚠  {n} fixture{'s' if n > 1 else ''} avec des canaux DMX qui se chevauchent"
+                    "  —  utilisez ⚡ Auto-addr. pour corriger"
+                )
+                conflict_banner.setVisible(True)
             else:
-                idx_c = profile_combo.findData(current_name)
-                if idx_c >= 0:
-                    profile_combo.setCurrentIndex(idx_c)
+                conflict_banner.setVisible(False)
 
-            def update_chan_label(lbl, combo, entry_ref):
-                data = combo.currentData()
-                if data == "__custom__":
-                    return
-                elif data == "__current_custom__":
-                    parts = entry_ref["custom"] or []
-                elif isinstance(data, str) and data.startswith("__saved__"):
-                    cname = data[len("__saved__"):]
-                    parts = custom_profiles.get(cname, [])
+        tabs.currentChanged.connect(lambda _: _update_conflict_banner(_get_conflicts()))
+        def _update_chips(profile):
+            while chips_vl.count():
+                item = chips_vl.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            if not profile:
+                return
+            row_n = QWidget(); row_n.setStyleSheet("background:transparent;")
+            rn = QHBoxLayout(row_n); rn.setContentsMargins(0, 0, 0, 0); rn.setSpacing(4)
+            row_u = QWidget(); row_u.setStyleSheet("background:transparent;")
+            ru = QHBoxLayout(row_u); ru.setContentsMargins(0, 0, 0, 0); ru.setSpacing(4)
+            for ci, ch in enumerate(profile):
+                col = CH_COLORS.get(ch, "#555555")
+                cw = max(36, len(ch) * 7 + 14)
+                chip = QLabel(ch)
+                chip.setFixedSize(cw, 22)
+                chip.setAlignment(Qt.AlignCenter)
+                chip.setStyleSheet(
+                    f"background:{col}18; color:{col}; border:1px solid {col}44;"
+                    f" border-radius:4px; font-size:10px; font-weight:bold;"
+                )
+                chip.setToolTip(f"Canal {ci + 1}: {ch}")
+                num = QLabel(str(ci + 1))
+                num.setFixedWidth(cw)
+                num.setAlignment(Qt.AlignCenter)
+                num.setStyleSheet("color:#252525; font-size:9px; border:none; background:transparent;")
+                rn.addWidget(chip); ru.addWidget(num)
+            rn.addStretch(); ru.addStretch()
+            chips_vl.addWidget(row_n)
+            chips_vl.addWidget(row_u)
+        def _populate_group_combo():
+            det_group_cb.blockSignals(True)
+            det_group_cb.clear()
+            seen = []
+            for g in list(self.GROUP_DISPLAY.keys()) + ["lyre", "barre", "strobe"]:
+                if g not in seen:
+                    seen.append(g)
+            for fd_item in fixture_data:
+                if fd_item['group'] not in seen:
+                    seen.append(fd_item['group'])
+            for g in seen:
+                letter  = GROUP_LETTERS.get(g, "")
+                name    = self.GROUP_DISPLAY.get(g, g)
+                display = f"{letter}  —  {name}" if letter else name
+                det_group_cb.addItem(display, g)
+            det_group_cb.blockSignals(False)
+
+        def _update_addr_range():
+            if _sel[0] is None or _sel[0] >= len(fixture_data):
+                return
+            fd  = fixture_data[_sel[0]]
+            n   = len(fd['profile'])
+            end = addr_sb.value() + n - 1
+            if end > 512:
+                lbl_addr_range.setText(f"→ CH {end}  ⚠ dépasse 512 !")
+                lbl_addr_range.setStyleSheet("color:#ff6644; font-size:12px; padding-left:6px; border:none;")
+            else:
+                lbl_addr_range.setText(f"→ CH {end}   ({n} canal{'x' if n > 1 else ''})")
+                lbl_addr_range.setStyleSheet("color:#2a2a2a; font-size:12px; padding-left:6px; border:none;")
+        def _make_card(idx):
+            fd    = fixture_data[idx]
+            group = fd['group']
+            gc    = _GC.get(group, "#666666")
+            end_ch = fd['start_address'] + len(fd['profile']) - 1
+            gname  = self.GROUP_DISPLAY.get(group, group)
+
+            card = QFrame()
+            card.setFixedHeight(60)
+            card.setCursor(Qt.PointingHandCursor)
+
+            def _upd(selected, conflict):
+                _gc = card._gc  # lu dynamiquement pour refléter les changements de groupe
+                bg = "#10102a" if selected else "#0b0b0b"
+                card.setStyleSheet(
+                    f"QFrame {{ background:{bg}; border-left:4px solid {_gc};"
+                    f" border-top:1px solid {'#1e1e3a' if selected else '#141414'};"
+                    f" border-bottom:1px solid #141414; border-right:none; border-radius:0; }}"
+                )
+                if hasattr(card, '_chlbl'):
+                    card._chlbl.setStyleSheet(
+                        f"color:{'#ff6644' if conflict else '#33ddff' if selected else '#00d4ff'};"
+                        f" font-size:11px; font-weight:bold; border:none; background:transparent;"
+                    )
+
+            card._gc  = gc   # doit être défini avant le premier appel à _upd
+            card._upd = _upd
+            card._upd(False, False)
+
+            hl = QHBoxLayout(card)
+            hl.setContentsMargins(12, 0, 14, 0)
+            hl.setSpacing(8)
+
+            dot = QLabel("●")
+            dot.setFixedWidth(13)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setStyleSheet("color:#1c1c1c; font-size:13px; border:none; background:transparent;")
+            card._dot = dot
+            hl.addWidget(dot)
+
+            tv = QVBoxLayout()
+            tv.setSpacing(2)
+            tv.setContentsMargins(0, 0, 0, 0)
+            nm = QLabel(fd['name'] or fd['group'])
+            nm.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            nm.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; border:none; background:transparent;")
+            card._namelbl = nm
+            sub = QLabel(f"{fd['fixture_type']}  ·  {gname}")
+            # Couleur tintee du groupe mais lisible (melange gc + gris neutre)
+            _sub_col = "#{:02x}{:02x}{:02x}".format(
+                (int(gc[1:3], 16) + 0x44) // 2,
+                (int(gc[3:5], 16) + 0x44) // 2,
+                (int(gc[5:7], 16) + 0x44) // 2,
+            ) if len(gc) == 7 else "#545454"
+            sub.setStyleSheet(f"color:{_sub_col}; font-size:10px; border:none; background:transparent;")
+            card._sublbl_color = _sub_col
+            card._sublbl = sub
+            tv.addWidget(nm); tv.addWidget(sub)
+            hl.addLayout(tv)
+            hl.addStretch()
+
+            chl = QLabel(f"CH {fd['start_address']}–{end_ch}")
+            chl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            chl.setStyleSheet("color:#00d4ff; font-size:11px; font-weight:bold; border:none; background:transparent;")
+            card._chlbl = chl
+            hl.addWidget(chl)
+
+            card.mousePressEvent = lambda e, i=idx: _select_card(i)
+            return card
+        def _build_cards(filter_text=""):
+            while card_vl.count() > 1:
+                item = card_vl.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            _cards.clear()
+            ft = filter_text.strip().lower()
+            conflicts = _get_conflicts()
+            for idx, fd in enumerate(fixture_data):
+                if ft:
+                    hay = (fd['name'] + fd['fixture_type'] +
+                           self.GROUP_DISPLAY.get(fd['group'], fd['group'])).lower()
+                    if ft not in hay:
+                        _cards.append(None)
+                        continue
+                card = _make_card(idx)
+                card._upd(idx == _sel[0], idx in conflicts)
+                _cards.append(card)
+                card_vl.insertWidget(card_vl.count() - 1, card)
+            n = len(fixture_data)
+            lbl_cnt.setText(f"{n} fixture{'s' if n != 1 else ''}")
+            _update_conflict_banner(conflicts)
+        def _select_card(idx):
+            if _sel[0] is not None and _sel[0] < len(_cards):
+                old = _cards[_sel[0]]
+                if old is not None:
+                    old._upd(False, _sel[0] in _get_conflicts())
+            _sel[0] = idx
+            if idx is None:
+                det_stack.setCurrentIndex(0)
+                return
+            conflicts = _get_conflicts()
+            if idx < len(_cards) and _cards[idx] is not None:
+                _cards[idx]._upd(True, idx in conflicts)
+            det_stack.setCurrentIndex(1)
+            fd = fixture_data[idx]
+            gc = _GC.get(fd['group'], "#888")
+            lbl_det_name.setText(fd['name'] or fd['group'])
+            lbl_det_group.setText(f"  {self.GROUP_DISPLAY.get(fd['group'], fd['group'])}")
+            lbl_det_group.setStyleSheet(f"color:{gc}; font-size:12px; border:none; background:transparent;")
+            det_name_e.blockSignals(True);  det_name_e.setText(fd['name']);  det_name_e.blockSignals(False)
+            det_type_cb.blockSignals(True)
+            if fd['fixture_type'] in FIXTURE_TYPES:
+                det_type_cb.setCurrentIndex(FIXTURE_TYPES.index(fd['fixture_type']))
+            det_type_cb.blockSignals(False)
+            _populate_group_combo()
+            det_group_cb.blockSignals(True)
+            for i in range(det_group_cb.count()):
+                if det_group_cb.itemData(i) == fd['group']:
+                    det_group_cb.setCurrentIndex(i); break
+            det_group_cb.blockSignals(False)
+            addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);  addr_sb.blockSignals(False)
+            _update_addr_range()
+            det_profile_cb.blockSignals(True)
+            pn = profile_name(fd['profile'])
+            if pn:
+                pi = det_profile_cb.findData(pn)
+                if pi >= 0:
+                    det_profile_cb.setCurrentIndex(pi)
+            else:
+                det_profile_cb.setCurrentIndex(det_profile_cb.findData("__custom__"))
+            det_profile_cb.blockSignals(False)
+            _update_chips(fd['profile'])
+            if idx in conflicts:
+                others = []
+                for j, fd2 in enumerate(fixture_data):
+                    if j == idx: continue
+                    s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
+                    s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
+                    if s1 <= e2 and s2 <= e1:
+                        others.append(fd2['name'] or fd2['group'])
+                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {", ".join(others)}")
+                lbl_conflict_det.setVisible(True)
+            else:
+                lbl_conflict_det.setVisible(False)
+            if idx < len(_cards) and _cards[idx] is not None:
+                scroll.ensureWidgetVisible(_cards[idx])
+        def _commit():
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data): return
+            _push_history()
+            fd   = fixture_data[idx]
+            proj = self.projectors[idx]
+            fd['name']          = det_name_e.text().strip() or fd['group']
+            fd['fixture_type']  = det_type_cb.currentText()
+            fd['group']         = det_group_cb.currentData() or fd['group']
+            fd['start_address'] = addr_sb.value()
+            proj.name           = fd['name']
+            proj.fixture_type   = fd['fixture_type']
+            proj.group          = fd['group']
+            proj.start_address  = fd['start_address']
+            self._rebuild_dmx_patch()
+            self.save_dmx_patch_config()
+            conflicts = _get_conflicts()
+            _update_conflict_banner(conflicts)
+            # Mettre à jour TOUTES les cartes affectées (sélectionnée + celles en conflit)
+            for ci, c2 in enumerate(_cards):
+                if c2 is not None and ci != idx:
+                    c2._upd(False, ci in conflicts)
+            if idx < len(_cards) and _cards[idx] is not None:
+                card = _cards[idx]
+                # Mettre a jour la couleur de groupe (bordure + sous-titre)
+                new_gc = _GC.get(fd['group'], "#666666")
+                card._gc = new_gc
+                _sub_col = "#{:02x}{:02x}{:02x}".format(
+                    (int(new_gc[1:3], 16) + 0x44) // 2,
+                    (int(new_gc[3:5], 16) + 0x44) // 2,
+                    (int(new_gc[5:7], 16) + 0x44) // 2,
+                ) if len(new_gc) == 7 else "#545454"
+                card._namelbl.setText(fd['name'])
+                card._sublbl.setText(
+                    f"{fd['fixture_type']}  ·  {self.GROUP_DISPLAY.get(fd['group'], fd['group'])}"
+                )
+                card._sublbl.setStyleSheet(
+                    f"color:{_sub_col}; font-size:10px; border:none; background:transparent;"
+                )
+                end_ch = fd['start_address'] + len(fd['profile']) - 1
+                card._chlbl.setText(f"CH {fd['start_address']}–{end_ch}")
+                card._upd(True, idx in conflicts)
+            lbl_det_name.setText(fd['name'])
+            gc = _GC.get(fd['group'], "#888")
+            lbl_det_group.setText(f"  {self.GROUP_DISPLAY.get(fd['group'], fd['group'])}")
+            lbl_det_group.setStyleSheet(f"color:{gc}; font-size:12px; border:none; background:transparent;")
+            _update_addr_range()
+            if idx in conflicts:
+                others = []
+                for j, fd2 in enumerate(fixture_data):
+                    if j == idx: continue
+                    s1, e1 = fd['start_address'], fd['start_address'] + len(fd['profile']) - 1
+                    s2, e2 = fd2['start_address'], fd2['start_address'] + len(fd2['profile']) - 1
+                    if s1 <= e2 and s2 <= e1:
+                        others.append(fd2['name'] or fd2['group'])
+                lbl_conflict_det.setText(f"⚠  Chevauchement avec : {", ".join(others)}")
+                lbl_conflict_det.setVisible(True)
+            else:
+                lbl_conflict_det.setVisible(False)
+        _name_tmr = QTimer(dialog)
+        _name_tmr.setSingleShot(True)
+        _name_tmr.setInterval(500)
+        _name_tmr.timeout.connect(_commit)
+        det_name_e.textChanged.connect(lambda _: _name_tmr.start())
+        det_type_cb.currentIndexChanged.connect(lambda _: _commit())
+        det_group_cb.currentIndexChanged.connect(lambda _: _commit())
+        addr_sb.valueChanged.connect(lambda _: (_update_addr_range(), _commit()))
+        btn_am.clicked.connect(lambda: addr_sb.setValue(max(1, addr_sb.value() - 1)))
+        btn_ap.clicked.connect(lambda: addr_sb.setValue(min(512, addr_sb.value() + 1)))
+
+        def _on_profile_changed(_):
+            data = det_profile_cb.currentData()
+            i = _sel[0]
+            if i is None or i >= len(fixture_data): return
+            if data == "__custom__":
+                custom = self._show_custom_profile_dialog(fixture_data[i]['profile'])
+                if custom:
+                    fixture_data[i]['profile'] = custom
+                prev = profile_name(fixture_data[i]['profile'])
+                pi2  = det_profile_cb.findData(prev) if prev else -1
+                det_profile_cb.blockSignals(True)
+                det_profile_cb.setCurrentIndex(pi2 if pi2 >= 0 else det_profile_cb.findData("__custom__"))
+                det_profile_cb.blockSignals(False)
+            elif data in DMX_PROFILES:
+                fixture_data[i]['profile'] = list(DMX_PROFILES[data])
+            self._rebuild_dmx_patch()
+            self.save_dmx_patch_config()
+            _update_chips(fixture_data[i]['profile'])
+            _update_addr_range()
+            conflicts = _get_conflicts()
+            _update_conflict_banner(conflicts)
+            if i < len(_cards) and _cards[i] is not None:
+                end_ch = fixture_data[i]['start_address'] + len(fixture_data[i]['profile']) - 1
+                _cards[i]._chlbl.setText(f"CH {fixture_data[i]['start_address']}–{end_ch}")
+                _cards[i]._upd(True, i in conflicts)
+
+        det_profile_cb.currentIndexChanged.connect(_on_profile_changed)
+        def _del_selected():
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data): return
+            fname = fixture_data[idx]['name']
+            if QMessageBox.question(
+                dialog, "Supprimer", f"Supprimer « {fname} » ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes: return
+            _push_history()
+            fixture_data.pop(idx)
+            if 0 <= idx < len(self.projectors):
+                self.projectors.pop(idx)
+            _sel[0] = None
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            det_stack.setCurrentIndex(0)
+
+        btn_det_del.clicked.connect(_del_selected)
+
+        def _update_dots():
+            for i, card in enumerate(_cards):
+                if card is None or i >= len(self.projectors): continue
+                proj = self.projectors[i]
+                if proj.muted or proj.level == 0:
+                    col = "#1c1c1c"
                 else:
-                    parts = DMX_PROFILES.get(data, [])
-                text = profile_display_text(parts)
-                lbl.setText(text)
-                lbl.setStyleSheet("color: #888; font-size: 11px; font-family: 'Consolas';")
+                    col = proj.color.name() if hasattr(proj, 'color') and proj.color.isValid() else card._gc
+                card._dot.setStyleSheet(
+                    f"color:{col}; font-size:13px; border:none; background:transparent;"
+                )
+        def _add_fixture():
+            preset = self._show_fixture_library_dialog()
+            if not preset: return
+            _push_history()
+            _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
+                   "Stroboscope": 2, "Machine a fumee": 2}
+            next_addr = 1
+            if self.projectors:
+                last = max(self.projectors, key=lambda p: p.start_address)
+                next_addr = last.start_address + _CH.get(getattr(last, 'fixture_type', 'PAR LED'), 5)
+            p = Projector(
+                preset.get('group', 'face'),
+                name=preset.get('name', 'Fixture'),
+                fixture_type=preset.get('fixture_type', 'PAR LED')
+            )
+            p.start_address = next_addr
+            p.canvas_x = 0.5; p.canvas_y = 0.5
+            if p.fixture_type == "Machine a fumee":
+                p.fan_speed = 0
+            self.projectors.append(p)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            new_idx = len(fixture_data) - 1
+            _build_cards(filter_bar.text())
+            _select_card(new_idx)
+        def _auto_address():
+            if QMessageBox.question(
+                dialog, "Auto-adresser",
+                "Recalculer automatiquement toutes les adresses DMX ?\n"
+                "Les adresses seront réassignées de façon continue, sans espaces.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes: return
+            _push_history()
+            addr = 1
+            for fd in fixture_data:
+                fd['start_address'] = addr
+                addr += len(fd['profile'])
+                if addr > 512: addr = 512
+            for proj, fd in zip(self.projectors, fixture_data):
+                proj.start_address = fd['start_address']
+            self._rebuild_dmx_patch()
+            self.save_dmx_patch_config()
+            cur = _sel[0]
+            _build_cards(filter_bar.text())
+            if cur is not None: _select_card(cur)
+        def _reset_defaults():
+            if QMessageBox.question(
+                dialog, "Réinitialiser",
+                "Réinitialiser les fixtures par défaut ?\nToutes les modifications seront perdues.",
+                QMessageBox.Yes | QMessageBox.No
+            ) != QMessageBox.Yes: return
+            _push_history()
+            self.projectors.clear()
+            addr = 1
+            for name, ftype, group in self._DEFAULT_FIXTURES:
+                p = Projector(group, name=name, fixture_type=ftype)
+                profile = list(DMX_PROFILES["2CH_FUMEE"] if group == "fumee" else DMX_PROFILES["RGBDS"])
+                p.start_address = addr
+                addr += len(profile)
+                self.projectors.append(p)
+            self.projectors[-1].fan_speed = 0
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _sel[0] = None
+            _build_cards()
+            det_stack.setCurrentIndex(0)
+        def _open_wizard():
+            if self.projectors:
+                if QMessageBox.question(
+                    dialog, "Nouveau plan de feu",
+                    f"Cette action remplacera les {len(self.projectors)} fixture(s) existante(s).\n"
+                    "Continuer vers l'assistant ?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                ) != QMessageBox.Yes: return
+            wiz = NewPlanWizard(dialog)
+            if wiz.exec() != QDialog.Accepted: return
+            fixtures = wiz.get_result()
+            if not fixtures: return
+            _push_history()
+            self.projectors.clear()
+            for fdd in fixtures:
+                p = Projector(fdd['group'], name=fdd['name'], fixture_type=fdd['fixture_type'])
+                p.start_address = fdd['start_address']
+                p.canvas_x = None; p.canvas_y = None
+                if fdd['fixture_type'] == "Machine a fumee":
+                    p.fan_speed = 0
+                self.projectors.append(p)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _sel[0] = None
+            _build_cards()
+            det_stack.setCurrentIndex(0)
 
-            update_chan_label(chan_label, profile_combo, entry)
+        btn_new.clicked.connect(_open_wizard)
+        btn_add.clicked.connect(_add_fixture)
+        btn_auto.clicked.connect(_auto_address)
+        btn_dflt.clicked.connect(_reset_defaults)
+        btn_undo.clicked.connect(_undo)
+        filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
+        def _get_selected_projs():
+            if not proxy.selected_lamps:
+                return list(self.projectors)
+            g_cnt = {}; result = []
+            for proj in self.projectors:
+                li = g_cnt.get(proj.group, 0)
+                if (proj.group, li) in proxy.selected_lamps:
+                    result.append(proj)
+                g_cnt[proj.group] = li + 1
+            return result if result else list(self.projectors)
 
-            def on_profile_changed(_, combo=profile_combo, lbl=chan_label, e=entry, idx=i):
-                data = combo.currentData()
-                if data == "__custom__":
-                    custom = self._show_custom_profile_dialog(e.get("custom"))
-                    if custom:
-                        # Demander un nom pour le profil custom
-                        cname = self._ask_custom_profile_name()
-                        if cname:
-                            e["custom"] = custom
-                            e["custom_name"] = cname
-                            # Sauvegarder le profil custom
-                            if not hasattr(self, '_saved_custom_profiles'):
-                                self._saved_custom_profiles = {}
-                            self._saved_custom_profiles[cname] = custom
-                            # Ajouter au combo s'il n'existe pas
-                            saved_key = f"__saved__{cname}"
-                            ci = combo.findData(saved_key)
-                            if ci < 0:
-                                display = f"{cname}  ({profile_display_text(custom)})"
-                                combo.insertItem(combo.count() - 1, display, saved_key)
-                                ci = combo.findData(saved_key)
-                            combo.setCurrentIndex(ci)
-                        else:
-                            # Pas de nom -> annuler
-                            prev = profile_name(self.dmx._get_profile(f"{self.projectors[idx].group}_{idx}"))
-                            pi = combo.findData(prev if prev else "__current_custom__")
-                            if pi >= 0:
-                                combo.setCurrentIndex(pi)
-                            return
-                    else:
-                        prev = profile_name(self.dmx._get_profile(f"{self.projectors[idx].group}_{idx}"))
-                        pi = combo.findData(prev if prev else "__current_custom__")
-                        if pi >= 0:
-                            combo.setCurrentIndex(pi)
-                        return
-                update_chan_label(lbl, combo, e)
+        def _align_row():
+            """Aligner toutes les fixtures sélectionnées sur la même ligne horizontale (Y moyen)"""
+            projs = _get_selected_projs()
+            if not projs: return
+            avg_y = sum(getattr(p, 'canvas_y', 0.5) or 0.5 for p in projs) / len(projs)
+            for p in projs: p.canvas_y = avg_y
+            canvas.update(); self.save_dmx_patch_config()
 
-            profile_combo.currentIndexChanged.connect(on_profile_changed)
+        def _distribute():
+            """Centrer le groupe sur le canvas et répartir à espacement égal"""
+            projs = _get_selected_projs(); n = len(projs)
+            if not n: return
+            if n == 1:
+                projs[0].canvas_x = 0.5
+            else:
+                sorted_p = sorted(projs, key=lambda p: getattr(p, 'canvas_x', 0.5) or 0.5)
+                mg = 0.15  # 15% de marge de chaque cote -> etalement centré sur 0.5
+                for i, p in enumerate(sorted_p):
+                    p.canvas_x = max(0.07, min(0.93, mg + i * (1.0 - 2 * mg) / (n - 1)))
+            canvas.update(); self.save_dmx_patch_config()
 
-            proj_layout.addWidget(profile_combo)
-            proj_layout.addWidget(chan_label)
+        btn_align_row.clicked.connect(_align_row)
+        btn_distribute.clicked.connect(_distribute)
+        def _select_all_canvas():
+            g_cnt = {}
+            for p in self.projectors:
+                li = g_cnt.get(p.group, 0)
+                proxy.selected_lamps.add((p.group, li)); g_cnt[p.group] = li + 1
+            canvas.update()
 
-            scroll_layout.addWidget(proj_frame)
+        def _deselect_canvas():
+            proxy.selected_lamps.clear(); canvas.update()
 
-        scroll_layout.addStretch()
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        def _show_groups_popup():
+            _MS = ("QMenu{background:#1e1e1e;border:1px solid #3a3a3a;border-radius:6px;"
+                   "padding:6px;color:white;font-size:11px;}"
+                   "QMenu::item{padding:6px 20px;border-radius:3px;}"
+                   "QMenu::item:selected{background:#333;}")
+            m = QMenu(btn_groups_c); m.setStyleSheet(_MS)
+            seen = []
+            for p in self.projectors:
+                if p.group not in seen: seen.append(p.group)
+            if not seen: return
+            for g in seen:
+                act = m.addAction(self.GROUP_DISPLAY.get(g, g))
+                act.triggered.connect(lambda checked, grp=g: _sel_group_canvas(grp))
+            m.exec(btn_groups_c.mapToGlobal(QPoint(0, btn_groups_c.height())))
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
+        def _sel_group_canvas(grp):
+            proxy.selected_lamps.clear()
+            g_cnt = {}
+            for p in self.projectors:
+                li = g_cnt.get(p.group, 0)
+                if p.group == grp: proxy.selected_lamps.add((p.group, li))
+                g_cnt[p.group] = li + 1
+            canvas.update()
+        def _delete_canvas_selection():
+            n = len(proxy.selected_lamps)
+            if not n: return
+            if QMessageBox.question(
+                dialog, "Supprimer",
+                f"Supprimer {n} fixture{'s' if n > 1 else ''} sélectionnée{'s' if n > 1 else ''} ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes: return
+            _push_history()
+            g_cnt = {}; to_rm = set()
+            for i, proj in enumerate(self.projectors):
+                li = g_cnt.get(proj.group, 0)
+                if (proj.group, li) in proxy.selected_lamps: to_rm.add(i)
+                g_cnt[proj.group] = li + 1
+            for i in sorted(to_rm, reverse=True): self.projectors.pop(i)
+            proxy.selected_lamps.clear()
+            self._rebuild_dmx_patch(); _rebuild_fd()
+            _build_cards(filter_bar.text()); canvas.update()
 
-        apply_btn = QPushButton("Appliquer")
-        apply_btn.setStyleSheet("""
-            QPushButton {
-                background: #00d4ff; color: #000000; font-weight: bold;
-                padding: 10px 30px; border-radius: 6px; font-size: 13px;
-            }
-            QPushButton:hover { background: #33ddff; }
-        """)
-        apply_btn.clicked.connect(lambda: self.apply_dmx_modes(dialog))
-        btn_layout.addWidget(apply_btn)
+        def _reset_canvas_positions():
+            if QMessageBox.question(
+                dialog, "Réinitialiser les positions",
+                "Remettre toutes les fixtures à leur position automatique ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            ) != QMessageBox.Yes: return
+            _push_history()
+            for proj in self.projectors: proj.canvas_x = None; proj.canvas_y = None
+            self.save_dmx_patch_config(); canvas.update()
+        btn_sel_all_c.clicked.connect(_select_all_canvas)
+        btn_desel_c.clicked.connect(_deselect_canvas)
+        btn_groups_c.clicked.connect(_show_groups_popup)
+        btn_reset_pos_c.clicked.connect(_reset_canvas_positions)
 
-        cancel_btn = QPushButton("Annuler")
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background: #333333; color: #aaaaaa;
-                padding: 10px 30px; border-radius: 6px; font-size: 13px;
-                border: 1px solid #4a4a4a;
-            }
-            QPushButton:hover { background: #3a3a3a; color: #ffffff; }
-        """)
-        cancel_btn.clicked.connect(dialog.reject)
-        btn_layout.addWidget(cancel_btn)
+        proxy._add_cb             = _add_fixture
+        proxy._wizard_cb          = _open_wizard
+        proxy._align_row_cb       = _align_row
+        proxy._distribute_cb      = _distribute
+        proxy._select_fixture_cb  = lambda idx: (tabs.setCurrentIndex(0), _select_card(idx))
 
-        layout.addLayout(btn_layout)
+        canvas_timer = QTimer(dialog)
+
+        def _timer_tick():
+            canvas.update()
+            _update_dots()
+
+        canvas_timer.timeout.connect(_timer_tick)
+        canvas_timer.start(80)
+
+        # Ctrl+Z sur le dialog
+        def _dialog_key(event):
+            if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
+                _undo()
+            else:
+                type(dialog).keyPressEvent(dialog, event)
+        dialog.keyPressEvent = _dialog_key
+
+        _build_cards()
+        if fixture_data:
+            _select_card(0)
+
         dialog.exec()
+        canvas_timer.stop()
+
+    def _show_fixture_library_dialog(self):
+        """Dialog bibliotheque de fixtures. Retourne un dict preset ou None."""
+        from PySide6.QtWidgets import QListWidget, QSplitter
+
+        FIXTURE_LIBRARY = {
+            "PAR LED": [
+                {"name": "PAR LED RGB 3ch", "fixture_type": "PAR LED", "profile": "RGB", "group": "face"},
+                {"name": "PAR LED RGBDS 5ch", "fixture_type": "PAR LED", "profile": "RGBDS", "group": "face"},
+                {"name": "PAR LED RGBWD 5ch", "fixture_type": "PAR LED", "profile": "RGBWD", "group": "face"},
+                {"name": "PAR LED RGBWDS 6ch", "fixture_type": "PAR LED", "profile": "RGBWDS", "group": "face"},
+            ],
+            "Moving Head": [
+                {"name": "Lyre Spot 8ch", "fixture_type": "Moving Head", "profile": "MOVING_8CH", "group": "lyre"},
+                {"name": "Lyre Wash RGB 8ch", "fixture_type": "Moving Head", "profile": "MOVING_RGB", "group": "lyre"},
+                {"name": "Lyre Wash RGBW 9ch", "fixture_type": "Moving Head", "profile": "MOVING_RGBW", "group": "lyre"},
+                {"name": "Lyre Spot 5ch", "fixture_type": "Moving Head", "profile": "MOVING_5CH", "group": "lyre"},
+            ],
+            "Barre LED": [
+                {"name": "Barre LED RGB 5ch", "fixture_type": "Barre LED", "profile": "LED_BAR_RGB", "group": "barre"},
+            ],
+            "Stroboscope": [
+                {"name": "Strobe 2ch", "fixture_type": "Stroboscope", "profile": "STROBE_2CH", "group": "strobe"},
+            ],
+            "Machine a fumee": [
+                {"name": "Machine a fumee 2ch", "fixture_type": "Machine a fumee", "profile": "2CH_FUMEE", "group": "fumee"},
+            ],
+        }
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Bibliotheque de fixtures")
+        dialog.setMinimumSize(500, 380)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; color: #e0e0e0; }
+            QListWidget { background: #222; color: #e0e0e0; border: 1px solid #3a3a3a; border-radius: 4px; }
+            QListWidget::item { padding: 6px 10px; }
+            QListWidget::item:selected { background: #00d4ff; color: #000; }
+            QListWidget::item:hover { background: #2a2a2a; }
+            QPushButton { background: #2a2a2a; color: #ccc; border: 1px solid #4a4a4a; border-radius: 4px; padding: 6px 14px; }
+            QPushButton:hover { border: 1px solid #00d4ff; }
+            QLabel { color: #e0e0e0; }
+            QSplitter::handle { background: #3a3a3a; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel("Choisir une fixture a ajouter")
+        title_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_lbl)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        cat_list = QListWidget()
+        for cat in FIXTURE_LIBRARY.keys():
+            cat_list.addItem(cat)
+        cat_list.setMaximumWidth(160)
+        splitter.addWidget(cat_list)
+
+        preset_list = QListWidget()
+        splitter.addWidget(preset_list)
+
+        layout.addWidget(splitter)
+
+        result = [None]
+
+        def on_cat_changed():
+            preset_list.clear()
+            cat = cat_list.currentItem()
+            if not cat:
+                return
+            for preset in FIXTURE_LIBRARY.get(cat.text(), []):
+                preset_list.addItem(preset['name'])
+
+        cat_list.currentItemChanged.connect(on_cat_changed)
+        if FIXTURE_LIBRARY:
+            cat_list.setCurrentRow(0)
+
+        def accept():
+            cat = cat_list.currentItem()
+            preset_item = preset_list.currentItem()
+            if not cat or not preset_item:
+                return
+            for p in FIXTURE_LIBRARY.get(cat.text(), []):
+                if p['name'] == preset_item.text():
+                    result[0] = p
+                    break
+            dialog.accept()
+
+        preset_list.itemDoubleClicked.connect(lambda _: accept())
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("Ajouter")
+        ok_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; padding: 8px 24px; } QPushButton:hover { background: #33ddff; }")
+        cancel_b = QPushButton("Annuler")
+        ok_btn.clicked.connect(accept)
+        cancel_b.clicked.connect(dialog.reject)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_b)
+        layout.addLayout(btn_row)
+
+        dialog.exec()
+        return result[0]
 
     def _show_custom_profile_dialog(self, initial=None):
         """Dialog pour composer un profil DMX custom. Retourne la liste ou None si annule."""
@@ -3801,42 +4786,71 @@ class MainWindow(QMainWindow):
                 return name
         return None
 
-    def apply_dmx_modes(self, dialog):
-        """Applique les profils configures"""
-        custom_profiles = getattr(self, '_saved_custom_profiles', {})
-        for i, proj in enumerate(self.projectors):
+    def apply_dmx_modes(self, dialog, fixture_data):
+        """Applique les fixtures configurees"""
+        if not fixture_data:
+            QMessageBox.warning(dialog, "Aucune fixture", "La liste de fixtures est vide.")
+            return
+
+        # Reconstruire self.projectors depuis fixture_data
+        self.projectors = []
+        for fd in fixture_data:
+            p = Projector(fd['group'], name=fd['name'], fixture_type=fd['fixture_type'])
+            p.start_address = fd['start_address']
+            if fd['fixture_type'] == "Machine a fumee":
+                p.fan_speed = 0
+            self.projectors.append(p)
+
+        # Mettre a jour le patch DMX
+        self.dmx.clear_patch()
+        for i, (proj, fd) in enumerate(zip(self.projectors, fixture_data)):
             proj_key = f"{proj.group}_{i}"
-            entry = self._profile_inputs[i]
-            combo = entry["combo"]
-            data = combo.currentData()
-            dmx_addr = (i * 10) + 1
-
-            # Determiner le profil
-            if data == "__current_custom__":
-                profile = list(entry["custom"])
-            elif isinstance(data, str) and data.startswith("__saved__"):
-                cname = data[len("__saved__"):]
-                profile = list(custom_profiles.get(cname, entry.get("custom") or DMX_PROFILES["RGBDS"]))
-            elif data in DMX_PROFILES:
-                profile = list(DMX_PROFILES[data])
-            else:
-                profile = list(DMX_PROFILES["RGBDS"])
-
+            profile = fd['profile']
             nb_ch = len(profile)
-            channels = [dmx_addr + c for c in range(nb_ch)]
+            channels = [proj.start_address + c for c in range(nb_ch)]
             self.dmx.set_projector_patch(proj_key, channels, profile=profile)
 
         self.save_dmx_patch_config()
-        QMessageBox.information(dialog, "Profils appliques",
-            "Profils DMX appliques avec succes !")
+        QMessageBox.information(dialog, "Patch applique",
+            "Fixtures DMX appliquees avec succes !")
         dialog.accept()
 
+    def _rebuild_dmx_patch(self):
+        """Reconstruit le patch DMX depuis self.projectors et sauvegarde"""
+        self.dmx.clear_patch()
+        for i, proj in enumerate(self.projectors):
+            proj_key = f"{proj.group}_{i}"
+            ftype = getattr(proj, 'fixture_type', 'PAR LED')
+            if ftype == "Machine a fumee" or proj.group == "fumee":
+                profile = list(DMX_PROFILES["2CH_FUMEE"])
+            elif ftype == "Moving Head":
+                profile = list(DMX_PROFILES["MOVING_8CH"])
+            elif ftype == "Barre LED":
+                profile = list(DMX_PROFILES["LED_BAR_RGB"])
+            elif ftype == "Stroboscope":
+                profile = list(DMX_PROFILES["STROBE_2CH"])
+            else:
+                profile = list(DMX_PROFILES["RGBDS"])
+            channels = [proj.start_address + c for c in range(len(profile))]
+            self.dmx.set_projector_patch(proj_key, channels, profile=profile)
+        self.save_dmx_patch_config()
+
     def save_dmx_patch_config(self):
-        """Sauvegarde la configuration du patch DMX"""
+        """Sauvegarde la configuration du patch DMX (nouveau format avec fixtures)"""
+        fixtures_list = []
+        for i, proj in enumerate(self.projectors):
+            proj_key = f"{proj.group}_{i}"
+            fixtures_list.append({
+                'name': proj.name,
+                'fixture_type': proj.fixture_type,
+                'group': proj.group,
+                'start_address': proj.start_address,
+                'profile': self.dmx._get_profile(proj_key),
+                'pos_x': getattr(proj, 'canvas_x', None),
+                'pos_y': getattr(proj, 'canvas_y', None),
+            })
         config = {
-            'channels': self.dmx.projector_channels,
-            'modes': self.dmx.projector_modes,
-            'profiles': self.dmx.projector_profiles,
+            'fixtures': fixtures_list,
             'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
         }
         try:
@@ -3853,17 +4867,37 @@ class MainWindow(QMainWindow):
             if config_path.exists():
                 with open(config_path, 'r') as f:
                     config = json.load(f)
+
+                # Nouveau format avec liste de fixtures
+                if 'fixtures' in config:
+                    self.projectors = []
+                    for i, fd in enumerate(config['fixtures']):
+                        p = Projector(
+                            fd['group'],
+                            name=fd.get('name', ''),
+                            fixture_type=fd.get('fixture_type', 'PAR LED')
+                        )
+                        p.start_address = fd.get('start_address', (i * 10) + 1)
+                        p.canvas_x = fd.get('pos_x', None)
+                        p.canvas_y = fd.get('pos_y', None)
+                        if fd.get('fixture_type') == "Machine a fumee":
+                            p.fan_speed = 0
+                        self.projectors.append(p)
+                        proj_key = f"{p.group}_{i}"
+                        profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
+                        nb_ch = len(profile)
+                        channels = [p.start_address + c for c in range(nb_ch)]
+                        self.dmx.set_projector_patch(proj_key, channels, profile=profile)
+                    self._saved_custom_profiles = config.get('custom_profiles', {})
+                    return True
+
+                # Retro-compat : ancien format (channels/modes/profiles)
                 self.dmx.projector_channels = config.get('channels', {})
                 self.dmx.projector_modes = config.get('modes', {})
-
-                # Charger les profils custom sauvegardes
                 self._saved_custom_profiles = config.get('custom_profiles', {})
-
-                # Charger les profils (nouveau format)
                 if 'profiles' in config:
                     self.dmx.projector_profiles = config['profiles']
                 else:
-                    # Retro-compat : convertir les anciens modes en profils
                     for key, mode in self.dmx.projector_modes.items():
                         self.dmx.projector_profiles[key] = profile_for_mode(mode)
                 return True

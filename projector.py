@@ -7,13 +7,22 @@ from PySide6.QtGui import QColor
 class Projector:
     """Represente un projecteur avec son etat (niveau, couleur, mute)"""
 
-    def __init__(self, group):
+    def __init__(self, group, name="", fixture_type="PAR LED"):
         self.group = group
+        self.name = name              # Nom affiche ("Face 1", "Lyre SL"...)
+        self.fixture_type = fixture_type  # Categorie ("PAR LED", "Moving Head"...)
+        self.start_address = 1        # Adresse DMX de depart (1-512)
         self.level = 0
         self.base_color = QColor("white")
         self.color = QColor("black")
         self.dmx_mode = "Manuel"
         self.muted = False
+        self.pan = 128                # Pan (0-255, centre=128)
+        self.tilt = 128               # Tilt (0-255, centre=128)
+        self.gobo = 0                 # Gobo wheel (0-255)
+        self.zoom = 0                 # Zoom (0-255)
+        self.shutter = 255            # Shutter/Iris (0-255)
+        self.color_wheel = 0          # Color wheel (0-255)
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

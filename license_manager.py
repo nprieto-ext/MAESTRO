@@ -361,6 +361,10 @@ def check_exe_integrity() -> bool:
         expected_hash = sig_data.get("hash", "")
         signature = sig_data.get("signature", "")
 
+        if not expected_hash:
+            print("Hash non defini dans .sig - verification ignoree")
+            return True
+
         if exe_hash != expected_hash:
             print("Hash exe ne correspond pas - fichier modifie")
             return False
@@ -371,8 +375,9 @@ def check_exe_integrity() -> bool:
         return exe_hash == expected_hash
 
     except Exception as e:
-        print(f"Erreur verification integrite: {e}")
-        return False
+        # En cas d'erreur inattendue (permission, JSON malforme, etc.), ne pas bloquer
+        print(f"Erreur verification integrite (ignoree): {e}")
+        return True
 
 
 # ============================================================

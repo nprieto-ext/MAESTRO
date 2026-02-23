@@ -186,7 +186,7 @@ class SplashScreen(QWidget):
 class UpdateChecker(QThread):
     """Verifie les releases GitHub en arriere-plan"""
 
-    update_available = Signal(str, str, str)  # version, exe_url, hash_url
+    update_available = Signal(str, str, str, str)  # version, exe_url, hash_url, sig_url
     check_finished   = Signal(bool, str)       # found, remote_version
     check_error      = Signal(str)             # message d'erreur lisible
 
@@ -231,21 +231,32 @@ class UpdateChecker(QThread):
                 self.check_finished.emit(False, remote_version)
                 return
 
-            exe_url = ""
-            hash_url = ""
+            setup_url = ""   # installeur Inno Setup (préféré)
+            raw_url   = ""   # exe brut (fallback)
+            hash_url  = ""
+            sig_url   = ""
             assets = data.get("assets", [])
             for asset in assets:
                 name    = asset.get("name", "")
                 name_lc = name.lower()
                 url     = asset.get("browser_download_url", "")
                 if name_lc.endswith(".exe") and "mystrow" in name_lc:
-                    exe_url = url
-                elif name_lc in ("sha256.txt", "mystrow.exe.sig"):
+                    if "setup" in name_lc:
+                        setup_url = url          # installeur → toujours préféré
+                    else:
+                        raw_url = url            # exe brut → fallback seulement
+                elif name_lc == "sha256.txt":
                     hash_url = url
+                elif name_lc == "mystrow.exe.sig":
+                    sig_url = url
+
+            # Toujours utiliser l'installeur s'il est disponible :
+            # il déploie à la fois MyStrow.exe ET MyStrow.exe.sig,
+            # ce qui garantit la cohérence du check d'intégrité au redémarrage.
+            exe_url = setup_url or raw_url
 
             if not exe_url:
                 # Asset non trouvé dans la liste → fallback URL construite depuis le tag
-                # (fonctionne si le fichier suit la convention MyStrow_Setup.exe)
                 exe_url = (
                     f"https://github.com/nprieto-ext/MAESTRO/releases/download"
                     f"/v{remote_version}/MyStrow_Setup.exe"
@@ -257,7 +268,7 @@ class UpdateChecker(QThread):
                     )
                     return
 
-            self.update_available.emit(remote_version, exe_url, hash_url)
+            self.update_available.emit(remote_version, exe_url, hash_url, sig_url)
             self.check_finished.emit(True, remote_version)
         except urllib.error.HTTPError as e:
             self.check_error.emit(f"HTTP {e.code} — {e.reason}")
@@ -309,6 +320,7 @@ class UpdateBar(QWidget):
         self.version = ""
         self.exe_url = ""
         self.hash_url = ""
+        self.sig_url = ""
 
         self.setFixedHeight(40)
         self.setStyleSheet("background: #2d7a3a;")
@@ -361,17 +373,18 @@ class UpdateBar(QWidget):
         btn_update.clicked.connect(self.update_clicked)
         layout.addWidget(btn_update)
 
-    def set_info(self, version, exe_url, hash_url):
+    def set_info(self, version, exe_url, hash_url, sig_url=""):
         self.version = version
         self.exe_url = exe_url
         self.hash_url = hash_url
+        self.sig_url = sig_url
         self.label.setText(f"Nouvelle version disponible (v{version})")
 
 
 # ============================================================
 # DOWNLOAD + INSTALL
 # ============================================================
-def download_update(parent, version, exe_url, hash_url):
+def download_update(parent, version, exe_url, hash_url, sig_url=""):
     """Telecharge la mise a jour avec verification SHA256 et lance le batch updater"""
 
     dlg = QDialog(parent)
@@ -530,12 +543,24 @@ def download_update(parent, version, exe_url, hash_url):
 
     if is_installer:
         # Lancer l'installeur Inno Setup et quitter
+        # L'installeur déploie MyStrow.exe ET MyStrow.exe.sig → intégrité garantie
         QTimer.singleShot(400, lambda: subprocess.Popen(
             [str(new_file), "/SILENT", "/CLOSEAPPLICATIONS"]
         ))
     else:
         # Fallback : batch replace (exe brut)
-        batch_path = _create_updater_batch(str(new_file), sys.executable)
+        # Télécharger aussi le .sig pour que check_exe_integrity() passe au redémarrage
+        new_sig = None
+        if sig_url:
+            try:
+                new_sig = update_dir / "MyStrow.exe.sig"
+                urllib.request.urlretrieve(sig_url, str(new_sig))
+            except Exception:
+                new_sig = None   # sig indisponible : on continue sans
+        current_sig = sys.executable + ".sig"
+        batch_path = _create_updater_batch(str(new_file), sys.executable,
+                                           str(new_sig) if new_sig else "",
+                                           current_sig)
         QTimer.singleShot(400, lambda: subprocess.Popen(
             ["cmd.exe", "/c", str(batch_path)],
             creationflags=subprocess.CREATE_NEW_CONSOLE
@@ -564,6 +589,7 @@ class AboutDialog(QDialog):
         self._new_version = ""
         self._exe_url     = ""
         self._hash_url    = ""
+        self._sig_url     = ""
         self._build_ui()
         self._start_check()
 
@@ -662,6 +688,7 @@ class AboutDialog(QDialog):
         self._new_version = ""
         self._exe_url     = ""
         self._hash_url    = ""
+        self._sig_url     = ""
         self._update_box.setStyleSheet(
             "QWidget { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; }"
         )
@@ -673,10 +700,11 @@ class AboutDialog(QDialog):
         self._checker.check_error.connect(self._on_check_error)
         self._checker.start()
 
-    def _on_update_available(self, version, exe_url, hash_url):
+    def _on_update_available(self, version, exe_url, hash_url, sig_url=""):
         self._new_version = version
         self._exe_url     = exe_url
         self._hash_url    = hash_url
+        self._sig_url     = sig_url
         self._update_box.setStyleSheet(
             "QWidget { background: #111; border: 1px solid #005f6b; border-radius: 6px; }"
         )
@@ -715,13 +743,22 @@ class AboutDialog(QDialog):
         version  = self._new_version
         exe_url  = self._exe_url
         hash_url = self._hash_url
+        sig_url  = self._sig_url
         self.accept()
-        QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url))
+        QTimer.singleShot(100, lambda: download_update(parent, version, exe_url, hash_url, sig_url))
 
 
-def _create_updater_batch(new_exe, current_exe):
-    """Cree le script batch de mise a jour"""
+def _create_updater_batch(new_exe, current_exe, new_sig="", current_sig=""):
+    """Cree le script batch de mise a jour (remplace exe + sig si disponibles)"""
     batch_path = Path(tempfile.gettempdir()) / "mystrow_update" / "update_mystrow.bat"
+
+    # Copie du .sig si fourni (indispensable pour check_exe_integrity au redémarrage)
+    sig_block = ""
+    if new_sig and current_sig:
+        sig_block = f'''
+copy /y "{new_sig}" "{current_sig}" >nul 2>&1
+del "{new_sig}" >nul 2>&1'''
+
     batch_content = f'''@echo off
 echo Mise a jour MyStrow en cours...
 timeout /t 2 /nobreak >nul
@@ -730,8 +767,8 @@ copy /y "{new_exe}" "{current_exe}" >nul 2>&1
 if errorlevel 1 (
     timeout /t 1 /nobreak >nul
     goto retry
-)
-del "{new_exe}"
+){sig_block}
+del "{new_exe}" >nul 2>&1
 start "" "{current_exe}"
 del "%~f0"
 '''

@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -27,7 +27,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --noconfirm main.py --name MyStrow
+        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --noupx --noconfirm main.py --name MyStrow
 
       - name: Generate SHA256 and .sig
         shell: pwsh
@@ -126,6 +126,7 @@ jobs:
           files: |
             windows-installer/MyStrow_Setup.exe
             windows-installer/MyStrow.exe
+            windows-installer/MyStrow.exe.sig
             windows-installer/sha256.txt
             mac-dmg/MyStrow_Installer.dmg
 

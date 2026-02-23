@@ -205,12 +205,8 @@ class LightTimelineEditor(QDialog):
         tracks_layout.setSpacing(0)
         tracks_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Creer les pistes
-        self.track_face = LightTrack("Face", self.media_duration, self)
-        self.track_douche1 = LightTrack("Douche 1", self.media_duration, self)
-        self.track_douche2 = LightTrack("Douche 2", self.media_duration, self)
-        self.track_douche3 = LightTrack("Douche 3", self.media_duration, self)
-        self.track_contre = LightTrack("Contres", self.media_duration, self)
+        # Creer les pistes dynamiquement depuis les fixtures
+        self._create_tracks_from_fixtures(main_window.projectors, tracks_layout)
 
         # Piste waveform (masquee pour images et pauses)
         self.track_waveform = LightTrack("Audio", self.media_duration, self)
@@ -219,14 +215,6 @@ class LightTimelineEditor(QDialog):
 
         is_image = self.media_path and media_icon(self.media_path) == "image"
         show_audio = not is_image and not self.is_tempo
-
-        self.tracks = [
-            self.track_face, self.track_douche1, self.track_douche2,
-            self.track_douche3, self.track_contre
-        ]
-
-        for track in self.tracks:
-            tracks_layout.addWidget(track)
 
         if show_audio:
             tracks_layout.addWidget(self.track_waveform)
@@ -274,6 +262,38 @@ class LightTimelineEditor(QDialog):
 
         # Maximiser la fenetre apres construction complete
         self.showMaximized()
+
+    def _create_tracks_from_fixtures(self, projectors, tracks_layout):
+        """Genere les pistes de la timeline depuis la liste de fixtures"""
+        GROUP_DISPLAY = getattr(self.main_window, 'GROUP_DISPLAY', {
+            "face": "Face", "douche1": "Douche 1", "douche2": "Douche 2",
+            "douche3": "Douche 3", "lat": "Lat", "contre": "Contres",
+            "public": "Public", "fumee": "Fumee", "lyre": "Lyres",
+            "barre": "Barres", "strobe": "Strobos",
+        })
+        # Groupes sans piste lumiere
+        SKIP_GROUPS = {"fumee"}
+
+        seen_groups = []
+        for proj in projectors:
+            gname = GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
+            if gname not in seen_groups and proj.group not in SKIP_GROUPS:
+                seen_groups.append(gname)
+
+        self.tracks = []
+        self.track_map = {}
+        for gname in seen_groups:
+            track = LightTrack(gname, self.media_duration, self)
+            self.tracks.append(track)
+            self.track_map[gname] = track
+            tracks_layout.addWidget(track)
+
+        # Alias de compatibilite pour le code existant
+        self.track_face = self.track_map.get("Face")
+        self.track_douche1 = self.track_map.get("Douche 1")
+        self.track_douche2 = self.track_map.get("Douche 2")
+        self.track_douche3 = self.track_map.get("Douche 3")
+        self.track_contre = self.track_map.get("Contres")
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""
@@ -390,10 +410,14 @@ class LightTimelineEditor(QDialog):
 
         try:
             waveform = self.track_waveform.generate_waveform(
-                self.media_path, max_samples=5000, progress_callback=on_progress
+                self.media_path, max_samples=5000, progress_callback=on_progress,
+                cancel_check=lambda: self._analysis_cancelled
             )
             if self._analysis_cancelled:
-                raise _AnalysisCancelled()
+                # Annule: fermer dialog sans fermer l'editeur
+                loading.close()
+                print("Analyse annulee - editeur reste ouvert sans forme d'onde")
+                return
             if waveform:
                 self._apply_waveform(waveform)
                 # Sauvegarder dans le cache fichier
@@ -408,8 +432,7 @@ class LightTimelineEditor(QDialog):
         except _AnalysisCancelled:
             print("Analyse annulee par l'utilisateur")
             loading.close()
-            self.reject()
-            return
+            return  # Fermer le dialog, mais PAS l'editeur
         except Exception as e:
             status.setText(f"Erreur: {e}")
             print(f"Erreur forme d'onde: {e}")
@@ -521,9 +544,19 @@ class LightTimelineEditor(QDialog):
         no_effect_action = effect_menu.addAction("⭕ Aucun effet")
         no_effect_action.triggered.connect(lambda: self.apply_effect_to_selection(None))
 
-        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random"]:
-            action = effect_menu.addAction(f"⚡ {eff}")
+        effect_emojis = {
+            "Strobe": "⚡", "Flash": "💥", "Pulse": "💜",
+            "Wave": "🌊", "Random": "🎲", "Rainbow": "🌈",
+            "Sparkle": "✨", "Fire": "🔥",
+        }
+        for eff in ["Strobe", "Flash", "Pulse", "Wave", "Random", "Sparkle", "Rainbow", "Fire"]:
+            emoji = effect_emojis.get(eff, "⚡")
+            action = effect_menu.addAction(f"{emoji} {eff}")
             action.triggered.connect(lambda checked=False, e=eff: self.apply_effect_to_selection(e))
+
+        effect_menu.addSeparator()
+        speed_action = effect_menu.addAction("🎚 Vitesse de l'effet (sélection)...")
+        speed_action.triggered.connect(self.edit_effect_speed_selection)
 
         return menubar
 
@@ -1000,17 +1033,9 @@ class LightTimelineEditor(QDialog):
             seq = self.main_window.seq.sequences[self.media_row]
             clips_data = seq.get('clips', [])
 
-            track_map = {
-                'Face': self.track_face,
-                'Douche 1': self.track_douche1,
-                'Douche 2': self.track_douche2,
-                'Douche 3': self.track_douche3,
-                'Contres': self.track_contre,
-            }
-
             for clip_data in clips_data:
                 track_name = clip_data.get('track')
-                track = track_map.get(track_name)
+                track = self.track_map.get(track_name)
 
                 if track:
                     color = QColor(clip_data.get('color', '#ffffff'))
@@ -1512,16 +1537,8 @@ class LightTimelineEditor(QDialog):
             track.clips.clear()
             track.selected_clips.clear()
 
-        track_map = {
-            'Face': self.track_face,
-            'Douche 1': self.track_douche1,
-            'Douche 2': self.track_douche2,
-            'Douche 3': self.track_douche3,
-            'Contres': self.track_contre,
-        }
-
         for clip_data in state:
-            track = track_map.get(clip_data.get('track'))
+            track = self.track_map.get(clip_data.get('track'))
             if track:
                 color = QColor(clip_data.get('color', '#ffffff'))
                 clip = track.add_clip_direct(
@@ -1763,7 +1780,83 @@ class LightTimelineEditor(QDialog):
             self.end_rubber_band()
         super().mouseReleaseEvent(event)
 
+    def edit_effect_speed_selection(self):
+        """Ouvre un dialog pour regler la vitesse des effets sur les clips selectionnes"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton
+        selected = []
+        for track in self.tracks:
+            selected.extend(track.selected_clips)
+
+        if not selected:
+            QMessageBox.warning(self, "Aucune selection",
+                "Selectionnez un ou plusieurs blocs d'abord.")
+            return
+
+        current_speed = selected[0].effect_speed if selected else 50
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Vitesse de l'effet")
+        dialog.setFixedSize(360, 210)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; }
+            QLabel { color: white; border: none; }
+            QPushButton {
+                background: #cccccc; color: black;
+                border: 1px solid #999; border-radius: 6px;
+                padding: 10px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background: #00d4ff; }
+            QSlider::groove:horizontal { background: #3a3a3a; height: 8px; border-radius: 4px; }
+            QSlider::handle:horizontal {
+                background: #00d4ff; width: 18px; height: 18px;
+                margin: -5px 0; border-radius: 9px;
+            }
+            QSlider::sub-page:horizontal { background: #00d4ff; border-radius: 4px; }
+        """)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 25, 30, 20)
+        layout.setSpacing(12)
+
+        value_label = QLabel(f"Vitesse : {current_speed}%")
+        value_label.setStyleSheet("color: white; font-size: 26px; font-weight: bold;")
+        value_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(value_label)
+
+        lbl_row = QHBoxLayout()
+        lbl_slow = QLabel("Lent")
+        lbl_slow.setStyleSheet("color: #888; font-size: 11px;")
+        lbl_fast = QLabel("Rapide")
+        lbl_fast.setStyleSheet("color: #888; font-size: 11px;")
+        lbl_row.addWidget(lbl_slow)
+        lbl_row.addStretch()
+        lbl_row.addWidget(lbl_fast)
+        layout.addLayout(lbl_row)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(current_speed)
+        slider.valueChanged.connect(lambda v: value_label.setText(f"Vitesse : {v}%"))
+        layout.addWidget(slider)
+
+        btn_layout = QHBoxLayout()
+        cancel = QPushButton("Annuler")
+        cancel.clicked.connect(dialog.reject)
+        btn_layout.addWidget(cancel)
+        ok = QPushButton("OK")
+        ok.clicked.connect(dialog.accept)
+        ok.setStyleSheet("background: #00d4ff; color: black; font-weight: bold; padding: 10px 20px; border-radius: 6px;")
+        btn_layout.addWidget(ok)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() == QDialog.Accepted:
+            for clip in selected:
+                clip.effect_speed = slider.value()
+            for track in self.tracks:
+                track.update()
+            self.save_state()
+
     def close_editor(self):
         """Ferme l'editeur"""
+        self.playback_timer.stop()
         self.preview_player.stop()
         self.reject()

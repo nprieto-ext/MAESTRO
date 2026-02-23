@@ -12,7 +12,7 @@ Version complete avec toutes les fonctionnalites:
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QMenu, QComboBox, QDialog, QMessageBox, QInputDialog, QSlider
+    QMenu, QComboBox, QDialog, QMessageBox, QInputDialog, QSlider, QApplication
 )
 from PySide6.QtCore import Qt, QPoint, QSize, QRect, QMimeData
 from PySide6.QtGui import (
@@ -25,6 +25,7 @@ import array
 import random
 import math
 import struct
+import time
 
 try:
     import miniaudio
@@ -239,7 +240,7 @@ class LightTrack(QWidget):
 
         self.setMouseTracking(True)
 
-    def generate_waveform(self, audio_path, max_samples=5000, progress_callback=None):
+    def generate_waveform(self, audio_path, max_samples=5000, progress_callback=None, cancel_check=None):
         """Genere des donnees de forme d'onde a partir d'un fichier audio ou video"""
         print(f"🎵 Generation forme d'onde: {audio_path}")
 
@@ -252,9 +253,11 @@ class LightTrack(QWidget):
         if ext in video_extensions:
             print(f"   Fichier video detecte (.{ext}), tentative extraction audio...")
             # Essai 1: ffmpeg
-            result = self._extract_waveform_ffmpeg(audio_path, max_samples)
+            result = self._extract_waveform_ffmpeg(audio_path, max_samples, cancel_check=cancel_check)
             if result:
                 return result
+            if cancel_check and cancel_check():
+                return None
             # Essai 2: QAudioDecoder (natif Qt, pas de dependance externe)
             result = self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback)
             if result:
@@ -293,9 +296,11 @@ class LightTrack(QWidget):
 
         except wave.Error:
             print(f"   Pas un fichier WAV, decodage via miniaudio...")
-            result = self._decode_with_miniaudio(audio_path, max_samples)
+            result = self._decode_with_miniaudio(audio_path, max_samples, cancel_check=cancel_check)
             if result:
                 return result
+            if cancel_check and cancel_check():
+                return None
             # Fallback QAudioDecoder pour les formats non supportes par miniaudio
             return self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback)
 
@@ -303,7 +308,7 @@ class LightTrack(QWidget):
             print(f"❌ Erreur generation forme d'onde: {e}")
             return None
 
-    def _decode_with_miniaudio(self, audio_path, max_samples):
+    def _decode_with_miniaudio(self, audio_path, max_samples, cancel_check=None):
         """Decode un fichier audio (MP3/FLAC/OGG/AAC...) via miniaudio ou subprocess"""
         # Essai 1 : miniaudio en direct (si installe sur ce Python)
         if HAS_MINIAUDIO:
@@ -322,19 +327,18 @@ class LightTrack(QWidget):
                 print(f"   ⚠️ miniaudio direct echoue: {e}")
 
         # Essai 2 : subprocess vers Python 3.12 qui a miniaudio
-        return self._decode_via_subprocess(audio_path, max_samples)
+        return self._decode_via_subprocess(audio_path, max_samples, cancel_check=cancel_check)
 
-    def _decode_via_subprocess(self, audio_path, max_samples):
+    def _decode_via_subprocess(self, audio_path, max_samples, cancel_check=None):
         """Decode via subprocess Python 3.12 (qui a miniaudio installe)"""
         import subprocess
         import json
-        import sys
         import os
+        import threading
 
         # Chercher Python 3.12
         py312 = r"C:\Users\nikop\AppData\Local\Programs\Python\Python312\python.exe"
         if not os.path.exists(py312):
-            # Fallback: essayer d'autres chemins
             for p in [r"C:\Python312\python.exe", r"C:\Python\python.exe"]:
                 if os.path.exists(p):
                     py312 = p
@@ -362,28 +366,65 @@ max_val = max(waveform) if waveform else 1
 waveform = [x / max_val for x in waveform] if max_val > 0 else waveform
 print(json.dumps(waveform))
 '''
-        try:
-            result = subprocess.run(
-                [py312, "-c", script],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                print(f"   ⚠️ Subprocess erreur: {result.stderr[:200]}")
+        # Utiliser un thread pour eviter le deadlock de pipe (stdout peut depasser le buffer)
+        proc_ref = [None]
+        result_holder = [None]
+        error_holder = [None]
+
+        def run_proc():
+            try:
+                proc = subprocess.Popen(
+                    [py312, "-c", script],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                proc_ref[0] = proc
+                # communicate() gere correctement le buffering
+                stdout, stderr = proc.communicate(timeout=30)
+                result_holder[0] = (proc.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                if proc_ref[0]:
+                    proc_ref[0].kill()
+                    proc_ref[0].communicate()
+                print("   ⚠️ Subprocess timeout (30s)")
+            except Exception as e:
+                error_holder[0] = e
+
+        thread = threading.Thread(target=run_proc, daemon=True)
+        thread.start()
+
+        start_t = time.time()
+        while thread.is_alive():
+            if cancel_check and cancel_check():
+                if proc_ref[0]:
+                    proc_ref[0].kill()
+                return None
+            QApplication.processEvents()
+            time.sleep(0.05)
+            if time.time() - start_t > 35:
+                if proc_ref[0]:
+                    proc_ref[0].kill()
                 return None
 
-            waveform = json.loads(result.stdout.strip())
+        if error_holder[0] or result_holder[0] is None:
+            if error_holder[0]:
+                print(f"   ❌ Erreur subprocess: {error_holder[0]}")
+            return None
+
+        returncode, stdout, stderr = result_holder[0]
+        if returncode != 0:
+            print(f"   ⚠️ Subprocess erreur: {stderr[:200]}")
+            return None
+
+        try:
+            waveform = json.loads(stdout.strip())
             print(f"   ✅ subprocess Python3.12 miniaudio: {len(waveform)} points")
             self.waveform_data = waveform
             return waveform
-
-        except subprocess.TimeoutExpired:
-            print(f"   ⚠️ Subprocess timeout (30s)")
-            return None
         except Exception as e:
-            print(f"   ❌ Erreur subprocess: {e}")
+            print(f"   ❌ Erreur parsing JSON: {e}")
             return None
 
-    def _extract_waveform_ffmpeg(self, media_path, max_samples):
+    def _extract_waveform_ffmpeg(self, media_path, max_samples, cancel_check=None):
         """Extrait la forme d'onde d'un fichier video via ffmpeg"""
         import subprocess
         import tempfile
@@ -399,12 +440,24 @@ print(json.dumps(waveform))
                 '-acodec', 'pcm_s16le', '-y', temp_wav
             ]
 
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=120
-            )
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            start_t = time.time()
+            while proc.poll() is None:
+                if cancel_check and cancel_check():
+                    proc.kill()
+                    proc.communicate()
+                    return None
+                QApplication.processEvents()
+                time.sleep(0.1)
+                if time.time() - start_t > 120:
+                    proc.kill()
+                    proc.communicate()
+                    print("   ⚠️ ffmpeg timeout (120s)")
+                    return None
 
-            if result.returncode != 0:
-                stderr_short = (result.stderr or '')[:200]
+            _, stderr_bytes = proc.communicate()
+            if proc.returncode != 0:
+                stderr_short = stderr_bytes.decode(errors='replace')[:200]
                 print(f"   ⚠️ ffmpeg extraction echouee: {stderr_short}")
                 return None
 
@@ -429,9 +482,6 @@ print(json.dumps(waveform))
 
         except FileNotFoundError:
             print("   ⚠️ ffmpeg non trouve dans le PATH")
-            return None
-        except subprocess.TimeoutExpired:
-            print("   ⚠️ ffmpeg timeout (120s)")
             return None
         except Exception as e:
             print(f"   ❌ Erreur ffmpeg: {e}")
@@ -1066,6 +1116,11 @@ print(json.dumps(waveform))
             action = effects_menu.addAction(f"{emoji} {eff}")
             action.triggered.connect(lambda checked=False, e=eff, cl=clip: self.set_clip_effect(cl, e))
 
+        effects_menu.addSeparator()
+        speed_lbl = f"Lent" if clip.effect_speed < 33 else ("Rapide" if clip.effect_speed > 66 else "Moyen")
+        speed_action = effects_menu.addAction(f"🎚 Vitesse : {clip.effect_speed}% ({speed_lbl})...")
+        speed_action.triggered.connect(lambda: self.edit_clip_effect_speed(clip))
+
         # === FADES ===
         menu.addSeparator()
         fade_in_action = menu.addAction("🎬 Fade In...")
@@ -1174,6 +1229,69 @@ print(json.dumps(waveform))
     def set_clip_effect(self, clip, effect):
         clip.effect = effect
         self.update()
+
+    def edit_clip_effect_speed(self, clip):
+        """Dialog pour regler la vitesse de l'effet (0=lent, 100=rapide)"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Vitesse de l'effet")
+        dialog.setFixedSize(360, 210)
+        dialog.setStyleSheet("""
+            QDialog { background: #1a1a1a; }
+            QLabel { color: white; border: none; }
+            QPushButton {
+                background: #cccccc; color: black;
+                border: 1px solid #999; border-radius: 6px;
+                padding: 10px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background: #00d4ff; }
+            QSlider::groove:horizontal { background: #3a3a3a; height: 8px; border-radius: 4px; }
+            QSlider::handle:horizontal {
+                background: #00d4ff; width: 18px; height: 18px;
+                margin: -5px 0; border-radius: 9px;
+            }
+            QSlider::sub-page:horizontal { background: #00d4ff; border-radius: 4px; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(30, 25, 30, 20)
+        layout.setSpacing(12)
+
+        value_label = QLabel(f"Vitesse : {clip.effect_speed}%")
+        value_label.setStyleSheet("color: white; font-size: 26px; font-weight: bold;")
+        value_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(value_label)
+
+        lbl_row = QHBoxLayout()
+        lbl_slow = QLabel("Lent")
+        lbl_slow.setStyleSheet("color: #888; font-size: 11px;")
+        lbl_fast = QLabel("Rapide")
+        lbl_fast.setStyleSheet("color: #888; font-size: 11px;")
+        lbl_row.addWidget(lbl_slow)
+        lbl_row.addStretch()
+        lbl_row.addWidget(lbl_fast)
+        layout.addLayout(lbl_row)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(clip.effect_speed)
+        slider.valueChanged.connect(lambda v: value_label.setText(f"Vitesse : {v}%"))
+        layout.addWidget(slider)
+
+        btn_layout = QHBoxLayout()
+        cancel = QPushButton("Annuler")
+        cancel.clicked.connect(dialog.reject)
+        btn_layout.addWidget(cancel)
+        ok = QPushButton("OK")
+        ok.clicked.connect(dialog.accept)
+        ok.setStyleSheet("background: #00d4ff; color: black; font-weight: bold; padding: 10px 20px; border-radius: 6px;")
+        btn_layout.addWidget(ok)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() == QDialog.Accepted:
+            clip.effect_speed = slider.value()
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
 
     def delete_clip(self, clip):
         """Supprime le(s) clip(s)"""

@@ -7,24 +7,38 @@ import time
 
 # Profils DMX pre-definis : nom -> liste ordonnee de types de canaux
 DMX_PROFILES = {
-    "RGB":        ["R", "G", "B"],
-    "RGBD":       ["R", "G", "B", "Dim"],
-    "RGBDS":      ["R", "G", "B", "Dim", "Strobe"],
-    "RGBSD":      ["R", "G", "B", "Strobe", "Dim"],
-    "DRGB":       ["Dim", "R", "G", "B"],
-    "DRGBS":      ["Dim", "R", "G", "B", "Strobe"],
-    "RGBW":       ["R", "G", "B", "W"],
-    "RGBWD":      ["R", "G", "B", "W", "Dim"],
-    "RGBWDS":     ["R", "G", "B", "W", "Dim", "Strobe"],
-    "RGBWZ":      ["R", "G", "B", "W", "Zoom"],
-    "RGBWA":      ["R", "G", "B", "W", "Ambre"],
-    "RGBWAD":     ["R", "G", "B", "W", "Ambre", "Dim"],
-    "RGBWOUV":    ["R", "G", "B", "W", "Orange", "UV"],
-    "2CH_FUMEE":  ["Smoke", "Fan"],
+    "RGB":         ["R", "G", "B"],
+    "RGBD":        ["R", "G", "B", "Dim"],
+    "RGBDS":       ["R", "G", "B", "Dim", "Strobe"],
+    "RGBSD":       ["R", "G", "B", "Strobe", "Dim"],
+    "DRGB":        ["Dim", "R", "G", "B"],
+    "DRGBS":       ["Dim", "R", "G", "B", "Strobe"],
+    "RGBW":        ["R", "G", "B", "W"],
+    "RGBWD":       ["R", "G", "B", "W", "Dim"],
+    "RGBWDS":      ["R", "G", "B", "W", "Dim", "Strobe"],
+    "RGBWZ":       ["R", "G", "B", "W", "Zoom"],
+    "RGBWA":       ["R", "G", "B", "W", "Ambre"],
+    "RGBWAD":      ["R", "G", "B", "W", "Ambre", "Dim"],
+    "RGBWOUV":     ["R", "G", "B", "W", "Orange", "UV"],
+    "2CH_FUMEE":   ["Smoke", "Fan"],
+    # Moving Head
+    "MOVING_5CH":  ["Shutter", "Dim", "ColorWheel", "Gobo1", "Speed"],
+    "MOVING_8CH":  ["Pan", "Tilt", "Shutter", "Dim", "ColorWheel", "Gobo1", "Speed", "Mode"],
+    "MOVING_RGB":  ["Pan", "Tilt", "R", "G", "B", "Dim", "Shutter", "Speed"],
+    "MOVING_RGBW": ["Pan", "Tilt", "R", "G", "B", "W", "Dim", "Shutter", "Speed"],
+    # Barre LED
+    "LED_BAR_RGB": ["R", "G", "B", "Dim", "Strobe"],
+    # Stroboscope
+    "STROBE_2CH":  ["Shutter", "Dim"],
 }
 
 # Types de canaux disponibles pour les profils custom
-CHANNEL_TYPES = ["R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Smoke", "Fan"]
+CHANNEL_TYPES = [
+    "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom",
+    "Smoke", "Fan",
+    "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo2",
+    "Prism", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
+]
 
 # Noms courts pour l'affichage dans les combos
 CHANNEL_DISPLAY = {
@@ -32,6 +46,9 @@ CHANNEL_DISPLAY = {
     "Dim": "Dim", "Strobe": "Strob", "UV": "UV",
     "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom",
     "Smoke": "Smoke", "Fan": "Fan",
+    "Pan": "Pan", "PanFine": "PanF", "Tilt": "Tilt", "TiltFine": "TiltF",
+    "Gobo1": "Gobo1", "Gobo2": "Gobo2", "Prism": "Prism", "Focus": "Focus",
+    "ColorWheel": "CWheel", "Shutter": "Shut", "Speed": "Speed", "Mode": "Mode",
 }
 
 
@@ -264,7 +281,6 @@ class ArtNetDMX:
                 elif ch_type == "UV":
                     self.set_channel(ch, 0)
                 elif ch_type == "Zoom":
-                    # Zoom controlable via attribut zoom du projecteur (0-255)
                     zoom = getattr(proj, 'zoom', 0)
                     self.set_channel(ch, zoom)
                 elif ch_type == "Dim":
@@ -277,6 +293,25 @@ class ArtNetDMX:
                         else:
                             strobe_value = 100
                     self.set_channel(ch, strobe_value)
+                elif ch_type == "Pan":
+                    self.set_channel(ch, getattr(proj, 'pan', 128))
+                elif ch_type == "PanFine":
+                    pan = getattr(proj, 'pan', 128)
+                    self.set_channel(ch, (pan * 256) % 256)
+                elif ch_type == "Tilt":
+                    self.set_channel(ch, getattr(proj, 'tilt', 128))
+                elif ch_type == "TiltFine":
+                    tilt = getattr(proj, 'tilt', 128)
+                    self.set_channel(ch, (tilt * 256) % 256)
+                elif ch_type == "Gobo1":
+                    self.set_channel(ch, getattr(proj, 'gobo', 0))
+                elif ch_type == "ColorWheel":
+                    self.set_channel(ch, getattr(proj, 'color_wheel', 0))
+                elif ch_type == "Shutter":
+                    shutter = getattr(proj, 'shutter', 255)
+                    self.set_channel(ch, shutter if not proj.muted else 0)
+                elif ch_type in ("Gobo2", "Prism", "Focus", "Speed", "Mode"):
+                    self.set_channel(ch, 0)
 
     def set_projector_patch(self, proj_key, channels, profile=None, mode=None):
         """Configure le patch d'un projecteur"""

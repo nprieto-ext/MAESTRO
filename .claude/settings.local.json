@@ -1,45 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\nikop\\\\Desktop\\\\Boitier AKAI\\\\maestro.py''\")",
-      "Bash(where:*)",
-      "Bash(pip show:*)",
-      "Bash(python -c:*)",
-      "Bash(pip install:*)",
-      "Bash(python3:*)",
-      "Bash(python3.13:*)",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import miniaudio; print\\(''OK 3.13''\\)\")",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m pip install miniaudio)",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import PySide6; print\\(''PySide6 OK on 3.13''\\)\")",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -c \"import miniaudio; print\\(''miniaudio OK on 3.12''\\)\")",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"\nimport sys; sys.stdout.reconfigure\\(encoding=''utf-8''\\)\nfrom light_timeline import LightTrack\nprint\\(''Import OK, HAS_MINIAUDIO ='', end='' ''\\)\nfrom light_timeline import HAS_MINIAUDIO\nprint\\(HAS_MINIAUDIO\\)\n\")",
-      "Bash(\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\":*)",
-      "Bash(for p in \"C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\ffmpeg\\\\bin\\\\ffmpeg.exe\" \"C:\\\\Users\\\\nikop\\\\scoop\\\\apps\\\\ffmpeg\\\\current\\\\bin\\\\ffmpeg.exe\")",
-      "Bash(do [ -f \"$p\" ])",
-      "Bash(echo:*)",
-      "Bash(done)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)",
-      "Bash(ls:*)",
-      "Bash(cmd //c \"rename \"\"Boitier AKAI\"\" MyStrow\")",
-      "Bash(cmd //c \"rename \"\"C:\\\\Users\\\\nikop\\\\Desktop\\\\Boitier AKAI\"\" MyStrow\")",
-      "Bash(powershell -Command:*)",
-      "Bash(grep:*)",
-      "Bash(cmd //c \"if exist C:\\\\Users\\\\nikop\\\\.maestro_license.dat \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")",
-      "Bash(cmd //c \"if exist \"\"C:\\\\Users\\\\nikop\\\\AppData\\\\Local\\\\MyStrow\\\\cache\\\\.sys\"\" \\(echo FOUND\\) else \\(echo NOT FOUND\\)\")",
-      "WebFetch(domain:dmx-tools.electroconcept.fr)",
-      "WebSearch",
-      "WebFetch(domain:www.electroconcept.fr)",
-      "Bash(git -C \"C:/Users/nikop/Desktop/MyStrow\" show HEAD:main_window.py)",
-      "Bash(python -m pip install:*)",
-      "Bash(/c/Users/nikop/AppData/Local/Programs/Python/Python312/python.exe -m pip install:*)",
-      "Bash(C:UsersnikopAppDataLocalProgramsPythonPython313python.exe -m pip install pyinstaller)",
-      "Bash(\"/c/Users/nikop/AppData/Local/Programs/Python/Python313/python.exe\" -m pip install pyinstaller)",
-      "Bash(gh release view:*)",
-      "Bash(gh release list:*)",
-      "Bash(gh run list:*)",
-      "Bash(gh run view:*)",
-      "Bash(gh api:*)",
-      "Bash(curl:*)"
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch"
     ]
   }
 }
