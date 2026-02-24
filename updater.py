@@ -1,7 +1,7 @@
 """
 Systeme de mise a jour et ecran de chargement pour MyStrow
 - SplashScreen : ecran de demarrage
-- UpdateChecker : verification async des releases GitHub
+- UpdateChecker : verification async des mises a jour
 - UpdateBar : barre de notification de mise a jour
 - download_update : telechargement + verification SHA256 + batch updater
 """
@@ -26,9 +26,8 @@ from PySide6.QtGui import QFont, QScreen, QPixmap, QDesktopServices
 from core import VERSION, resource_path
 
 # === CONSTANTES ===
-GITHUB_API_URL      = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
-GITHUB_RELEASES_URL = "https://github.com/nprieto-ext/MAESTRO/releases/latest"
-REMINDER_FILE = Path.home() / ".maestro_update_reminder.json"
+_UPDATE_API_URL = "https://api.github.com/repos/nprieto-ext/MAESTRO/releases/latest"
+REMINDER_FILE   = Path.home() / ".maestro_update_reminder.json"
 
 
 def _version_tuple(v):
@@ -184,7 +183,7 @@ class SplashScreen(QWidget):
 # UPDATE CHECKER (QThread)
 # ============================================================
 class UpdateChecker(QThread):
-    """Verifie les releases GitHub en arriere-plan"""
+    """Verifie les mises a jour disponibles en arriere-plan"""
 
     update_available = Signal(str, str, str, str)  # version, exe_url, hash_url, sig_url
     check_finished   = Signal(bool, str)       # found, remote_version
@@ -212,7 +211,7 @@ class UpdateChecker(QThread):
             return
         try:
             req = urllib.request.Request(
-                GITHUB_API_URL,
+                _UPDATE_API_URL,
                 headers={"Accept": "application/vnd.github.v3+json",
                          "User-Agent": "MyStrow-Updater"}
             )
@@ -224,7 +223,7 @@ class UpdateChecker(QThread):
             remote_version = tag.lstrip("v")
 
             if not remote_version:
-                self.check_error.emit("Aucune release trouvée sur GitHub.")
+                self.check_error.emit("Aucune mise à jour trouvée sur le serveur.")
                 return
 
             if not version_gt(remote_version, VERSION):
@@ -263,8 +262,7 @@ class UpdateChecker(QThread):
                 )
                 if not assets:
                     self.check_error.emit(
-                        f"v{remote_version} détectée mais aucun asset dans la release.\n"
-                        f"Vérifiez que la release GitHub n'est pas en draft."
+                        f"v{remote_version} détectée mais le fichier d'installation est introuvable."
                     )
                     return
 
@@ -720,15 +718,14 @@ class AboutDialog(QDialog):
                 "QWidget { background: #111; border: 1px solid #2a4a2a; border-radius: 6px; }"
             )
             self.status_lbl.setStyleSheet("color: #4CAF50; background: transparent; border: none;")
-            suffix = f"  (GitHub : v{version})" if version else ""
-            self.status_lbl.setText(f"✓  Vous êtes à jour !{suffix}")
+            self.status_lbl.setText("✓  Vous êtes à jour !")
         elif not self._exe_url:
             # Ne devrait plus arriver (fallback URL dans UpdateChecker)
             self._update_box.setStyleSheet(
                 "QWidget { background: #111; border: 1px solid #5a4a15; border-radius: 6px; }"
             )
             self.status_lbl.setStyleSheet("color: #c47f17; background: transparent; border: none;")
-            self.status_lbl.setText(f"Version {version} disponible — installeur introuvable")
+            self.status_lbl.setText(f"Version {version} disponible — fichier d'installation introuvable")
 
     def _on_check_error(self, error: str):
         self.btn_recheck.setEnabled(True)

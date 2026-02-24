@@ -45,8 +45,37 @@ class MIDIHandler(QObject):
             self.connection_check_timer.start(2000)
 
     def check_connection(self):
-        """Verifie si l'AKAI est toujours connecte (DESACTIVE pour eviter spam console)"""
-        return  # Desactive - l'utilisateur peut reconnecter manuellement via le menu
+        """Verifie si l'AKAI est connecte; reconnecte automatiquement si branché en cours de session."""
+        if not rtmidi:
+            return
+
+        # Si déjà connecté et ports ouverts, rien à faire
+        if self.midi_in and self.midi_out:
+            try:
+                if self.midi_in.is_port_open() and self.midi_out.is_port_open():
+                    return
+            except Exception:
+                pass
+
+        # Vérifier silencieusement si un AKAI est disponible
+        try:
+            probe = rtmidi.MidiIn()
+            ports = probe.get_ports()
+            found = any('APC' in p.upper() or 'MINI' in p.upper() for p in ports)
+            probe.delete() if hasattr(probe, 'delete') else None
+        except Exception:
+            return
+
+        if not found:
+            return  # Pas encore branché, pas de spam
+
+        # AKAI détecté → reconnexion silencieuse
+        self.connect_akai()
+        if self.midi_in and self.midi_out and self.owner_window:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(200, self.owner_window.activate_default_white_pads)
+            QTimer.singleShot(300, self.owner_window.turn_off_all_effects)
+            QTimer.singleShot(400, self.owner_window._sync_faders_to_projectors)
 
     def connect_akai(self):
         """Connexion a l'AKAI APC mini"""

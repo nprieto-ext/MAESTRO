@@ -665,8 +665,10 @@ class FixtureCanvas(QWidget):
         for i, pi in enumerate(self.pdf.projectors):
             if i in dragged_set:
                 continue
-            xi = (pi.canvas_x or 0.5) * canvas_w
-            yi = (pi.canvas_y or 0.5) * canvas_h
+            if pi.canvas_x is None or pi.canvas_y is None:
+                continue  # Fixture auto-positionnée, ne pas forcer sa position
+            xi = pi.canvas_x * canvas_w
+            yi = pi.canvas_y * canvas_h
 
             for j in dragged_set:
                 pj = self.pdf.projectors[j]

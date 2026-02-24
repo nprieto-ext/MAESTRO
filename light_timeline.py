@@ -192,11 +192,12 @@ class ColorPalette(QWidget):
 class LightTrack(QWidget):
     """Une piste de lumiere (une ligne dans la timeline)"""
 
-    def __init__(self, name, total_duration, parent_editor):
+    def __init__(self, name, total_duration, parent_editor, color="#4488ff"):
         super().__init__()
         self.name = name
         self.total_duration = total_duration
         self.parent_editor = parent_editor
+        self.track_color = QColor(color)
         self.clips = []
         self.pixels_per_ms = 0.05
 
@@ -210,18 +211,18 @@ class LightTrack(QWidget):
         """)
 
         self.label = QLabel(name, self)
-        self.label.setStyleSheet("""
-            QLabel {
+        self.label.setStyleSheet(f"""
+            QLabel {{
                 color: white;
                 font-weight: bold;
-                background: #2a2a2a;
-                padding: 8px 12px;
-                border-radius: 6px;
-                border: 1px solid #3a3a3a;
-            }
+                background: #1e1e1e;
+                padding: 8px 10px;
+                border-radius: 5px;
+                border: 1px solid #333;
+            }}
         """)
-        self.label.setFixedWidth(130)
-        self.label.move(5, 12)
+        self.label.setFixedWidth(128)
+        self.label.move(11, 12)
 
         # Variables pour interaction souris
         self.dragging_clip = None
@@ -1458,114 +1459,138 @@ print(json.dumps(waveform))
         super().paintEvent(event)
         painter = QPainter(self)
 
+        # Barre accent coloree (5px, cote gauche, hauteur totale de la piste)
+        bar_color = QColor(self.track_color)
+        bar_color.setAlpha(220)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(bar_color))
+        painter.drawRect(0, 0, 5, self.height())
+
+        # Separateur haut de piste
         painter.setPen(QPen(QColor("#3a3a3a"), 1))
         painter.drawLine(0, 0, self.width(), 0)
 
-        # === FORME D'ONDE STYLE VIRTUAL DJ PRO ===
+        # === FORME D'ONDE ===
         if self.waveform_data:
             timeline_width_px = int(self.total_duration * self.pixels_per_ms)
             pixels_per_sample = timeline_width_px / len(self.waveform_data) if self.waveform_data else 1
             y_center = self.height() // 2
 
+            visible_start = max(0, int((0 - 145) / pixels_per_sample))
+            visible_end = min(len(self.waveform_data),
+                              int((self.width() + 10 - 145) / pixels_per_sample) + 1)
+
             if self.name == "Audio":
-                # Piste Audio - Waveform miroir courbes lisses bleu/cyan
+                # ── Piste Audio : waveform pixel-parfaite (1 valeur / pixel) ──
                 try:
-                    painter.setOpacity(1.0)
-                    painter.setRenderHint(QPainter.Antialiasing, True)
                     max_height = (self.height() // 2) - 4
 
-                    # Sous-echantillonner pour les pixels visibles
-                    visible_start = max(0, int((0 - 145) / pixels_per_sample))
-                    visible_end = min(len(self.waveform_data), int((self.width() + 10 - 145) / pixels_per_sample) + 1)
+                    # Plage visible exacte via clip rect (scroll pris en compte)
+                    clip = event.rect()
+                    px_start = max(145, clip.left())
+                    px_end   = min(self.width(), clip.right() + 1)
 
-                    if not hasattr(self, '_waveform_logged'):
-                        self._waveform_logged = True
-                        print(f"🎨 WAVEFORM PAINT: name={self.name}, height={self.height()}, width={self.width()}")
-                        print(f"   y_center={y_center}, max_height={max_height}")
-                        print(f"   pixels_per_sample={pixels_per_sample:.4f}, timeline_width_px={timeline_width_px}")
-                        print(f"   visible_start={visible_start}, visible_end={visible_end}")
-                        print(f"   waveform_data len={len(self.waveform_data)}, first5={self.waveform_data[:5]}")
+                    if px_end > px_start:
+                        amps = []
+                        xs   = []
+                        data = self.waveform_data
+                        n    = len(data)
 
-                    # Construire les points
-                    points_top = []
-                    points_bot = []
+                        for px in range(px_start, px_end):
+                            sample_pos = (px - 145) / pixels_per_sample
+                            if sample_pos < 0:
+                                continue
 
-                    for i in range(visible_start, visible_end):
-                        x = 145 + i * pixels_per_sample
-                        amp = self.waveform_data[i]
+                            if pixels_per_sample >= 1.0:
+                                # Zoom avant : interpolation lineaire entre samples
+                                i    = int(sample_pos)
+                                frac = sample_pos - i
+                                if i + 1 < n:
+                                    amp = data[i] * (1.0 - frac) + data[i + 1] * frac
+                                elif i < n:
+                                    amp = data[i]
+                                else:
+                                    break
+                            else:
+                                # Zoom arriere : peak de tous les samples du pixel
+                                i0 = max(0, int(sample_pos))
+                                i1 = min(n, int((px + 1 - 145) / pixels_per_sample) + 1)
+                                if i0 >= n:
+                                    break
+                                amp = max(data[i0:i1]) if i0 < i1 else 0.0
 
-                        if amp > 0.7:
-                            h = amp * max_height * 1.15
-                        else:
-                            h = amp * max_height
-                        h = max(0.5, min(h, max_height))
+                            amps.append(float(amp))
+                            xs.append(float(px))
 
-                        points_top.append((x, y_center - h))
-                        points_bot.append((x, y_center + h))
+                        if len(xs) >= 2:
+                            # ── Polygone précis (lineTo : pas de lissage artificiel) ──
+                            painter.setRenderHint(QPainter.Antialiasing, False)
 
-                    if len(points_top) >= 2:
-                        # Sous-echantillonner pour perf
-                        step = max(1, len(points_top) // 2000)
-                        sampled_top = points_top[::step]
-                        if sampled_top[-1] != points_top[-1]:
-                            sampled_top.append(points_top[-1])
-                        sampled_bot = points_bot[::step]
-                        if sampled_bot[-1] != points_bot[-1]:
-                            sampled_bot.append(points_bot[-1])
+                            path_top = QPainterPath()
+                            path_top.moveTo(xs[0], float(y_center))
+                            for x, a in zip(xs, amps):
+                                path_top.lineTo(x, y_center - max(1.0, a * max_height))
+                            path_top.lineTo(xs[-1], float(y_center))
+                            path_top.closeSubpath()
 
-                        # Path superieur
-                        path_top = QPainterPath()
-                        path_top.moveTo(sampled_top[0][0], y_center)
-                        for pt in sampled_top:
-                            path_top.lineTo(pt[0], pt[1])
-                        path_top.lineTo(sampled_top[-1][0], y_center)
-                        path_top.closeSubpath()
+                            path_bot = QPainterPath()
+                            path_bot.moveTo(xs[0], float(y_center))
+                            for x, a in zip(xs, amps):
+                                path_bot.lineTo(x, y_center + max(1.0, a * max_height))
+                            path_bot.lineTo(xs[-1], float(y_center))
+                            path_bot.closeSubpath()
 
-                        # Path inferieur (miroir)
-                        path_bot = QPainterPath()
-                        path_bot.moveTo(sampled_bot[0][0], y_center)
-                        for pt in sampled_bot:
-                            path_bot.lineTo(pt[0], pt[1])
-                        path_bot.lineTo(sampled_bot[-1][0], y_center)
-                        path_bot.closeSubpath()
+                            # Gradient haut : sombre centre → cyan → blanc aux peaks
+                            grad_top = QLinearGradient(0, y_center, 0, y_center - max_height)
+                            grad_top.setColorAt(0.00, QColor(3,   18,  36, 210))
+                            grad_top.setColorAt(0.18, QColor(0,   52, 112, 228))
+                            grad_top.setColorAt(0.42, QColor(0,  130, 192, 244))
+                            grad_top.setColorAt(0.68, QColor(0,  200, 246, 255))
+                            grad_top.setColorAt(0.86, QColor(80, 228, 255, 255))
+                            grad_top.setColorAt(1.00, QColor(185, 247, 255, 255))
 
-                        # Gradient vertical bleu/cyan
-                        grad_top = QLinearGradient(0, y_center, 0, y_center - max_height)
-                        grad_top.setColorAt(0, QColor("#77ddff"))
-                        grad_top.setColorAt(0.25, QColor("#44bbee"))
-                        grad_top.setColorAt(0.55, QColor("#2288bb"))
-                        grad_top.setColorAt(0.8, QColor("#115577"))
-                        grad_top.setColorAt(1, QColor("#082a44"))
+                            # Gradient bas : miroir légèrement plus froid
+                            grad_bot = QLinearGradient(0, y_center, 0, y_center + max_height)
+                            grad_bot.setColorAt(0.00, QColor(3,   18,  36, 210))
+                            grad_bot.setColorAt(0.18, QColor(0,   42, 100, 218))
+                            grad_bot.setColorAt(0.42, QColor(0,  102, 175, 234))
+                            grad_bot.setColorAt(0.68, QColor(0,  162, 220, 248))
+                            grad_bot.setColorAt(0.86, QColor(50, 196, 242, 255))
+                            grad_bot.setColorAt(1.00, QColor(135, 228, 255, 255))
 
-                        grad_bot = QLinearGradient(0, y_center, 0, y_center + max_height)
-                        grad_bot.setColorAt(0, QColor("#77ddff"))
-                        grad_bot.setColorAt(0.25, QColor("#44bbee"))
-                        grad_bot.setColorAt(0.55, QColor("#2288bb"))
-                        grad_bot.setColorAt(0.8, QColor("#115577"))
-                        grad_bot.setColorAt(1, QColor("#082a44"))
+                            painter.setPen(Qt.NoPen)
+                            painter.setBrush(QBrush(grad_top))
+                            painter.drawPath(path_top)
+                            painter.setBrush(QBrush(grad_bot))
+                            painter.drawPath(path_bot)
 
-                        # Remplir
-                        painter.setPen(Qt.NoPen)
-                        painter.setBrush(QBrush(grad_top))
-                        painter.drawPath(path_top)
-                        painter.setBrush(QBrush(grad_bot))
-                        painter.drawPath(path_bot)
+                            # Glow ligne centrale (4 passes concentriques)
+                            x0, x1 = int(xs[0]), int(xs[-1])
+                            painter.setBrush(Qt.NoBrush)
+                            for pen_w, alpha in ((14, 10), (8, 26), (4, 60), (1, 180)):
+                                painter.setPen(QPen(QColor(0, 218, 255, alpha), pen_w))
+                                painter.drawLine(x0, y_center, x1, y_center)
 
-                        # Contour fin
-                        painter.setBrush(Qt.NoBrush)
-                        painter.setPen(QPen(QColor("#99eeff"), 0.8))
-                        painter.setOpacity(0.5)
-                        contour = QPainterPath()
-                        contour.moveTo(sampled_top[0][0], sampled_top[0][1])
-                        for pt in sampled_top[1:]:
-                            contour.lineTo(pt[0], pt[1])
-                        painter.drawPath(contour)
-                        contour_bot = QPainterPath()
-                        contour_bot.moveTo(sampled_bot[0][0], sampled_bot[0][1])
-                        for pt in sampled_bot[1:]:
-                            contour_bot.lineTo(pt[0], pt[1])
-                        painter.drawPath(contour_bot)
-                        painter.setOpacity(1.0)
+                            # Contours précis haut + bas (antialiasing léger pour le polish)
+                            painter.setRenderHint(QPainter.Antialiasing, True)
+                            painter.setBrush(Qt.NoBrush)
+                            painter.setOpacity(0.55)
+
+                            edge_t = QPainterPath()
+                            edge_t.moveTo(xs[0], y_center - max(1.0, amps[0] * max_height))
+                            for x, a in zip(xs[1:], amps[1:]):
+                                edge_t.lineTo(x, y_center - max(1.0, a * max_height))
+                            painter.setPen(QPen(QColor(155, 235, 255), 1.2))
+                            painter.drawPath(edge_t)
+
+                            edge_b = QPainterPath()
+                            edge_b.moveTo(xs[0], y_center + max(1.0, amps[0] * max_height))
+                            for x, a in zip(xs[1:], amps[1:]):
+                                edge_b.lineTo(x, y_center + max(1.0, a * max_height))
+                            painter.setPen(QPen(QColor(110, 210, 250), 1.0))
+                            painter.drawPath(edge_b)
+
+                            painter.setOpacity(1.0)
 
                 except Exception as e:
                     print(f"❌ ERREUR paintEvent Audio: {e}")
@@ -1573,21 +1598,26 @@ print(json.dumps(waveform))
                     traceback.print_exc()
 
             else:
-                # Autres pistes: forme d'onde tres discrete
-                painter.setOpacity(0.08)
-                max_height = 15
+                # ── Pistes lumiere : barres colorées selon la couleur de piste ──
+                max_h = max(4, (self.height() // 2) - 10)
+                tc = self.track_color
+                n_vis = max(1, visible_end - visible_start)
+                SKIP = max(1, n_vis // max(1, self.width() - 145))
 
-                for i, amplitude in enumerate(self.waveform_data):
-                    x = 145 + int(i * pixels_per_sample)
-
-                    if x < 140 or x > self.width() + 10:
+                painter.setRenderHint(QPainter.Antialiasing, False)
+                painter.setPen(Qt.NoPen)
+                for i in range(visible_start, visible_end, SKIP):
+                    end_i = min(i + SKIP, len(self.waveform_data))
+                    amp = max(self.waveform_data[i:end_i])
+                    if amp < 0.04:
                         continue
-
-                    height = int(amplitude * max_height)
-                    painter.setPen(QPen(QColor("#00d4ff"), 1))
-                    painter.drawLine(x, y_center - height, x, y_center + height)
-
-                painter.setOpacity(1.0)
+                    h = max(1, int(amp * max_h))
+                    x = int(145 + i * pixels_per_sample)
+                    bar_w = max(1, int(pixels_per_sample * SKIP))
+                    alpha = int(22 + amp * 52)
+                    painter.setBrush(QBrush(QColor(tc.red(), tc.green(), tc.blue(), alpha)))
+                    painter.drawRect(x, y_center - h, bar_w, h * 2)
+                painter.setRenderHint(QPainter.Antialiasing, True)
 
         # Grille temporelle
         painter.setPen(QPen(QColor("#2a2a2a"), 1, Qt.SolidLine))

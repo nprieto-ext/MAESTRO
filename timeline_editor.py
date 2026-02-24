@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QApplication, QMenuBar, QMenu
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygon, QPalette, QBrush, QCursor, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
@@ -206,7 +206,7 @@ class LightTimelineEditor(QDialog):
         tracks_layout.setContentsMargins(0, 0, 0, 0)
 
         # Piste waveform en haut (masquee pour images et pauses)
-        self.track_waveform = LightTrack("Audio", self.media_duration, self)
+        self.track_waveform = LightTrack("Audio", self.media_duration, self, "#00d4ff")
         self.track_waveform.setAcceptDrops(False)
         self.track_waveform.setMinimumHeight(80)
 
@@ -250,6 +250,9 @@ class LightTimelineEditor(QDialog):
         # Player audio pour preview
         self.setup_audio_player()
 
+        # Raccourci Espace global (capturé au niveau fenetre, independant du focus)
+        QShortcut(QKeySequence(Qt.Key_Space), self, self.toggle_play_pause)
+
         # Charger sequence existante
         self.load_existing_sequence()
 
@@ -275,16 +278,35 @@ class LightTimelineEditor(QDialog):
         # Groupes sans piste lumiere
         SKIP_GROUPS = {"fumee"}
 
+        # Couleurs associees a chaque groupe (identiques au patch DMX)
+        TRACK_COLORS = {
+            "Groupe A": "#ff8844",
+            "Groupe B": "#4488ff",
+            "Groupe C": "#44cc88",
+            "Groupe D": "#ff6655",
+            "Fumee":    "#88aaaa",
+            "Lyres":    "#ff44cc",
+            "Barres":   "#44aaff",
+            "Strobos":  "#ffee44",
+        }
+        # Ordre canonique des pistes dans la timeline
+        TRACK_ORDER = ["Groupe A", "Groupe B", "Groupe C", "Groupe D",
+                       "Lyres", "Barres", "Strobos", "Fumee"]
+
         seen_groups = []
         for proj in projectors:
             gname = GROUP_DISPLAY.get(proj.group, proj.group.capitalize())
             if gname not in seen_groups and proj.group not in SKIP_GROUPS:
                 seen_groups.append(gname)
 
+        # Trier selon l'ordre canonique (groupes inconnus a la fin)
+        seen_groups.sort(key=lambda g: TRACK_ORDER.index(g) if g in TRACK_ORDER else len(TRACK_ORDER))
+
         self.tracks = []
         self.track_map = {}
         for gname in seen_groups:
-            track = LightTrack(gname, self.media_duration, self)
+            color = TRACK_COLORS.get(gname, "#4488ff")
+            track = LightTrack(gname, self.media_duration, self, color)
             self.tracks.append(track)
             self.track_map[gname] = track
             tracks_layout.addWidget(track)
@@ -816,7 +838,9 @@ class LightTimelineEditor(QDialog):
             self.playback_timer.stop()
         else:
             # Lancer le preview a la position actuelle du curseur
-            self.preview_player.setPosition(int(self.playback_position))
+            pos = int(self.playback_position)
+            if pos > 0:
+                self.preview_player.setPosition(pos)
             self.preview_player.play()
             self.play_pause_btn.setText("⏸")
             self.playback_timer.start(40)

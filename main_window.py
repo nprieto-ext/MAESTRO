@@ -2545,42 +2545,27 @@ class MainWindow(QMainWindow):
             ("#ff00ff", ["#ff0000", "#ffffff", "#00ff00", "#0000ff"]),  # magenta → rouge / blanc / vert / bleu
         ]
 
-        # Structure projectors : 23 dans l'ordre de _create_projectors()
-        # [0-3]   FACE (4)
-        # [4-6]   DOUCHE1 (3), [7-9] DOUCHE2 (3), [10-12] DOUCHE3 (3)
-        # [13-14] LAT (2)   : [13]=gauche, [14]=droite
-        # [15-20] CONTRE (6): [15-17]=gauche, [18-20]=droite
-        # [21]    PUBLIC (1), [22] FUMEE (1)
-
-        def proj(group, color, level=100):
-            return {"group": group, "base_color": color, "level": level}
-
-        def off(group):
-            return {"group": group, "base_color": "#000000", "level": 0}
-
         def make_snapshot(dom, acc):
+            """Construit le snapshot en parcourant self.projectors dans l'ordre reel.
+            LAT  : alternance gauche=dominant / droite=accent.
+            CONTRE : pattern D-A-D repete symetriquement.
+            Tous les autres groupes (face, douches, public, fumee) sont eteints."""
+            contre_pattern = [dom, acc, dom, dom, acc, dom]
+            lat_idx = 0
+            contre_idx = 0
             snapshot = []
-
-            # FACE + DOUCHES : off
-            for _ in range(4):
-                snapshot.append(off("face"))
-            for grp in ("douche1", "douche2", "douche3"):
-                for _ in range(3):
-                    snapshot.append(off(grp))
-
-            # LAT bicouleur symetrique (gauche=dom, droite=acc)
-            snapshot.append(proj("lat", dom))
-            snapshot.append(proj("lat", acc))
-
-            # CONTRE bicouleur symetrique : pattern D-A-D | D-A-D
-            for _ in range(2):  # gauche x3 puis droite x3
-                snapshot.append(proj("contre", dom))
-                snapshot.append(proj("contre", acc))
-                snapshot.append(proj("contre", dom))
-
-            snapshot.append(off("public"))
-            snapshot.append(off("fumee"))
-
+            for fixture in self.projectors:
+                grp = fixture.group
+                if grp == "lat":
+                    color = dom if lat_idx % 2 == 0 else acc
+                    snapshot.append({"group": grp, "base_color": color, "level": 100})
+                    lat_idx += 1
+                elif grp == "contre":
+                    color = contre_pattern[contre_idx % len(contre_pattern)]
+                    snapshot.append({"group": grp, "base_color": color, "level": 100})
+                    contre_idx += 1
+                else:
+                    snapshot.append({"group": grp, "base_color": "#000000", "level": 0})
             return {"projectors": snapshot}
 
         memories      = [[None] * 8 for _ in range(4)]
@@ -3463,12 +3448,7 @@ class MainWindow(QMainWindow):
         # ── Dialog ────────────────────────────────────────────────────────
         dialog = QDialog(self)
         dialog.setWindowTitle("Patch DMX")
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
-        screen = QApplication.primaryScreen().availableGeometry()
-        dw = max(1000, min(1350, screen.width() - 120))
-        dh = max(650,  min(860,  screen.height() - 120))
-        dialog.resize(dw, dh)
-        dialog.move(screen.x() + (screen.width() - dw) // 2, screen.y() + (screen.height() - dh) // 2)
+        dialog.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
 
         _SS = """
             QDialog { background:#0f0f0f; color:#e0e0e0; }
@@ -3611,6 +3591,18 @@ class MainWindow(QMainWindow):
         btn_add = _tbar_btn("➕  Ajouter", "#55cc77")
         th.addWidget(btn_add)
         th.addStretch()
+        btn_save = QPushButton("💾  Sauvegarder")
+        btn_save.setFixedHeight(34)
+        btn_save.setEnabled(False)
+        btn_save.setStyleSheet(
+            "QPushButton { background:#0d1a0d; color:#336633; border:1px solid #1a2e1a;"
+            " border-radius:6px; padding:6px 18px; font-size:12px; }"
+            "QPushButton:enabled { background:#0d2010; color:#44bb44; border-color:#1e4020; }"
+            "QPushButton:enabled:hover { background:#143018; color:#66dd66; border-color:#2a6030; }"
+            "QPushButton:disabled { color:#333; border-color:#1a1a1a; background:#0d0d0d; }"
+        )
+        th.addWidget(btn_save)
+        th.addSpacing(8)
         close_btn = QPushButton("Fermer")
         close_btn.setFixedHeight(34)
         close_btn.setStyleSheet(
@@ -3661,13 +3653,44 @@ class MainWindow(QMainWindow):
 
         filter_bar = QLineEdit()
         filter_bar.setPlaceholderText("  🔍  Filtrer...")
-        filter_bar.setFixedHeight(40)
+        filter_bar.setFixedHeight(36)
         filter_bar.setStyleSheet(
             "QLineEdit { background:#0e0e0e; color:#777; border:none;"
             " border-bottom:1px solid #181818; border-radius:0; padding:0 16px; font-size:12px; }"
             "QLineEdit:focus { color:#fff; border-bottom:1px solid #00d4ff33; }"
         )
         lv.addWidget(filter_bar)
+
+        sort_bar = QWidget()
+        sort_bar.setFixedHeight(30)
+        sort_bar.setStyleSheet("background:#0a0a0a; border-bottom:1px solid #141414;")
+        sort_hl = QHBoxLayout(sort_bar)
+        sort_hl.setContentsMargins(8, 0, 8, 0)
+        sort_hl.setSpacing(2)
+        _sort_mode = ["dmx"]
+        def _sort_btn(label):
+            b = QPushButton(label)
+            b.setFixedHeight(22)
+            b.setCheckable(True)
+            b.setStyleSheet(
+                "QPushButton { background:transparent; color:#333; border:none;"
+                " font-size:10px; padding:0 8px; border-radius:3px; }"
+                "QPushButton:hover { color:#777; background:#141414; }"
+                "QPushButton:checked { color:#00d4ff; background:#00d4ff18; }"
+            )
+            return b
+        lbl_sort = QLabel("Trier :")
+        lbl_sort.setStyleSheet("color:#252525; font-size:10px; border:none;")
+        sort_hl.addWidget(lbl_sort)
+        btn_sort_dmx  = _sort_btn("Adresse")
+        btn_sort_name = _sort_btn("Nom")
+        btn_sort_grp  = _sort_btn("Groupe")
+        btn_sort_dmx.setChecked(True)
+        sort_hl.addWidget(btn_sort_dmx)
+        sort_hl.addWidget(btn_sort_name)
+        sort_hl.addWidget(btn_sort_grp)
+        sort_hl.addStretch()
+        lv.addWidget(sort_bar)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -3692,6 +3715,15 @@ class MainWindow(QMainWindow):
         lbl_cnt.setStyleSheet("color:#333333; font-size:10px; padding-left:8px;")
         bsv.addWidget(lbl_cnt)
         bsv.addStretch()
+        btn_del_multi = QPushButton("🗑  Supprimer")
+        btn_del_multi.setFixedHeight(26)
+        btn_del_multi.setVisible(False)
+        btn_del_multi.setStyleSheet(
+            "QPushButton { background:#1a0808; color:#dd4444; border:1px solid #551111;"
+            " border-radius:5px; font-size:11px; padding:0 12px; }"
+            "QPushButton:hover { background:#250a0a; color:#ff6666; border-color:#882222; }"
+        )
+        bsv.addWidget(btn_del_multi)
         lv.addWidget(bstrip)
         spl.addWidget(left_w)
 
@@ -3774,17 +3806,45 @@ class MainWindow(QMainWindow):
         fv.addWidget(det_name_e)
         fv.addSpacing(6)
 
+        GROUP_BLOCKS = [
+            ("face",    "A", "Face",    "#ff8844"),
+            ("contre",  "B", "Contre",  "#4488ff"),
+            ("lat",     "B", "LAT",     "#aa55ff"),
+            ("douche1", "C", "Dch 1",   "#44cc88"),
+            ("douche2", "C", "Dch 2",   "#44cc88"),
+            ("douche3", "C", "Dch 3",   "#44cc88"),
+            ("public",  "D", "Public",  "#ff6655"),
+        ]
+        _selected_group = [None]
+
+        tg_lbl_row = QHBoxLayout()
+        tg_lbl_row.setSpacing(10)
+        lbl_type_title = QLabel("Type")
+        lbl_type_title.setStyleSheet("color:#555; font-size:11px; border:none; background:transparent;")
+        lbl_group_title = QLabel("Groupe")
+        lbl_group_title.setStyleSheet("color:#555; font-size:11px; border:none; background:transparent;")
+        tg_lbl_row.addWidget(lbl_type_title, 1)
+        tg_lbl_row.addWidget(lbl_group_title)
+        fv.addLayout(tg_lbl_row)
+
         tg_row = QHBoxLayout()
-        tg_row.setSpacing(10)
-        det_type_cb  = QComboBox()
+        tg_row.setSpacing(8)
+        det_type_cb = QComboBox()
         det_type_cb.setFixedHeight(38)
         for ft in FIXTURE_TYPES:
             det_type_cb.addItem(ft)
-        det_group_cb = QComboBox()
-        det_group_cb.setFixedHeight(38)
+
+        btn_group = QPushButton("—")
+        btn_group.setFixedSize(60, 38)
+        btn_group.setStyleSheet(
+            "QPushButton { background:#1a1a1a; color:#fff; border:1px solid #2a2a2a;"
+            " border-radius:7px; font-size:15px; font-weight:bold; }"
+            "QPushButton:hover { border-color:#444; }"
+        )
         tg_row.addWidget(det_type_cb, 1)
-        tg_row.addWidget(det_group_cb, 1)
+        tg_row.addWidget(btn_group)
         fv.addLayout(tg_row)
+        det_group_cb = None  # remplacé par btn_group + menu
         fv.addWidget(_hdiv())
 
         fv.addWidget(_sec("Adresse DMX"))
@@ -3820,19 +3880,20 @@ class MainWindow(QMainWindow):
         fv.addWidget(_hdiv())
 
         fv.addWidget(_sec("Profil DMX"))
+
+        chips_w = QWidget()
+        chips_w.setStyleSheet("background:transparent;")
+        chips_vl = QVBoxLayout(chips_w)
+        chips_vl.setContentsMargins(0, 0, 0, 8)
+        chips_vl.setSpacing(4)
+        fv.addWidget(chips_w)
+
         det_profile_cb = QComboBox()
         det_profile_cb.setFixedHeight(38)
         for pname, pchannels in DMX_PROFILES.items():
             det_profile_cb.addItem(f"{pname}  —  {profile_display_text(pchannels)}", pname)
         det_profile_cb.addItem("Custom...", "__custom__")
         fv.addWidget(det_profile_cb)
-
-        chips_w = QWidget()
-        chips_w.setStyleSheet("background:transparent;")
-        chips_vl = QVBoxLayout(chips_w)
-        chips_vl.setContentsMargins(0, 8, 0, 0)
-        chips_vl.setSpacing(4)
-        fv.addWidget(chips_w)
         fv.addStretch()
 
         dv_outer = QVBoxLayout(detail_w)
@@ -3848,7 +3909,7 @@ class MainWindow(QMainWindow):
         rv.addWidget(det_stack, 1)
 
         spl.addWidget(right_w)
-        spl.setSizes([280, dw - 282])
+        spl.setSizes([280, 900])
         fx_root.addWidget(spl)
 
         tabs.addTab(tab_fx, "📋  Fixtures")
@@ -4069,22 +4130,79 @@ class MainWindow(QMainWindow):
             rn.addStretch(); ru.addStretch()
             chips_vl.addWidget(row_n)
             chips_vl.addWidget(row_u)
-        def _populate_group_combo():
-            det_group_cb.blockSignals(True)
-            det_group_cb.clear()
-            seen = []
-            for g in list(self.GROUP_DISPLAY.keys()) + ["lyre", "barre", "strobe"]:
-                if g not in seen:
-                    seen.append(g)
-            for fd_item in fixture_data:
-                if fd_item['group'] not in seen:
-                    seen.append(fd_item['group'])
-            for g in seen:
-                letter  = GROUP_LETTERS.get(g, "")
-                name    = self.GROUP_DISPLAY.get(g, g)
-                display = f"{letter}  —  {name}" if letter else name
-                det_group_cb.addItem(display, g)
-            det_group_cb.blockSignals(False)
+        _dirty = [False]
+        _checked = set()
+
+        def _mark_dirty():
+            if not _dirty[0]:
+                _dirty[0] = True
+                btn_save.setEnabled(True)
+
+        def _do_save():
+            self.save_dmx_patch_config()
+            _dirty[0] = False
+            btn_save.setEnabled(False)
+
+        def _refresh_group_blocks(current_group=None):
+            if current_group is not None:
+                _selected_group[0] = current_group
+            cg = _selected_group[0]
+            info = next(((g, l, n, c) for g, l, n, c in GROUP_BLOCKS if g == cg), None)
+            if info:
+                _, letter, name, color = info
+                btn_group.setText(letter)
+                btn_group.setToolTip(name)
+                btn_group.setStyleSheet(
+                    f"QPushButton {{ background:{color}; color:#ffffff; border:none;"
+                    f" border-radius:7px; font-size:16px; font-weight:bold; }}"
+                    f"QPushButton:hover {{ background:{color}cc; }}"
+                )
+            else:
+                btn_group.setText("—")
+                btn_group.setToolTip("")
+                btn_group.setStyleSheet(
+                    "QPushButton { background:#1a1a1a; color:#fff; border:1px solid #2a2a2a;"
+                    " border-radius:7px; font-size:15px; font-weight:bold; }"
+                    "QPushButton:hover { border-color:#444; }"
+                )
+
+        def _show_group_menu():
+            _MNS = (
+                "QMenu { background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:4px; }"
+                "QMenu::item { padding:8px 24px 8px 12px; border-radius:4px; color:#bbb; font-size:14px; font-weight:bold; }"
+                "QMenu::item:selected { background:#1e1e1e; color:#fff; }"
+            )
+            m = QMenu(btn_group)
+            m.setStyleSheet(_MNS)
+            # Dédupliquer par lettre : une seule entrée par lettre
+            seen_letters = {}
+            for g, letter, name, color in GROUP_BLOCKS:
+                if letter not in seen_letters:
+                    seen_letters[letter] = (g, letter, color)
+            current_letter = next(
+                (l for g, l, n, c in GROUP_BLOCKS if g == _selected_group[0]), None
+            )
+            for letter, (g, _, color) in seen_letters.items():
+                act = m.addAction(letter)
+                act.setData(letter)
+                px = QPixmap(14, 14)
+                px.fill(QColor(color))
+                act.setIcon(QIcon(px))
+                if letter == current_letter:
+                    font = act.font()
+                    font.setBold(True)
+                    act.setFont(font)
+            chosen = m.exec(btn_group.mapToGlobal(QPoint(0, btn_group.height() + 2)))
+            if chosen:
+                chosen_letter = chosen.data()
+                # Garder le groupe interne si on est déjà dans cette lettre
+                groups_for_letter = [g for g, l, n, c in GROUP_BLOCKS if l == chosen_letter]
+                if _selected_group[0] not in groups_for_letter:
+                    _selected_group[0] = groups_for_letter[0]
+                _refresh_group_blocks()
+                _commit()
+
+        btn_group.clicked.connect(_show_group_menu)
 
         def _update_addr_range():
             if _sel[0] is None or _sel[0] >= len(fixture_data):
@@ -4105,13 +4223,15 @@ class MainWindow(QMainWindow):
             end_ch = fd['start_address'] + len(fd['profile']) - 1
             gname  = self.GROUP_DISPLAY.get(group, group)
 
+            from PySide6.QtWidgets import QCheckBox
             card = QFrame()
             card.setFixedHeight(60)
             card.setCursor(Qt.PointingHandCursor)
 
             def _upd(selected, conflict):
-                _gc = card._gc  # lu dynamiquement pour refléter les changements de groupe
-                bg = "#10102a" if selected else "#0b0b0b"
+                _gc = card._gc
+                checked = idx in _checked
+                bg = "#10102a" if selected else ("#0f0f18" if checked else "#0b0b0b")
                 card.setStyleSheet(
                     f"QFrame {{ background:{bg}; border-left:4px solid {_gc};"
                     f" border-top:1px solid {'#1e1e3a' if selected else '#141414'};"
@@ -4123,13 +4243,24 @@ class MainWindow(QMainWindow):
                         f" font-size:11px; font-weight:bold; border:none; background:transparent;"
                     )
 
-            card._gc  = gc   # doit être défini avant le premier appel à _upd
+            card._gc  = gc
             card._upd = _upd
             card._upd(False, False)
 
             hl = QHBoxLayout(card)
-            hl.setContentsMargins(12, 0, 14, 0)
-            hl.setSpacing(8)
+            hl.setContentsMargins(6, 0, 14, 0)
+            hl.setSpacing(6)
+
+            chk = QCheckBox()
+            chk.setChecked(idx in _checked)
+            chk.setStyleSheet(
+                "QCheckBox { border:none; background:transparent; }"
+                "QCheckBox::indicator { width:14px; height:14px; border:1px solid #2a2a2a;"
+                " border-radius:3px; background:#111; }"
+                "QCheckBox::indicator:checked { background:#00d4ff; border-color:#00d4ff; }"
+            )
+            card._chk = chk
+            hl.addWidget(chk)
 
             dot = QLabel("●")
             dot.setFixedWidth(13)
@@ -4146,7 +4277,6 @@ class MainWindow(QMainWindow):
             nm.setStyleSheet("color:#ddd; font-size:12px; font-weight:bold; border:none; background:transparent;")
             card._namelbl = nm
             sub = QLabel(f"{fd['fixture_type']}  ·  {gname}")
-            # Couleur tintee du groupe mais lisible (melange gc + gris neutre)
             _sub_col = "#{:02x}{:02x}{:02x}".format(
                 (int(gc[1:3], 16) + 0x44) // 2,
                 (int(gc[3:5], 16) + 0x44) // 2,
@@ -4165,7 +4295,36 @@ class MainWindow(QMainWindow):
             card._chlbl = chl
             hl.addWidget(chl)
 
-            card.mousePressEvent = lambda e, i=idx: _select_card(i)
+            def _on_check(state, i=idx):
+                if state:
+                    _checked.add(i)
+                else:
+                    _checked.discard(i)
+                n_chk = len(_checked)
+                btn_del_multi.setVisible(n_chk > 0)
+                btn_del_multi.setText(f"🗑  Supprimer ({n_chk})" if n_chk > 1 else "🗑  Supprimer")
+                if i < len(_cards) and _cards[i] is not None:
+                    _cards[i]._upd(i == _sel[0], i in _get_conflicts())
+            chk.stateChanged.connect(_on_check)
+
+            def _on_card_click(e, i=idx):
+                if e.button() != Qt.LeftButton:
+                    return
+                mods = e.modifiers()
+                if mods & Qt.ControlModifier:
+                    # Ctrl+clic : bascule la checkbox de multi-sélection
+                    if i < len(_cards) and _cards[i] is not None:
+                        chk = _cards[i]._chk
+                        chk.setChecked(not chk.isChecked())
+                elif mods & Qt.ShiftModifier:
+                    # Shift+clic : sélection de plage depuis la dernière carte active
+                    anchor = _sel[0] if _sel[0] is not None else i
+                    for j in range(min(anchor, i), max(anchor, i) + 1):
+                        if j < len(_cards) and _cards[j] is not None:
+                            _cards[j]._chk.setChecked(True)
+                else:
+                    _select_card(i)
+            card.mousePressEvent = _on_card_click
             return card
         def _build_cards(filter_text=""):
             while card_vl.count() > 1:
@@ -4175,6 +4334,7 @@ class MainWindow(QMainWindow):
             _cards.clear()
             ft = filter_text.strip().lower()
             conflicts = _get_conflicts()
+            # Créer toutes les cartes indexées par fixture_idx
             for idx, fd in enumerate(fixture_data):
                 if ft:
                     hay = (fd['name'] + fd['fixture_type'] +
@@ -4185,7 +4345,20 @@ class MainWindow(QMainWindow):
                 card = _make_card(idx)
                 card._upd(idx == _sel[0], idx in conflicts)
                 _cards.append(card)
-                card_vl.insertWidget(card_vl.count() - 1, card)
+            # Insérer dans l'ordre de tri
+            visible = [i for i, c in enumerate(_cards) if c is not None]
+            sm = _sort_mode[0]
+            if sm == "name":
+                visible.sort(key=lambda i: fixture_data[i]['name'].lower())
+            elif sm == "group":
+                visible.sort(key=lambda i: (
+                    self.GROUP_DISPLAY.get(fixture_data[i]['group'], fixture_data[i]['group']),
+                    fixture_data[i]['name'].lower()
+                ))
+            else:  # dmx (défaut)
+                visible.sort(key=lambda i: fixture_data[i]['start_address'])
+            for i in visible:
+                card_vl.insertWidget(card_vl.count() - 1, _cards[i])
             n = len(fixture_data)
             lbl_cnt.setText(f"{n} fixture{'s' if n != 1 else ''}")
             _update_conflict_banner(conflicts)
@@ -4212,12 +4385,7 @@ class MainWindow(QMainWindow):
             if fd['fixture_type'] in FIXTURE_TYPES:
                 det_type_cb.setCurrentIndex(FIXTURE_TYPES.index(fd['fixture_type']))
             det_type_cb.blockSignals(False)
-            _populate_group_combo()
-            det_group_cb.blockSignals(True)
-            for i in range(det_group_cb.count()):
-                if det_group_cb.itemData(i) == fd['group']:
-                    det_group_cb.setCurrentIndex(i); break
-            det_group_cb.blockSignals(False)
+            _refresh_group_blocks(fd['group'])
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);  addr_sb.blockSignals(False)
             _update_addr_range()
             det_profile_cb.blockSignals(True)
@@ -4252,14 +4420,14 @@ class MainWindow(QMainWindow):
             proj = self.projectors[idx]
             fd['name']          = det_name_e.text().strip() or fd['group']
             fd['fixture_type']  = det_type_cb.currentText()
-            fd['group']         = det_group_cb.currentData() or fd['group']
+            fd['group']         = _selected_group[0] or fd['group']
             fd['start_address'] = addr_sb.value()
             proj.name           = fd['name']
             proj.fixture_type   = fd['fixture_type']
             proj.group          = fd['group']
             proj.start_address  = fd['start_address']
             self._rebuild_dmx_patch()
-            self.save_dmx_patch_config()
+            _mark_dirty()
             conflicts = _get_conflicts()
             _update_conflict_banner(conflicts)
             # Mettre à jour TOUTES les cartes affectées (sélectionnée + celles en conflit)
@@ -4309,7 +4477,6 @@ class MainWindow(QMainWindow):
         _name_tmr.timeout.connect(_commit)
         det_name_e.textChanged.connect(lambda _: _name_tmr.start())
         det_type_cb.currentIndexChanged.connect(lambda _: _commit())
-        det_group_cb.currentIndexChanged.connect(lambda _: _commit())
         addr_sb.valueChanged.connect(lambda _: (_update_addr_range(), _commit()))
         btn_am.clicked.connect(lambda: addr_sb.setValue(max(1, addr_sb.value() - 1)))
         btn_ap.clicked.connect(lambda: addr_sb.setValue(min(512, addr_sb.value() + 1)))
@@ -4330,7 +4497,7 @@ class MainWindow(QMainWindow):
             elif data in DMX_PROFILES:
                 fixture_data[i]['profile'] = list(DMX_PROFILES[data])
             self._rebuild_dmx_patch()
-            self.save_dmx_patch_config()
+            _mark_dirty()
             _update_chips(fixture_data[i]['profile'])
             _update_addr_range()
             conflicts = _get_conflicts()
@@ -4354,12 +4521,37 @@ class MainWindow(QMainWindow):
             if 0 <= idx < len(self.projectors):
                 self.projectors.pop(idx)
             _sel[0] = None
+            _checked.discard(idx)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
             det_stack.setCurrentIndex(0)
+            _mark_dirty()
 
         btn_det_del.clicked.connect(_del_selected)
+
+        def _del_checked():
+            if not _checked: return
+            n = len(_checked)
+            names = [fixture_data[i]['name'] for i in sorted(_checked) if i < len(fixture_data)]
+            msg = f"Supprimer {n} fixture{'s' if n > 1 else ''} ?\n" + "\n".join(f"  • {nm}" for nm in names[:8])
+            if QMessageBox.question(dialog, "Supprimer", msg,
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            _push_history()
+            for i in sorted(_checked, reverse=True):
+                if i < len(fixture_data): fixture_data.pop(i)
+                if i < len(self.projectors): self.projectors.pop(i)
+            _checked.clear()
+            _sel[0] = None
+            btn_del_multi.setVisible(False)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            det_stack.setCurrentIndex(0)
+            _mark_dirty()
+
+        btn_del_multi.clicked.connect(_del_checked)
 
         def _update_dots():
             for i, card in enumerate(_cards):
@@ -4373,30 +4565,54 @@ class MainWindow(QMainWindow):
                     f"color:{col}; font-size:13px; border:none; background:transparent;"
                 )
         def _add_fixture():
-            preset = self._show_fixture_library_dialog()
-            if not preset: return
+            res = self._show_fixture_library_dialog()
+            if not res: return
+            preset, qty, custom_name = res
             _push_history()
             _CH = {"PAR LED": 5, "Moving Head": 8, "Barre LED": 5,
                    "Stroboscope": 2, "Machine a fumee": 2}
-            next_addr = 1
-            if self.projectors:
-                last = max(self.projectors, key=lambda p: p.start_address)
-                next_addr = last.start_address + _CH.get(getattr(last, 'fixture_type', 'PAR LED'), 5)
-            p = Projector(
-                preset.get('group', 'face'),
-                name=preset.get('name', 'Fixture'),
-                fixture_type=preset.get('fixture_type', 'PAR LED')
-            )
-            p.start_address = next_addr
-            p.canvas_x = 0.5; p.canvas_y = 0.5
-            if p.fixture_type == "Machine a fumee":
-                p.fan_speed = 0
-            self.projectors.append(p)
+            base_name = custom_name or preset.get('name', 'Fixture')
+
+            # Calculer les positions canvas pour le batch
+            if qty > 1:
+                # Trouver un axe Y libre sur le plan de feu
+                existing_ys = [p.canvas_y for p in self.projectors
+                               if p.canvas_x is not None and p.canvas_y is not None]
+                candidate_y = None
+                for y_try in [0.85, 0.70, 0.55, 0.40, 0.25, 0.10]:
+                    if not any(abs(ey - y_try) < 0.12 for ey in existing_ys):
+                        candidate_y = y_try
+                        break
+                if candidate_y is None:
+                    candidate_y = 0.5
+                # Espacer uniformément en X : marges 5% de chaque côté
+                canvas_positions = [((n + 1) / (qty + 1), candidate_y) for n in range(qty)]
+            else:
+                canvas_positions = [(0.5, 0.5)]
+
+            for n in range(qty):
+                if self.projectors:
+                    last = max(self.projectors, key=lambda p: p.start_address)
+                    next_addr = last.start_address + _CH.get(getattr(last, 'fixture_type', 'PAR LED'), 5)
+                else:
+                    next_addr = 1
+                name = f"{base_name} {n + 1}" if qty > 1 else base_name
+                p = Projector(
+                    preset.get('group', 'face'),
+                    name=name,
+                    fixture_type=preset.get('fixture_type', 'PAR LED')
+                )
+                p.start_address = next_addr
+                p.canvas_x, p.canvas_y = canvas_positions[n]
+                if p.fixture_type == "Machine a fumee":
+                    p.fan_speed = 0
+                self.projectors.append(p)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             new_idx = len(fixture_data) - 1
             _build_cards(filter_bar.text())
             _select_card(new_idx)
+            _mark_dirty()
         def _auto_address():
             if QMessageBox.question(
                 dialog, "Auto-adresser",
@@ -4413,7 +4629,7 @@ class MainWindow(QMainWindow):
             for proj, fd in zip(self.projectors, fixture_data):
                 proj.start_address = fd['start_address']
             self._rebuild_dmx_patch()
-            self.save_dmx_patch_config()
+            _mark_dirty()
             cur = _sel[0]
             _build_cards(filter_bar.text())
             if cur is not None: _select_card(cur)
@@ -4438,6 +4654,7 @@ class MainWindow(QMainWindow):
             _sel[0] = None
             _build_cards()
             det_stack.setCurrentIndex(0)
+            _mark_dirty()
         def _open_wizard():
             if self.projectors:
                 if QMessageBox.question(
@@ -4466,13 +4683,23 @@ class MainWindow(QMainWindow):
             det_stack.setCurrentIndex(0)
 
         act_new.triggered.connect(_open_wizard)
-        act_save.triggered.connect(self.save_dmx_patch_config)
+        act_save.triggered.connect(_do_save)
         act_dflt.triggered.connect(_reset_defaults)
         act_undo.triggered.connect(_undo)
         act_redo.triggered.connect(_redo)
         act_auto.triggered.connect(_auto_address)
         btn_add.clicked.connect(_add_fixture)
+        btn_save.clicked.connect(_do_save)
         filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
+
+        def _set_sort(mode, btn):
+            _sort_mode[0] = mode
+            for b in [btn_sort_dmx, btn_sort_name, btn_sort_grp]:
+                b.setChecked(b is btn)
+            _build_cards(filter_bar.text())
+        btn_sort_dmx.clicked.connect(lambda: _set_sort("dmx", btn_sort_dmx))
+        btn_sort_name.clicked.connect(lambda: _set_sort("name", btn_sort_name))
+        btn_sort_grp.clicked.connect(lambda: _set_sort("group", btn_sort_grp))
         def _get_selected_projs():
             if not proxy.selected_lamps:
                 return list(self.projectors)
@@ -4490,7 +4717,7 @@ class MainWindow(QMainWindow):
             if not projs: return
             avg_y = sum(getattr(p, 'canvas_y', 0.5) or 0.5 for p in projs) / len(projs)
             for p in projs: p.canvas_y = avg_y
-            canvas.update(); self.save_dmx_patch_config()
+            canvas.update(); _mark_dirty()
 
         def _distribute():
             """Centrer le groupe sur le canvas et répartir à espacement égal"""
@@ -4503,7 +4730,7 @@ class MainWindow(QMainWindow):
                 mg = 0.15  # 15% de marge de chaque cote -> etalement centré sur 0.5
                 for i, p in enumerate(sorted_p):
                     p.canvas_x = max(0.07, min(0.93, mg + i * (1.0 - 2 * mg) / (n - 1)))
-            canvas.update(); self.save_dmx_patch_config()
+            canvas.update(); _mark_dirty()
 
         btn_align_row.clicked.connect(_align_row)
         btn_distribute.clicked.connect(_distribute)
@@ -4567,7 +4794,7 @@ class MainWindow(QMainWindow):
             ) != QMessageBox.Yes: return
             _push_history()
             for proj in self.projectors: proj.canvas_x = None; proj.canvas_y = None
-            self.save_dmx_patch_config(); canvas.update()
+            _mark_dirty(); canvas.update()
         btn_sel_all_c.clicked.connect(_select_all_canvas)
         btn_desel_c.clicked.connect(_deselect_canvas)
         btn_groups_c.clicked.connect(_show_groups_popup)
@@ -4598,10 +4825,37 @@ class MainWindow(QMainWindow):
                 type(dialog).keyPressEvent(dialog, event)
         dialog.keyPressEvent = _dialog_key
 
+        def _on_close_event(event):
+            if _dirty[0]:
+                mb = QMessageBox(dialog)
+                mb.setWindowTitle("Modifications non sauvegardées")
+                mb.setText("Vous avez des modifications non sauvegardées.\nVoulez-vous les sauvegarder avant de quitter ?")
+                mb.setIcon(QMessageBox.Warning)
+                btn_sauv    = mb.addButton("Sauvegarder",  QMessageBox.AcceptRole)
+                btn_ignorer = mb.addButton("Ignorer",       QMessageBox.DestructiveRole)
+                btn_annuler = mb.addButton("Annuler",       QMessageBox.RejectRole)
+                mb.setDefaultButton(btn_sauv)
+                mb.exec()
+                clicked = mb.clickedButton()
+                if clicked == btn_sauv:
+                    _do_save()
+                    event.accept()
+                elif clicked == btn_ignorer:
+                    event.accept()
+                else:
+                    event.ignore()
+            else:
+                event.accept()
+        dialog.closeEvent = _on_close_event
+
+        close_btn.clicked.disconnect()
+        close_btn.clicked.connect(dialog.close)
+
         _build_cards()
         if fixture_data:
             _select_card(0)
 
+        dialog.showMaximized()
         dialog.exec()
         canvas_timer.stop()
 
@@ -4697,6 +4951,51 @@ class MainWindow(QMainWindow):
 
         preset_list.itemDoubleClicked.connect(lambda _: accept())
 
+        qty_row = QHBoxLayout()
+        qty_row.setSpacing(10)
+
+        lbl_name = QLabel("Nom :")
+        lbl_name.setStyleSheet("color:#aaa; font-size:12px;")
+        name_edit = QLineEdit()
+        name_edit.setFixedHeight(32)
+        name_edit.setPlaceholderText("Nom personnalisé (optionnel)")
+        name_edit.setStyleSheet(
+            "QLineEdit { background:#222; color:#fff; border:1px solid #4a4a4a;"
+            " border-radius:4px; padding:4px 10px; font-size:12px; }"
+            "QLineEdit:focus { border-color:#00d4ff66; }"
+        )
+
+        lbl_qty = QLabel("Quantité :")
+        lbl_qty.setStyleSheet("color:#aaa; font-size:12px;")
+        qty_spin = QComboBox()
+        for _q in range(1, 21):
+            qty_spin.addItem(str(_q))
+        qty_spin.setFixedWidth(70)
+        qty_spin.setFixedHeight(32)
+        qty_spin.setStyleSheet(
+            "QComboBox { background:#222; color:#fff; border:1px solid #4a4a4a;"
+            " border-radius:4px; padding:4px 8px; font-size:13px; font-weight:bold; }"
+            "QComboBox::drop-down { border:none; width:20px; }"
+            "QComboBox QAbstractItemView { background:#222; color:#fff; selection-background-color:#00d4ff;"
+            " selection-color:#000; border:1px solid #4a4a4a; }"
+        )
+
+        # Quand le preset change, pré-remplir le nom
+        def _on_preset_selected():
+            cat = cat_list.currentItem()
+            preset_item = preset_list.currentItem()
+            if cat and preset_item and not name_edit.text().strip():
+                # Extraire un nom court du preset (ex: "PAR LED RGBDS 5ch" → "PAR LED")
+                short = preset_item.text().split()[0:2]
+                name_edit.setPlaceholderText(" ".join(short))
+        preset_list.currentItemChanged.connect(lambda *_: _on_preset_selected())
+
+        qty_row.addWidget(lbl_name)
+        qty_row.addWidget(name_edit, 1)
+        qty_row.addWidget(lbl_qty)
+        qty_row.addWidget(qty_spin)
+        layout.addLayout(qty_row)
+
         btn_row = QHBoxLayout()
         ok_btn = QPushButton("Ajouter")
         ok_btn.setStyleSheet("QPushButton { background: #00d4ff; color: #000; font-weight: bold; padding: 8px 24px; } QPushButton:hover { background: #33ddff; }")
@@ -4708,7 +5007,10 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_row)
 
         dialog.exec()
-        return result[0]
+        if result[0] is None:
+            return None
+        custom_name = name_edit.text().strip() or None
+        return (result[0], int(qty_spin.currentText()), custom_name)
 
     def _show_custom_profile_dialog(self, initial=None):
         """Dialog pour composer un profil DMX custom. Retourne la liste ou None si annule."""
