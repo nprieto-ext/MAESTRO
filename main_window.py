@@ -343,13 +343,13 @@ class MainWindow(QMainWindow):
 
     # Mapping nom de groupe -> nom d'affichage dans la timeline
     GROUP_DISPLAY = {
-        "face": "Groupe A",
-        "douche1": "Groupe B",
+        "face":    "Groupe A",
+        "contre":  "Groupe B",
+        "lat":     "Groupe B",
+        "douche1": "Groupe C",
         "douche2": "Groupe C",
-        "douche3": "Groupe D",
-        "lat": "Groupe E",
-        "contre": "Groupe F",
-        "public": "Groupe G",
+        "douche3": "Groupe C",
+        "public":  "Groupe D",
         "fumee": "Fumee",
         "lyre": "Lyres",
         "barre": "Barres",
@@ -2519,7 +2519,7 @@ class MainWindow(QMainWindow):
 
     def _build_default_akai_presets(self) -> dict:
         """
-        Construit les presets LAT & CONTRE par defaut pour les colonnes 5-8 (mem_col 0-3).
+        Construit les presets Groupe B (Contres & LAT) par defaut pour les colonnes 5-8 (mem_col 0-3).
 
         Toutes les colonnes : LAT bicouleur symetrique + CONTRE bicouleur symetrique.
         (LAT gauche=dom / droite=acc ; CONTRE pattern D-A-D | D-A-D symetrique)
@@ -2530,7 +2530,7 @@ class MainWindow(QMainWindow):
           Col 7 (mc=2) : Dominant + Complementaire       (contraste fort)
           Col 8 (mc=3) : Dominant + Split-comp / froid   (creatif)
 
-        8 rangees = 8 couleurs dominantes = couleurs des pads.
+        8 rangees = 8 couleurs dominantes = couleurs des pads (correspondance directe).
         """
 
         # (dom, [acc_col5, acc_col6, acc_col7, acc_col8])
@@ -2600,11 +2600,11 @@ class MainWindow(QMainWindow):
         }
 
     def load_default_presets(self):
-        """Charge (ou restaure) les configurations par defaut LAT & CONTRE."""
+        """Charge (ou restaure) les configurations par defaut Groupe B (Contres & LAT)."""
         reply = QMessageBox.question(
             self,
             "Configurations par defaut",
-            "Charger les presets LAT & CONTRE par defaut ?\n\n"
+            "Charger les presets Groupe B (Contres & LAT) par defaut ?\n\n"
             "Les memoires des colonnes 5 a 8 seront remplacees.\n"
             "Les colonnes 1 a 4 (couleurs) ne sont pas modifiees.",
             QMessageBox.Yes | QMessageBox.Cancel
@@ -2628,11 +2628,11 @@ class MainWindow(QMainWindow):
         self._save_akai_config_auto()
         QMessageBox.information(
             self, "Configurations par defaut",
-            "Presets LAT & CONTRE charges avec succes !\n\n"
-            "Col 5 : LAT couleur\n"
-            "Col 6 : LAT bicouleur symetrique\n"
-            "Col 7 : CONTRE couleur\n"
-            "Col 8 : CONTRE bicouleur symetrique"
+            "Presets Groupe B (Contres & LAT) charges avec succes !\n\n"
+            "Col 5 : Groupe B — accord harmonique (teintes proches)\n"
+            "Col 6 : Groupe B — avec blanc pur (naturel / scenique)\n"
+            "Col 7 : Groupe B — couleur complementaire (fort contraste)\n"
+            "Col 8 : Groupe B — split-complementaire (creatif)"
         )
 
     def export_akai_config(self):
@@ -3513,24 +3513,78 @@ class MainWindow(QMainWindow):
             "strobe": "#ffee44", "fumee": "#88aaaa", "public": "#ff6655",
         }
         GROUP_LETTERS = {
-            "face": "A", "douche1": "B", "douche2": "C", "douche3": "D",
-            "lat": "E", "contre": "F", "public": "G",
+            "face": "A", "contre": "B", "lat": "B",
+            "douche1": "C", "douche2": "C", "douche3": "C",
+            "public": "D",
             "fumee": "Fumée", "lyre": "Lyres", "barre": "Barres", "strobe": "Strobos",
         }
         FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
         CH_COLORS = {
-            "R": "#cc3333", "G": "#33aa44", "B": "#3366cc", "W": "#aaaaaa",
-            "Dim": "#ddaa22", "Strobe": "#cc55cc", "UV": "#7744cc",
-            "Ambre": "#cc7722", "Orange": "#dd5522", "Pan": "#44aacc",
-            "Tilt": "#44ccaa", "Smoke": "#77aaaa", "Fan": "#557788",
-            "Gobo1": "#aa6677", "Gobo2": "#996677", "Shutter": "#aaaa33",
-            "Speed": "#778844", "Mode": "#667788", "ColorWheel": "#aa44aa",
-            "Prism": "#4488aa", "Focus": "#888844", "PanFine": "#33aacc", "TiltFine": "#33ccaa",
+            "R":          "#cc1111",
+            "G":          "#22aa33",
+            "B":          "#1155dd",
+            "W":          "#cccccc",
+            "Dim":        "#cc9900",
+            "Strobe":     "#bb33cc",
+            "UV":         "#6611dd",
+            "Ambre":      "#cc6600",
+            "Orange":     "#dd4400",
+            "Pan":        "#1199cc",
+            "Tilt":       "#11ccaa",
+            "Smoke":      "#5588aa",
+            "Fan":        "#336677",
+            "Gobo1":      "#993355",
+            "Gobo2":      "#774455",
+            "Shutter":    "#999911",
+            "Speed":      "#557722",
+            "Mode":       "#445566",
+            "ColorWheel": "#aa2299",
+            "Prism":      "#2266aa",
+            "Focus":      "#776622",
+            "PanFine":    "#0077bb",
+            "TiltFine":   "#00aa88",
         }
 
         root = QVBoxLayout(dialog)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # ── Menu bar ──────────────────────────────────────────────────────
+        menubar = QMenuBar(dialog)
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background: #090909;
+                color: #888;
+                border-bottom: 1px solid #181818;
+                padding: 2px 8px;
+                font-size: 12px;
+            }
+            QMenuBar::item { padding: 5px 14px; background: transparent; border-radius: 4px; }
+            QMenuBar::item:selected { background: #1a1a1a; color: #ddd; }
+            QMenu {
+                background: #111111;
+                color: #cccccc;
+                border: 1px solid #2a2a2a;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QMenu::item { padding: 7px 28px; border-radius: 3px; }
+            QMenu::item:selected { background: #00d4ff22; color: #00d4ff; }
+            QMenu::separator { background: #1e1e1e; height: 1px; margin: 3px 8px; }
+        """)
+        m_file = menubar.addMenu("Fichier")
+        act_new  = m_file.addAction("✨  Nouveau Patch")
+        act_save = m_file.addAction("💾  Enregistrer Patch")
+        m_file.addSeparator()
+        act_dflt = m_file.addAction("↺  Patch par défaut")
+
+        m_edit = menubar.addMenu("Edition")
+        act_undo = m_edit.addAction("↩  Annuler\tCtrl+Z")
+        act_redo = m_edit.addAction("↪  Rétablir\tCtrl+Y")
+        m_edit.addSeparator()
+        act_auto = m_edit.addAction("⚡  Auto Adresse")
+
+        root.addWidget(menubar)
 
         # ── Toolbar ───────────────────────────────────────────────────────
         toolbar = QWidget()
@@ -3554,16 +3608,8 @@ class MainWindow(QMainWindow):
             )
             return b
 
-        btn_new  = _tbar_btn("✨  Nouveau plan", "#00d4ff")
-        btn_add  = _tbar_btn("➕  Ajouter",       "#55cc77")
-        btn_auto = _tbar_btn("⚡  Auto-addr.",    "#ffaa44")
-        btn_dflt = _tbar_btn("↺  Défauts",        "#888888")
-        btn_undo = _tbar_btn("↩  Annuler",        "#888888")
-        th.addWidget(btn_new)
+        btn_add = _tbar_btn("➕  Ajouter", "#55cc77")
         th.addWidget(btn_add)
-        th.addWidget(btn_auto)
-        th.addWidget(btn_dflt)
-        th.addWidget(btn_undo)
         th.addStretch()
         close_btn = QPushButton("Fermer")
         close_btn.setFixedHeight(34)
@@ -3893,9 +3939,10 @@ class MainWindow(QMainWindow):
         # DONNÉES + HELPERS
         # ════════════════════════════════════════════════════════════════
         fixture_data = []
-        _sel     = [None]
-        _cards   = []
-        _history = []
+        _sel        = [None]
+        _cards      = []
+        _history    = []
+        _redo_stack = []
 
         def _rebuild_fd():
             fixture_data.clear()
@@ -3920,12 +3967,22 @@ class MainWindow(QMainWindow):
                     entry['canvas_y'] = getattr(p, 'canvas_y', None)
                 snap.append(entry)
             _history.append(snap)
+            _redo_stack.clear()
             if len(_history) > 40:
                 _history.pop(0)
 
-        def _undo():
-            if not _history: return
-            snap = _history.pop()
+        def _snapshot_current():
+            snap = []
+            for i, fd in enumerate(fixture_data):
+                entry = dict(fd)
+                if i < len(self.projectors):
+                    p = self.projectors[i]
+                    entry['canvas_x'] = getattr(p, 'canvas_x', None)
+                    entry['canvas_y'] = getattr(p, 'canvas_y', None)
+                snap.append(entry)
+            return snap
+
+        def _restore_snap(snap):
             del self.projectors[:]
             fixture_data.clear()
             for fd_s in snap:
@@ -3949,6 +4006,16 @@ class MainWindow(QMainWindow):
             det_stack.setCurrentIndex(0)
             proxy.selected_lamps.clear()
             canvas.update()
+
+        def _undo():
+            if not _history: return
+            _redo_stack.append(_snapshot_current())
+            _restore_snap(_history.pop())
+
+        def _redo():
+            if not _redo_stack: return
+            _history.append(_snapshot_current())
+            _restore_snap(_redo_stack.pop())
 
         def _get_conflicts():
             occ = {}
@@ -3981,20 +4048,23 @@ class MainWindow(QMainWindow):
             row_u = QWidget(); row_u.setStyleSheet("background:transparent;")
             ru = QHBoxLayout(row_u); ru.setContentsMargins(0, 0, 0, 0); ru.setSpacing(4)
             for ci, ch in enumerate(profile):
-                col = CH_COLORS.get(ch, "#555555")
+                col = CH_COLORS.get(ch, "#444455")
                 cw = max(36, len(ch) * 7 + 14)
+                # Calcul luminance pour choisir texte blanc ou noir
+                _r = int(col[1:3], 16); _g = int(col[3:5], 16); _b = int(col[5:7], 16)
+                text_col = "#ffffff" if (_r * 0.299 + _g * 0.587 + _b * 0.114) < 145 else "#111111"
                 chip = QLabel(ch)
-                chip.setFixedSize(cw, 22)
+                chip.setFixedSize(cw, 24)
                 chip.setAlignment(Qt.AlignCenter)
                 chip.setStyleSheet(
-                    f"background:{col}18; color:{col}; border:1px solid {col}44;"
-                    f" border-radius:4px; font-size:10px; font-weight:bold;"
+                    f"background:{col}; color:{text_col}; border:none;"
+                    f" border-radius:5px; font-size:10px; font-weight:bold;"
                 )
                 chip.setToolTip(f"Canal {ci + 1}: {ch}")
                 num = QLabel(str(ci + 1))
                 num.setFixedWidth(cw)
                 num.setAlignment(Qt.AlignCenter)
-                num.setStyleSheet("color:#252525; font-size:9px; border:none; background:transparent;")
+                num.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold; border:none; background:transparent;")
                 rn.addWidget(chip); ru.addWidget(num)
             rn.addStretch(); ru.addStretch()
             chips_vl.addWidget(row_n)
@@ -4395,11 +4465,13 @@ class MainWindow(QMainWindow):
             _build_cards()
             det_stack.setCurrentIndex(0)
 
-        btn_new.clicked.connect(_open_wizard)
+        act_new.triggered.connect(_open_wizard)
+        act_save.triggered.connect(self.save_dmx_patch_config)
+        act_dflt.triggered.connect(_reset_defaults)
+        act_undo.triggered.connect(_undo)
+        act_redo.triggered.connect(_redo)
+        act_auto.triggered.connect(_auto_address)
         btn_add.clicked.connect(_add_fixture)
-        btn_auto.clicked.connect(_auto_address)
-        btn_dflt.clicked.connect(_reset_defaults)
-        btn_undo.clicked.connect(_undo)
         filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
         def _get_selected_projs():
             if not proxy.selected_lamps:
@@ -4520,6 +4592,8 @@ class MainWindow(QMainWindow):
         def _dialog_key(event):
             if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
                 _undo()
+            elif event.key() == Qt.Key_Y and (event.modifiers() & Qt.ControlModifier):
+                _redo()
             else:
                 type(dialog).keyPressEvent(dialog, event)
         dialog.keyPressEvent = _dialog_key
@@ -4542,7 +4616,7 @@ class MainWindow(QMainWindow):
                 {"name": "PAR LED RGBWD 5ch", "fixture_type": "PAR LED", "profile": "RGBWD", "group": "face"},
                 {"name": "PAR LED RGBWDS 6ch", "fixture_type": "PAR LED", "profile": "RGBWDS", "group": "face"},
             ],
-            "Moving Head": [
+            "Lyre": [
                 {"name": "Lyre Spot 8ch", "fixture_type": "Moving Head", "profile": "MOVING_8CH", "group": "lyre"},
                 {"name": "Lyre Wash RGB 8ch", "fixture_type": "Moving Head", "profile": "MOVING_RGB", "group": "lyre"},
                 {"name": "Lyre Wash RGBW 9ch", "fixture_type": "Moving Head", "profile": "MOVING_RGBW", "group": "lyre"},

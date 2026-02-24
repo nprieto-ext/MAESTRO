@@ -1329,17 +1329,10 @@ class Sequencer(QFrame):
 
         print(f"Lecture timeline ligne {row} - {len(clips_data)} clips")
 
-        tracks_clips = {
-            'Face': [],
-            'Douche 1': [],
-            'Douche 2': [],
-            'Douche 3': [],
-            'Contres': []
-        }
-
+        tracks_clips = {}
         for clip_data in clips_data:
             track_name = clip_data.get('track', 'Face')
-            tracks_clips[track_name].append(clip_data)
+            tracks_clips.setdefault(track_name, []).append(clip_data)
 
         self.timeline_playback_row = row
         self.timeline_tracks_data = tracks_clips

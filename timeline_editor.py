@@ -205,10 +205,7 @@ class LightTimelineEditor(QDialog):
         tracks_layout.setSpacing(0)
         tracks_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Creer les pistes dynamiquement depuis les fixtures
-        self._create_tracks_from_fixtures(main_window.projectors, tracks_layout)
-
-        # Piste waveform (masquee pour images et pauses)
+        # Piste waveform en haut (masquee pour images et pauses)
         self.track_waveform = LightTrack("Audio", self.media_duration, self)
         self.track_waveform.setAcceptDrops(False)
         self.track_waveform.setMinimumHeight(80)
@@ -220,6 +217,10 @@ class LightTimelineEditor(QDialog):
             tracks_layout.addWidget(self.track_waveform)
         else:
             self.track_waveform.hide()
+
+        # Creer les pistes dynamiquement depuis les fixtures (sous la waveform)
+        self._create_tracks_from_fixtures(main_window.projectors, tracks_layout)
+
         tracks_layout.addStretch()
 
         # Stocker le container pour l'overlay
