@@ -584,112 +584,67 @@ class EffectEditorDialog(QDialog):
         body_v.setContentsMargins(28, 20, 28, 20)
         body_v.setSpacing(14)
 
+        # ── Nom (ligne indépendante, tout en haut) ────────────────────────────
+        name_frame = QFrame()
+        name_frame.setStyleSheet(
+            "QFrame { background: #111; border: 1px solid #222; border-radius: 8px; }")
+        name_rl = QHBoxLayout(name_frame)
+        name_rl.setContentsMargins(20, 8, 20, 8)
+        name_rl.setSpacing(12)
+        _name_lbl = QLabel("Nom")
+        _name_lbl.setStyleSheet("color: #777; font-size: 11px; min-width: 36px;")
+        name_rl.addWidget(_name_lbl)
+        self._name_edit = QLineEdit()
+        self._name_edit.setFixedHeight(34)
+        self._name_edit.textChanged.connect(self._form_changed)
+        name_rl.addWidget(self._name_edit, 1)
+        body_v.addWidget(name_frame)
+
         # ── Preview ───────────────────────────────────────────────────────────
         prev_frame = QFrame()
         prev_frame.setStyleSheet(
             "QFrame { background: #0a0a0a; border: 1px solid #222; border-radius: 8px; }")
         prev_fl = QVBoxLayout(prev_frame)
-        prev_fl.setContentsMargins(0, 0, 0, 0)
+        prev_fl.setContentsMargins(12, 18, 12, 18)
         self._preview = MiniPreviewWidget()
         prev_fl.addWidget(self._preview)
         body_v.addWidget(prev_frame)
 
-        # ── Couches d'effets ──────────────────────────────────────────────────
+        # ── Couches (blocs inline empilés) ───────────────────────────────────
         layers_frame = QFrame()
         layers_frame.setStyleSheet(
             "QFrame { background: #111; border: 1px solid #222; border-radius: 8px; }")
-        layers_row = QHBoxLayout(layers_frame)
-        layers_row.setContentsMargins(14, 8, 14, 8)
-        layers_row.setSpacing(8)
+        layers_v = QVBoxLayout(layers_frame)
+        layers_v.setContentsMargins(0, 0, 0, 0)
+        layers_v.setSpacing(0)
 
-        layers_lbl = QLabel("Couches :")
-        layers_lbl.setStyleSheet("color: #777; font-size: 11px; min-width: 58px;")
-        layers_row.addWidget(layers_lbl)
-
-        chips_container = QWidget()
-        chips_container.setStyleSheet("background: transparent;")
-        self._layers_chips_row = QHBoxLayout(chips_container)
+        self._layers_list_w = QWidget()
+        self._layers_list_w.setStyleSheet("background: transparent;")
+        self._layers_chips_row = QVBoxLayout(self._layers_list_w)
         self._layers_chips_row.setContentsMargins(0, 0, 0, 0)
-        self._layers_chips_row.setSpacing(4)
-        layers_row.addWidget(chips_container, 1)
+        self._layers_chips_row.setSpacing(0)
+        layers_v.addWidget(self._layers_list_w)
 
-        self._btn_add_layer = QPushButton("+ Couche")
+        _sep = QFrame()
+        _sep.setFixedHeight(1)
+        _sep.setStyleSheet("QFrame { background: #1e1e1e; border: none; }")
+        layers_v.addWidget(_sep)
+
+        _add_w = QWidget()
+        _add_h = QHBoxLayout(_add_w)
+        _add_h.setContentsMargins(14, 7, 14, 7)
+        _add_h.setSpacing(0)
+        self._btn_add_layer = QPushButton("+ Ajouter")
         self._btn_add_layer.setFixedHeight(26)
         self._btn_add_layer.setStyleSheet(
             "QPushButton { background: transparent; color: #00d4ff; border: 1px solid #00d4ff44;"
             " border-radius: 3px; padding: 2px 10px; font-size: 11px; }"
             "QPushButton:hover { background: #00d4ff22; }")
         self._btn_add_layer.clicked.connect(self._add_layer)
-        layers_row.addWidget(self._btn_add_layer)
-
+        _add_h.addWidget(self._btn_add_layer)
+        _add_h.addStretch()
+        layers_v.addWidget(_add_w)
         body_v.addWidget(layers_frame)
-
-        # ── Formulaire (couche sélectionnée) ──────────────────────────────────
-        form = QFrame()
-        form.setStyleSheet(
-            "QFrame { background: #111; border: 1px solid #222; border-radius: 8px; }")
-        fg = QGridLayout(form)
-        fg.setContentsMargins(20, 16, 20, 16)
-        fg.setVerticalSpacing(14)
-        fg.setHorizontalSpacing(20)
-        fg.setColumnStretch(1, 1)
-        fg.setColumnStretch(3, 1)
-
-        def _lbl(t):
-            l = QLabel(t)
-            l.setStyleSheet("color: #777; font-size: 11px;")
-            return l
-
-        fg.addWidget(_lbl("Nom"), 0, 0)
-        self._name_edit = QLineEdit()
-        self._name_edit.setFixedHeight(34)
-        self._name_edit.textChanged.connect(self._form_changed)
-        fg.addWidget(self._name_edit, 0, 1)
-
-        fg.addWidget(_lbl("Type"), 0, 2)
-        self._type_cb = QComboBox()
-        self._type_cb.setFixedHeight(34)
-        for t in EFFECT_TYPES:
-            self._type_cb.addItem(t)
-        self._type_cb.currentIndexChanged.connect(self._form_changed)
-        fg.addWidget(self._type_cb, 0, 3)
-
-        fg.addWidget(_lbl("Vitesse"), 1, 0)
-        spd_row = QHBoxLayout()
-        self._speed_sl = QSlider(Qt.Horizontal)
-        self._speed_sl.setRange(0, 100)
-        self._speed_sl.valueChanged.connect(self._on_speed)
-        self._speed_lbl = QLabel("50")
-        self._speed_lbl.setFixedWidth(28)
-        self._speed_lbl.setStyleSheet("color: #00d4ff; font-size: 12px; font-weight: bold;")
-        spd_row.addWidget(self._speed_sl)
-        spd_row.addWidget(self._speed_lbl)
-        fg.addLayout(spd_row, 1, 1)
-
-        fg.addWidget(_lbl("Pattern"), 1, 2)
-        self._pat_cb = QComboBox()
-        self._pat_cb.setFixedHeight(34)
-        for label, _ in PATTERNS:
-            self._pat_cb.addItem(label)
-        self._pat_cb.currentIndexChanged.connect(self._form_changed)
-        fg.addWidget(self._pat_cb, 1, 3)
-
-        fg.addWidget(_lbl("Couleur"), 2, 0)
-        self._col_cb = QComboBox()
-        self._col_cb.setFixedHeight(34)
-        for label, _ in COLOR_MODES:
-            self._col_cb.addItem(label)
-        self._col_cb.currentIndexChanged.connect(self._form_changed)
-        fg.addWidget(self._col_cb, 2, 1)
-
-        fg.addWidget(_lbl("Couleur perso"), 2, 2)
-        self._colpick_btn = QPushButton("  Choisir...")
-        self._colpick_btn.setFixedHeight(34)
-        self._colpick_btn.setFixedWidth(140)
-        self._colpick_btn.setVisible(False)
-        self._colpick_btn.clicked.connect(self._pick_color)
-        fg.addWidget(self._colpick_btn, 2, 3, alignment=Qt.AlignLeft)
-        body_v.addWidget(form)
 
         # ── Assignation ───────────────────────────────────────────────────────
         assign = QFrame()
@@ -754,7 +709,10 @@ class EffectEditorDialog(QDialog):
         while self._list_vl.count() > 1:
             item = self._list_vl.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                w = item.widget()
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
 
         for cat in self.CATEGORIES:
             if cat == "Personnalisés":
@@ -779,142 +737,231 @@ class EffectEditorDialog(QDialog):
         tc     = TYPE_COLORS.get(eff.get("type", ""), "#888")
         name   = eff.get("name", "Sans nom")
         btn_no = self._get_assigned_btn(name)
-        badge  = f"  · B{btn_no + 1}" if btn_no >= 0 else ""
-
-        # Nombre de couches
         layers = eff.get("layers", [])
-        layer_badge = f"  [{len(layers)}]" if len(layers) > 1 else ""
-
-        btn = QPushButton(f"  {name}{badge}{layer_badge}")
-        btn.setFixedHeight(36)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setProperty("eff_idx", idx)
 
         if sel and btn_no >= 0:
-            bg, bdl, color = "#1e2e32", tc, "#ffffff"
+            bg, bdl, txt_color = "#1e2e32", tc, "#ffffff"
         elif sel:
-            bg, bdl, color = "#1e2e32", tc, "#ffffff"
+            bg, bdl, txt_color = "#1e2e32", tc, "#ffffff"
         elif btn_no >= 0:
-            bg, bdl, color = "#0e1e22", "#00d4ff44", "#aaddff"
+            bg, bdl, txt_color = "#0e1a1e", "#00d4ff33", "#ccddee"
         else:
-            bg, bdl, color = "transparent", "#2a2a2a", "#aaa"
+            bg, bdl, txt_color = "transparent", "#2a2a2a", "#999"
 
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {bg};
-                color: {color};
-                border: none;
-                border-left: 3px solid {bdl};
-                text-align: left;
-                padding-left: 10px;
-                font-size: 11px;
-                border-radius: 0px;
-            }}
-            QPushButton:hover {{
-                background: #1a2428;
-                color: #fff;
-                border-left: 3px solid {tc};
-            }}
-        """)
-        btn.clicked.connect(lambda _, i=idx: self._select(i))
-        return btn
+        card = QWidget()
+        card.setFixedHeight(36)
+        card.setCursor(Qt.PointingHandCursor)
+        card.setProperty("eff_idx", idx)
+        card.setStyleSheet(
+            f"QWidget {{ background: {bg}; border: none; border-left: 3px solid {bdl}; }}"
+            f"QWidget:hover {{ background: #1a2428; border-left: 3px solid {tc}; }}")
+
+        hl = QHBoxLayout(card)
+        hl.setContentsMargins(10, 0, 8, 0)
+        hl.setSpacing(4)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet(
+            f"color: {txt_color}; font-size: 11px; background: transparent; border: none;")
+        hl.addWidget(name_lbl)
+
+        if len(layers) > 1:
+            lyr_lbl = QLabel(f"[{len(layers)}]")
+            lyr_lbl.setStyleSheet("color: #444; font-size: 9px; background: transparent; border: none;")
+            hl.addWidget(lyr_lbl)
+
+        hl.addStretch()
+
+        if btn_no >= 0:
+            badge_lbl = QLabel(f"B{btn_no + 1}")
+            badge_lbl.setFixedSize(22, 16)
+            badge_lbl.setAlignment(Qt.AlignCenter)
+            badge_lbl.setStyleSheet(
+                "background: #00d4ff; color: #000; border-radius: 3px;"
+                " font-size: 9px; font-weight: bold; border: none;")
+            hl.addWidget(badge_lbl)
+
+        card.mousePressEvent = lambda e, i=idx: self._select(i)
+        return card
 
     # ── COUCHES ───────────────────────────────────────────────────────────────
 
     def _rebuild_layers_chips(self):
-        """Reconstruit les chips de couches dans la barre 'Couches'."""
+        """Reconstruit les blocs inline de chaque couche."""
         while self._layers_chips_row.count():
             item = self._layers_chips_row.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
-
+                w = item.widget()
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
         for i, layer in enumerate(self._working_layers):
-            layer_type = layer.get("type", "?")
-            tc = TYPE_COLORS.get(layer_type, "#888")
-            selected = (i == self._cur_layer)
+            self._layers_chips_row.addWidget(self._make_layer_block(i, layer))
 
-            chip = QWidget()
-            chip.setStyleSheet("background: transparent;")
-            chip_h = QHBoxLayout(chip)
-            chip_h.setContentsMargins(0, 0, 0, 0)
-            chip_h.setSpacing(0)
+    def _make_layer_block(self, idx: int, layer: dict) -> QWidget:
+        """Crée un bloc inline autonome pour une couche (Type / Vitesse / Pattern / Couleur)."""
+        blk = QFrame()
+        blk.setStyleSheet(
+            "QFrame { background: #0e0e0e; border: none;"
+            " border-bottom: 1px solid #1a1a1a; border-radius: 0; }")
+        bv = QVBoxLayout(blk)
+        bv.setContentsMargins(14, 8, 10, 8)
+        bv.setSpacing(6)
 
-            lbl_btn = QPushButton(layer_type)
-            lbl_btn.setFixedHeight(26)
-            if selected:
-                lbl_btn.setStyleSheet(
-                    f"QPushButton {{ background: {tc}33; color: {tc}; border: 1px solid {tc}88;"
-                    f" border-radius: 3px; padding: 2px 8px; font-size: 11px; font-weight: bold; }}"
-                    f"QPushButton:hover {{ background: {tc}55; }}")
-            else:
-                lbl_btn.setStyleSheet(
-                    "QPushButton { background: #1a1a1a; color: #888; border: 1px solid #2a2a2a;"
-                    " border-radius: 3px; padding: 2px 8px; font-size: 11px; }"
-                    "QPushButton:hover { background: #222; color: #ccc; }")
-            lbl_btn.clicked.connect(lambda _, idx=i: self._select_layer(idx))
-            chip_h.addWidget(lbl_btn)
+        row = QHBoxLayout()
+        row.setSpacing(8)
 
-            if len(self._working_layers) > 1:
-                rm_btn = QPushButton("×")
-                rm_btn.setFixedSize(16, 26)
-                rm_btn.setStyleSheet(
-                    "QPushButton { background: transparent; color: #555; border: none;"
-                    " font-size: 13px; padding: 0; margin-left: 1px; }"
-                    "QPushButton:hover { color: #ff4444; }")
-                rm_btn.clicked.connect(lambda _, idx=i: self._remove_layer(idx))
-                chip_h.addWidget(rm_btn)
+        tc = TYPE_COLORS.get(layer.get("type", "?"), "#888")
+        dot = QLabel("●")
+        dot.setStyleSheet(
+            f"color: {tc}; font-size: 10px; min-width: 12px; background: transparent; border: none;")
+        row.addWidget(dot)
 
-            self._layers_chips_row.addWidget(chip)
+        def _lbl_s(t):
+            l = QLabel(t)
+            l.setStyleSheet("color: #555; font-size: 10px; background: transparent; border: none;")
+            return l
 
-        self._layers_chips_row.addStretch()
+        # Type
+        row.addWidget(_lbl_s("Type"))
+        type_cb = QComboBox()
+        type_cb.setFixedHeight(28)
+        type_cb.setFixedWidth(118)
+        for t in EFFECT_TYPES:
+            type_cb.addItem(t)
+        ti = next((j for j, t in enumerate(EFFECT_TYPES) if t == layer.get("type")), 0)
+        type_cb.setCurrentIndex(ti)
+        row.addWidget(type_cb)
 
-    def _select_layer(self, layer_idx: int):
-        if layer_idx >= len(self._working_layers):
+        # Vitesse
+        row.addWidget(_lbl_s("Vit."))
+        spd_sl = QSlider(Qt.Horizontal)
+        spd_sl.setRange(0, 100)
+        spd_sl.setValue(layer.get("speed", 50))
+        spd_sl.setFixedWidth(80)
+        spd_val_lbl = QLabel(str(layer.get("speed", 50)))
+        spd_val_lbl.setFixedWidth(26)
+        spd_val_lbl.setStyleSheet(
+            "color: #00d4ff; font-size: 11px; font-weight: bold; background: transparent; border: none;")
+        spd_sl.valueChanged.connect(lambda v, lbl=spd_val_lbl: lbl.setText(str(v)))
+        row.addWidget(spd_sl)
+        row.addWidget(spd_val_lbl)
+
+        # Pattern
+        row.addWidget(_lbl_s("Pattern"))
+        pat_cb = QComboBox()
+        pat_cb.setFixedHeight(28)
+        pat_cb.setFixedWidth(150)
+        for label, _ in PATTERNS:
+            pat_cb.addItem(label)
+        pi = next((j for j, (_, v) in enumerate(PATTERNS) if v == layer.get("target", "all")), 0)
+        pat_cb.setCurrentIndex(pi)
+        row.addWidget(pat_cb)
+
+        # Couleur
+        row.addWidget(_lbl_s("Couleur"))
+        col_cb = QComboBox()
+        col_cb.setFixedHeight(28)
+        col_cb.setFixedWidth(100)
+        for label, _ in COLOR_MODES:
+            col_cb.addItem(label)
+        ci = next((j for j, (_, v) in enumerate(COLOR_MODES) if v == layer.get("color_mode", "base")), 0)
+        col_cb.setCurrentIndex(ci)
+        row.addWidget(col_cb)
+
+        # Custom color swatch
+        custom_hex = layer.get("custom_color", "#ffffff")
+        colpick_btn = QPushButton(f"  {custom_hex}")
+        colpick_btn.setFixedHeight(26)
+        colpick_btn.setFixedWidth(110)
+        self._style_colbtn(colpick_btn, custom_hex)
+        colpick_btn.setVisible(layer.get("color_mode") == "custom")
+        row.addWidget(colpick_btn)
+
+        row.addStretch()
+
+        # Bouton supprimer (visible dès qu'il y a 2+ couches)
+        if len(self._working_layers) > 1:
+            rm = QPushButton("×")
+            rm.setFixedSize(28, 24)
+            rm.setToolTip("Supprimer cette couche")
+            rm.setStyleSheet(
+                "QPushButton { background: #2a0808; color: #cc3333; border: 1px solid #6a1515;"
+                " border-radius: 4px; font-size: 12px; font-weight: bold; }"
+                "QPushButton:hover { background: #aa2222; color: #fff; border-color: #ff4444; }")
+            rm.clicked.connect(lambda _, i=idx: self._remove_layer(i))
+            row.addWidget(rm)
+
+        bv.addLayout(row)
+
+        # Store widget refs on block for reading
+        blk._type_cb     = type_cb
+        blk._spd_sl      = spd_sl
+        blk._pat_cb      = pat_cb
+        blk._col_cb      = col_cb
+        blk._colpick_btn = colpick_btn
+        blk._custom_hex  = custom_hex
+        blk._dot         = dot
+
+        # Connect changes → save
+        type_cb.currentIndexChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
+        spd_sl.valueChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
+        pat_cb.currentIndexChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
+        col_cb.currentIndexChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
+        col_cb.currentIndexChanged.connect(
+            lambda _, cb=col_cb, btn=colpick_btn:
+                btn.setVisible(COLOR_MODES[cb.currentIndex()][1] == "custom"
+                               if cb.currentIndex() >= 0 else False))
+        colpick_btn.clicked.connect(lambda _, i=idx, b=blk, btn=colpick_btn: self._pick_layer_color(i, b, btn))
+
+        return blk
+
+    def _style_colbtn(self, btn: QPushButton, hex_c: str):
+        c = QColor(hex_c)
+        lum = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000
+        tc = "#000" if lum > 128 else "#fff"
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {hex_c}; color: {tc}; border: 1px solid #555;"
+            f" border-radius: 4px; padding: 2px 6px; font-size: 10px; }}"
+            f"QPushButton:hover {{ border-color: #00d4ff; }}")
+        btn.setText(f"  {hex_c}")
+
+    def _on_layer_changed(self, idx: int, blk):
+        """Sauvegarde le bloc inline dans _working_layers et met à jour le preview."""
+        if idx >= len(self._working_layers):
             return
-        self._save_form_to_layer()
-        self._cur_layer = layer_idx
-        self._rebuild_layers_chips()
-        self._load_layer_to_form(self._working_layers[layer_idx])
-
-    def _save_form_to_layer(self):
-        """Sauvegarde le formulaire dans la couche courante de _working_layers."""
-        if not self._working_layers or self._cur_layer >= len(self._working_layers):
-            return
-        ti = self._type_cb.currentIndex()
-        pi = self._pat_cb.currentIndex()
-        ci = self._col_cb.currentIndex()
-        self._working_layers[self._cur_layer] = {
-            "type":         EFFECT_TYPES[ti] if ti >= 0 else "Pulse",
-            "speed":        self._speed_sl.value(),
+        ti = blk._type_cb.currentIndex()
+        pi = blk._pat_cb.currentIndex()
+        ci = blk._col_cb.currentIndex()
+        # Update dot color
+        new_type = EFFECT_TYPES[ti] if ti >= 0 else "Strobe"
+        tc = TYPE_COLORS.get(new_type, "#888")
+        blk._dot.setStyleSheet(
+            f"color: {tc}; font-size: 10px; min-width: 12px; background: transparent; border: none;")
+        self._working_layers[idx] = {
+            "type":         new_type,
+            "speed":        blk._spd_sl.value(),
             "target":       PATTERNS[pi][1]    if pi >= 0 else "all",
             "color_mode":   COLOR_MODES[ci][1] if ci >= 0 else "base",
-            "custom_color": self._custom_hex,
+            "custom_color": blk._custom_hex,
         }
+        self._preview.set_layers(copy.deepcopy(self._working_layers))
+        self._dirty = True
+        self._btn_save.setEnabled(True)
 
-    def _load_layer_to_form(self, layer: dict):
-        """Charge une couche dans les widgets du formulaire."""
-        self._ign = True
-        ti = next((i for i, t in enumerate(EFFECT_TYPES) if t == layer.get("type")), 0)
-        self._type_cb.setCurrentIndex(ti)
-        self._speed_sl.setValue(layer.get("speed", 50))
-        self._speed_lbl.setText(str(layer.get("speed", 50)))
-        pi = next((i for i, (_, v) in enumerate(PATTERNS) if v == layer.get("target", "all")), 0)
-        self._pat_cb.setCurrentIndex(pi)
-        ci = next((i for i, (_, v) in enumerate(COLOR_MODES) if v == layer.get("color_mode", "base")), 0)
-        self._col_cb.setCurrentIndex(ci)
-        self._custom_hex = layer.get("custom_color", "#ffffff")
-        self._update_colbtn(self._custom_hex)
-        self._colpick_btn.setVisible(layer.get("color_mode") == "custom")
-        self._ign = False
+    def _pick_layer_color(self, idx: int, blk, btn: QPushButton):
+        """Ouvre le color picker pour une couche."""
+        c = QColorDialog.getColor(QColor(blk._custom_hex), self, "Couleur personnalisée")
+        if c.isValid():
+            blk._custom_hex = c.name()
+            self._style_colbtn(btn, c.name())
+            self._on_layer_changed(idx, blk)
 
     def _add_layer(self):
-        self._save_form_to_layer()
         new_layer = {"type": "Strobe", "speed": 50, "target": "all",
                      "color_mode": "white", "custom_color": "#ffffff"}
         self._working_layers.append(new_layer)
-        self._cur_layer = len(self._working_layers) - 1
         self._rebuild_layers_chips()
-        self._load_layer_to_form(new_layer)
         self._dirty = True
         self._btn_save.setEnabled(True)
         self._preview.set_layers(copy.deepcopy(self._working_layers))
@@ -923,10 +970,7 @@ class EffectEditorDialog(QDialog):
         if len(self._working_layers) <= 1:
             return
         self._working_layers.pop(layer_idx)
-        if self._cur_layer >= len(self._working_layers):
-            self._cur_layer = len(self._working_layers) - 1
         self._rebuild_layers_chips()
-        self._load_layer_to_form(self._working_layers[self._cur_layer])
         self._dirty = True
         self._btn_save.setEnabled(True)
         self._preview.set_layers(copy.deepcopy(self._working_layers))
@@ -947,10 +991,7 @@ class EffectEditorDialog(QDialog):
 
         # Charger les couches
         self._working_layers = _eff_layers(eff)
-        self._cur_layer = 0
         self._rebuild_layers_chips()
-        if self._working_layers:
-            self._load_layer_to_form(self._working_layers[0])
 
         self._btn_save.setEnabled(False)
         self._btn_del.setVisible(not is_builtin)
@@ -967,18 +1008,8 @@ class EffectEditorDialog(QDialog):
             return
         self._dirty = True
         self._btn_save.setEnabled(True)
-        cm = COLOR_MODES[self._col_cb.currentIndex()][1]
-        self._colpick_btn.setVisible(cm == "custom")
-        self._save_form_to_layer()
-        self._rebuild_layers_chips()
-        self._preview.set_layers(copy.deepcopy(self._working_layers))
-
-    def _on_speed(self, val: int):
-        self._speed_lbl.setText(str(val))
-        self._form_changed()
 
     def _form_cfg(self) -> dict:
-        self._save_form_to_layer()
         layers = copy.deepcopy(self._working_layers)
         first  = layers[0] if layers else {}
         return {
@@ -992,23 +1023,6 @@ class EffectEditorDialog(QDialog):
             "builtin":      self._all[self._sel].get("builtin", False) if self._all else False,
             "category":     self._all[self._sel].get("category", "Personnalisés") if self._all else "Personnalisés",
         }
-
-    def _update_colbtn(self, hex_c: str):
-        c   = QColor(hex_c)
-        lum = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000
-        tc  = "#000" if lum > 128 else "#fff"
-        self._colpick_btn.setStyleSheet(
-            f"QPushButton {{ background: {hex_c}; color: {tc}; border: 1px solid #555;"
-            f" border-radius: 5px; padding: 4px 10px; }}"
-            f"QPushButton:hover {{ border-color: #00d4ff; }}")
-        self._colpick_btn.setText(f"  {hex_c}")
-
-    def _pick_color(self):
-        c = QColorDialog.getColor(QColor(self._custom_hex), self, "Couleur personnalisée")
-        if c.isValid():
-            self._custom_hex = c.name()
-            self._update_colbtn(c.name())
-            self._form_changed()
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -1159,21 +1173,28 @@ class EffectEditorDialog(QDialog):
         eff_name = self._all[self._sel].get("name", "") if self._all else ""
         for i, ab in enumerate(self._assign_btns):
             cfg_name = self._mw._button_effect_configs.get(i, {}).get("name", "")
-            assigned = bool(cfg_name) and cfg_name == eff_name
-            if assigned:
+            is_this = bool(cfg_name) and cfg_name == eff_name
+            has_any = bool(cfg_name)
+
+            # Texte : "B{n}" + indication si autre effet assigné
+            ab.setText(f"B{i+1}")
+            if is_this:
+                # Cet effet est assigné à ce bouton → bleu vif
+                ab.setToolTip(f"✓ '{cfg_name}' assigné ici")
                 ab.setStyleSheet(
                     "QPushButton { background: #00d4ff; color: #000; border: none;"
                     " border-radius: 5px; font-size: 11px; font-weight: bold; }"
                     "QPushButton:hover { background: #33ddff; }")
+            elif has_any:
+                # Un autre effet est assigné → orange + tooltip
+                ab.setToolTip(f"Assigné : {cfg_name}\nCliquer pour remplacer par '{eff_name}'")
+                ab.setStyleSheet(
+                    "QPushButton { background: #1e1a0e; color: #cc8833; border: 1px solid #443311;"
+                    " border-radius: 5px; font-size: 10px; font-weight: bold; }"
+                    "QPushButton:hover { border-color: #00d4ff; color: #ffcc55; }")
             else:
-                other = bool(self._mw._button_effect_configs.get(i, {}).get("name", ""))
-                if other:
-                    ab.setStyleSheet(
-                        "QPushButton { background: #1e1e1e; color: #555; border: 1px solid #333;"
-                        " border-radius: 5px; font-size: 10px; }"
-                        "QPushButton:hover { border-color: #00d4ff; color: #fff; }")
-                else:
-                    ab.setStyleSheet(
-                        "QPushButton { background: #1a1a1a; color: #666; border: 1px solid #2a2a2a;"
-                        " border-radius: 5px; font-size: 10px; }"
-                        "QPushButton:hover { border-color: #00d4ff; color: #fff; }")
+                ab.setToolTip(f"Assigner '{eff_name}' à B{i+1}")
+                ab.setStyleSheet(
+                    "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
+                    " border-radius: 5px; font-size: 10px; }"
+                    "QPushButton:hover { border-color: #00d4ff; color: #fff; }")

@@ -180,7 +180,7 @@ class MainWindow(QMainWindow):
         self.effect_speed = 0
         self.effect_state = 0
         self.effect_saved_colors = {}
-        self._button_effect_configs = {}   # {btn_idx: config_dict from editor}
+        self._button_effect_configs = self._load_effect_assignments()  # {btn_idx: config_dict from editor}
         self.active_effect_config = {}     # config en cours d'exécution
         self.blink_timer = None
         self.pause_mode = False
@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         self.ia_max_dimmers = {
             'face': 50, 'lat': 100, 'contre': 100,
             'douche1': 100, 'douche2': 100, 'douche3': 100,
-            'public': 80,
+            'public': 80, 'groupe_e': 100, 'groupe_f': 100,
         }
         self.load_ia_lumiere_config()
 
@@ -352,6 +352,8 @@ class MainWindow(QMainWindow):
         "douche2": "Groupe C",
         "douche3": "Groupe C",
         "public":  "Groupe D",
+        "groupe_e": "Groupe E",
+        "groupe_f": "Groupe F",
         "fumee": "Fumee",
         "lyre": "Lyres",
         "barre": "Barres",
@@ -829,7 +831,8 @@ class MainWindow(QMainWindow):
             self.faders[i] = fader
             col_layout.addWidget(fader)
 
-            lbl_letter = QLabel("ABCD"[i] if i < 4 else "")
+            _FADER_LABELS = ["A", "B", "C", "D", "MEM1", "MEM2", "MEM3", "MEM4"]
+            lbl_letter = QLabel(_FADER_LABELS[i])
             lbl_letter.setFixedHeight(12)
             lbl_letter.setAlignment(Qt.AlignCenter)
             lbl_letter.setStyleSheet("color:#666;font-size:9px;")
@@ -850,12 +853,21 @@ class MainWindow(QMainWindow):
         self.effect_buttons.append(last_effect_btn)
         effect_col.addWidget(last_effect_btn, alignment=Qt.AlignCenter)
 
+        # Restaurer les noms d'effets assignés depuis le fichier sauvegardé
+        for _i, _btn in enumerate(self.effect_buttons):
+            _cfg = self._button_effect_configs.get(_i, {})
+            if _cfg.get("name"):
+                _btn.current_effect = _cfg["name"]
+                _btn.setToolTip(_cfg["name"])
+
         effect_fader = ApcFader(8, self.set_effect_speed, vertical=False)
         self.faders[8] = effect_fader
         effect_col.addWidget(effect_fader)
 
-        lbl_effect_spacer = QLabel("")
+        lbl_effect_spacer = QLabel("FX")
         lbl_effect_spacer.setFixedHeight(12)
+        lbl_effect_spacer.setAlignment(Qt.AlignCenter)
+        lbl_effect_spacer.setStyleSheet("color:#666;font-size:9px;")
         effect_col.addWidget(lbl_effect_spacer)
 
         fader_container.addLayout(effect_col)
@@ -1065,11 +1077,15 @@ class MainWindow(QMainWindow):
 
             if next_row < self.seq.table.rowCount():
                 next_mode = self.seq.get_dmx_mode(next_row)
-                if (current_mode in ["IA Lumiere", "Programme"]) and next_mode == "Manuel":
+                if current_mode == "Play Lumiere":
+                    self.full_blackout()
+                elif (current_mode in ["IA Lumiere", "Programme"]) and next_mode == "Manuel":
                     self.full_blackout()
 
                 self.seq.play_row(next_row)
             else:
+                if current_mode == "Play Lumiere":
+                    self.full_blackout()
                 print("Fin de la sequence")
                 self.update_play_icon(QMediaPlayer.StoppedState)
                 self._update_video_output_state()
@@ -1848,12 +1864,35 @@ class MainWindow(QMainWindow):
         dlg.effect_assigned.connect(self._on_effect_assigned)
         dlg.exec()
 
+    _EFFECT_ASSIGNMENTS_FILE = Path.home() / ".mystrow_effect_assignments.json"
+
+    def _load_effect_assignments(self) -> dict:
+        """Charge les assignations bouton→effet depuis le disque."""
+        try:
+            if self._EFFECT_ASSIGNMENTS_FILE.exists():
+                data = json.loads(self._EFFECT_ASSIGNMENTS_FILE.read_text(encoding="utf-8"))
+                return {int(k): v for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+    def _save_effect_assignments(self):
+        """Sauvegarde les assignations bouton→effet sur le disque."""
+        try:
+            self._EFFECT_ASSIGNMENTS_FILE.write_text(
+                json.dumps({str(k): v for k, v in self._button_effect_configs.items()},
+                           indent=2, ensure_ascii=False),
+                encoding="utf-8")
+        except Exception:
+            pass
+
     def _on_effect_assigned(self, btn_idx: int, cfg: dict):
         """Reçoit l'assignation depuis l'éditeur ou le menu clic-droit et met à jour le bouton"""
         if cfg:
             self._button_effect_configs[btn_idx] = cfg
         else:
             self._button_effect_configs.pop(btn_idx, None)
+        self._save_effect_assignments()
         if btn_idx < len(self.effect_buttons):
             name = cfg.get("name", "") if cfg else ""
             self.effect_buttons[btn_idx].setToolTip(name or "Aucun effet")
@@ -3898,7 +3937,7 @@ class MainWindow(QMainWindow):
             QMenu::item:selected { background: #00d4ff22; color: #00d4ff; }
             QMenu::separator { background: #1e1e1e; height: 1px; margin: 3px 8px; }
         """)
-        m_file = menubar.addMenu("Fichier")
+        m_file = menubar.addMenu("📁  Fichier")
         act_new  = m_file.addAction("✨  Nouveau Patch")
         act_save = m_file.addAction("💾  Enregistrer Patch")
         m_file.addSeparator()
@@ -3907,31 +3946,29 @@ class MainWindow(QMainWindow):
         act_import = m_file.addAction("📂  Importer le patch...")
         act_export = m_file.addAction("📤  Exporter le patch...")
 
-        m_edit = menubar.addMenu("Edition")
+        m_edit = menubar.addMenu("✏️  Edition")
         act_undo = m_edit.addAction("↩  Annuler\tCtrl+Z")
         act_redo = m_edit.addAction("↪  Rétablir\tCtrl+Y")
         m_edit.addSeparator()
         act_auto = m_edit.addAction("⚡  Auto Adresse")
 
-        # Conteneur menubar + bouton Editeur de fixture côte à côte
-        menu_row = QWidget()
-        menu_row.setStyleSheet("background:transparent;")
-        menu_row_layout = QHBoxLayout(menu_row)
-        menu_row_layout.setContentsMargins(0, 0, 0, 0)
-        menu_row_layout.setSpacing(4)
-        menu_row_layout.addWidget(menubar)
+        # Bouton Editeur de fixture dans un QHBoxLayout juste après Edition
+        _menu_row = QHBoxLayout()
+        _menu_row.setContentsMargins(0, 0, 0, 0)
+        _menu_row.setSpacing(0)
+        _menu_row.addWidget(menubar, 0)
 
         btn_fixture_editor = QPushButton("🛠  Editeur de fixture")
-        btn_fixture_editor.setFixedHeight(24)
+        btn_fixture_editor.setFixedHeight(28)
         btn_fixture_editor.setStyleSheet(
             "QPushButton { background:transparent; color:#aaaaaa; border:none;"
-            " padding:2px 10px; font-size:12px; border-radius:4px; }"
+            " padding:1px 10px; font-size:12px; border-radius:3px; }"
             "QPushButton:hover { background:#1e1e1e; color:#ffffff; }"
         )
-        menu_row_layout.addWidget(btn_fixture_editor)
-        menu_row_layout.addStretch()
+        _menu_row.addWidget(btn_fixture_editor, 0)
+        _menu_row.addStretch(1)
 
-        root.addWidget(menu_row)
+        root.addLayout(_menu_row)
 
         # ── Toolbar ───────────────────────────────────────────────────────
         toolbar = QWidget()
@@ -4195,13 +4232,15 @@ class MainWindow(QMainWindow):
         fv.addSpacing(6)
 
         GROUP_BLOCKS = [
-            ("face",    "A", "Face",    "#ff8844"),
-            ("contre",  "B", "Contre",  "#4488ff"),
-            ("lat",     "B", "LAT",     "#aa55ff"),
-            ("douche1", "C", "Dch 1",   "#44cc88"),
-            ("douche2", "C", "Dch 2",   "#44cc88"),
-            ("douche3", "C", "Dch 3",   "#44cc88"),
-            ("public",  "D", "Public",  "#ff6655"),
+            ("face",     "A", "Face",    "#ff8844"),
+            ("contre",   "B", "Contre",  "#4488ff"),
+            ("lat",      "B", "LAT",     "#aa55ff"),
+            ("douche1",  "C", "Dch 1",   "#44cc88"),
+            ("douche2",  "C", "Dch 2",   "#44cc88"),
+            ("douche3",  "C", "Dch 3",   "#44cc88"),
+            ("public",   "D", "Public",  "#ff6655"),
+            ("groupe_e", "E", "Grp E",   "#cc44ff"),
+            ("groupe_f", "F", "Grp F",   "#ffcc22"),
         ]
         _selected_group = [None]
 
@@ -4406,6 +4445,18 @@ class MainWindow(QMainWindow):
 
         _rebuild_fd()
 
+        def _apply_fd_to_dmx():
+            """Applique fixture_data au DMX en respectant les profils choisis par l'utilisateur."""
+            self.dmx.clear_patch()
+            for i, fd in enumerate(fixture_data):
+                if i >= len(self.projectors):
+                    continue
+                proj = self.projectors[i]
+                proj_key = f"{proj.group}_{i}"
+                profile = fd.get('profile') or list(DMX_PROFILES['RGBDS'])
+                channels = [fd['start_address'] + c for c in range(len(profile))]
+                self.dmx.set_projector_patch(proj_key, channels, profile=profile)
+
         def _push_history():
             snap = []
             for i, fd in enumerate(fixture_data):
@@ -4530,6 +4581,7 @@ class MainWindow(QMainWindow):
                 btn_save.setEnabled(True)
 
         def _do_save():
+            _apply_fd_to_dmx()
             self.save_dmx_patch_config()
             _dirty[0] = False
             btn_save.setEnabled(False)
@@ -4821,7 +4873,7 @@ class MainWindow(QMainWindow):
             proj.fixture_type   = fd['fixture_type']
             proj.group          = fd['group']
             proj.start_address  = fd['start_address']
-            self._rebuild_dmx_patch()
+            _apply_fd_to_dmx()
             _mark_dirty()
             conflicts = _get_conflicts()
             _update_conflict_banner(conflicts)
@@ -4891,7 +4943,7 @@ class MainWindow(QMainWindow):
                 det_profile_cb.blockSignals(False)
             elif data in DMX_PROFILES:
                 fixture_data[i]['profile'] = list(DMX_PROFILES[data])
-            self._rebuild_dmx_patch()
+            _apply_fd_to_dmx()
             _mark_dirty()
             _update_chips(fixture_data[i]['profile'])
             _update_addr_range()

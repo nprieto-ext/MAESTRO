@@ -24,6 +24,16 @@ class _NoScrollCombo(QComboBox):
 FIXTURE_FILE = Path.home() / ".mystrow_fixtures.json"
 
 FIXTURE_TYPES = ["PAR LED", "Moving Head", "Barre LED", "Stroboscope", "Machine a fumee"]
+
+# Profils DMX autorisés par type de fixture (pour le filtre "Charger un profil")
+TYPE_PROFILES = {
+    "PAR LED":        ["RGB","RGBD","RGBDS","RGBSD","DRGB","DRGBS",
+                       "RGBW","RGBWD","RGBWDS","RGBWZ","RGBWA","RGBWAD","RGBWOUV"],
+    "Moving Head":    ["MOVING_5CH","MOVING_8CH","MOVING_RGB","MOVING_RGBW"],
+    "Barre LED":      ["LED_BAR_RGB","RGB","RGBD","RGBDS"],
+    "Stroboscope":    ["STROBE_2CH"],
+    "Machine a fumee":["2CH_FUMEE"],
+}
 GROUP_OPTIONS = [
     "face", "douche1", "douche2", "douche3", "lat", "contre",
     "lyre", "barre", "strobe", "fumee",
@@ -120,7 +130,7 @@ class ChannelRowWidget(QWidget):
 
     def __init__(self, ch_num, ch_type, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(34)
+        self.setFixedHeight(38)
         self.setStyleSheet("background:#1e1e1e;border-radius:3px;")
 
         layout = QHBoxLayout(self)
@@ -156,13 +166,13 @@ class ChannelRowWidget(QWidget):
         )
         for text, slot in [("▲", self._on_up), ("▼", self._on_dn)]:
             b = QPushButton(text)
-            b.setFixedSize(24, 26)
+            b.setFixedSize(34, 30)
             b.setStyleSheet(_btn_style)
             b.clicked.connect(slot)
             layout.addWidget(b)
 
         btn_rm = QPushButton("✕")
-        btn_rm.setFixedSize(26, 26)
+        btn_rm.setFixedSize(34, 30)
         btn_rm.setStyleSheet(
             "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
             "border-radius:3px;font-size:11px;font-weight:bold;min-width:0;padding:0;}"
@@ -300,7 +310,7 @@ class FixtureEditorDialog(QDialog):
         lv.setContentsMargins(8, 8, 8, 8)
         lv.setSpacing(6)
 
-        hdr = QLabel("TEMPLATES")
+        hdr = QLabel("FIXTURES DISPONIBLES")
         hdr.setStyleSheet("font-size:10px;color:#555;letter-spacing:2px;font-weight:bold;")
         lv.addWidget(hdr)
 
@@ -365,6 +375,7 @@ class FixtureEditorDialog(QDialog):
         self._type_combo.setFixedHeight(34)
         for ft in FIXTURE_TYPES:
             self._type_combo.addItem(ft)
+        self._type_combo.currentIndexChanged.connect(self._rebuild_profile_combo)
         form_row.addLayout(_labeled("TYPE", self._type_combo), 1)
         rv.addLayout(form_row)
 
@@ -377,24 +388,18 @@ class FixtureEditorDialog(QDialog):
         ch_hdr.addWidget(ch_lbl)
         ch_hdr.addStretch()
         # Quick-load profile combo
-        self._profile_combo = QComboBox()
+        self._profile_combo = _NoScrollCombo()
         self._profile_combo.setFixedHeight(28)
-        self._profile_combo.setFixedWidth(200)
+        self._profile_combo.setFixedWidth(220)
         self._profile_combo.setStyleSheet(
             "QComboBox{background:#1e2a3a;color:#00d4ff;border:1px solid #00d4ff44;"
             "border-radius:4px;padding:2px 6px;font-size:11px;}"
             "QComboBox::drop-down{border:none;width:16px;}"
             "QComboBox QAbstractItemView{background:#222;color:#e0e0e0;}"
         )
-        self._profile_combo.addItem("↓  Charger un profil...")
-        try:
-            from artnet_dmx import DMX_PROFILES, profile_display_text
-            for pname, pch in DMX_PROFILES.items():
-                self._profile_combo.addItem(f"{pname}  ({profile_display_text(pch)})", pch)
-        except ImportError:
-            pass
         self._profile_combo.currentIndexChanged.connect(self._on_profile_selected)
         ch_hdr.addWidget(self._profile_combo)
+        self._rebuild_profile_combo()  # populate with default type (PAR LED)
         rv.addLayout(ch_hdr)
 
         # Channel rows scroll area
@@ -443,10 +448,6 @@ class FixtureEditorDialog(QDialog):
         self._preview.setStyleSheet("background:#1a1a1a;border-radius:4px;")
         rv.addWidget(self._preview)
 
-        self._ch_count_lbl = QLabel("0 canal")
-        self._ch_count_lbl.setStyleSheet("font-size:11px;color:#555;")
-        rv.addWidget(self._ch_count_lbl)
-
         rv.addStretch()
         rv.addWidget(_sep())
 
@@ -488,19 +489,6 @@ class FixtureEditorDialog(QDialog):
         self._btn_save.clicked.connect(self._save_current)
         btn_row.addWidget(self._btn_save)
 
-        btn_row.addSpacing(12)
-
-        self._btn_add_to_patch = QPushButton("⊕  Ajouter au patch")
-        self._btn_add_to_patch.setFixedHeight(40)
-        self._btn_add_to_patch.setStyleSheet(
-            "QPushButton{background:#003322;color:#00d4ff;border:2px solid #00d4ff;"
-            "border-radius:6px;font-size:14px;font-weight:bold;padding:0 20px;}"
-            "QPushButton:hover{background:#004433;}"
-            "QPushButton:pressed{background:#00d4ff22;}"
-            "QPushButton:disabled{background:#1a1a1a;color:#444;border:1px solid #2a2a2a;}"
-        )
-        self._btn_add_to_patch.clicked.connect(self._add_to_patch)
-        btn_row.addWidget(self._btn_add_to_patch)
 
         rv.addLayout(btn_row)
         splitter.addWidget(right)
@@ -599,6 +587,8 @@ class FixtureEditorDialog(QDialog):
         self._builtin_badge.setVisible(self._is_builtin)
         self._btn_delete.setEnabled(not self._is_builtin)
         self._btn_save.setEnabled(not self._is_builtin)
+        self._profile_combo.setVisible(not self._is_builtin)
+        self._rebuild_profile_combo()
         self._select_list_item(idx)
 
     def _select_list_item(self, fx_idx):
@@ -674,11 +664,25 @@ class FixtureEditorDialog(QDialog):
     def _get_current_channels(self):
         return [row.get_type() for row in self._channel_rows]
 
+    def _rebuild_profile_combo(self):
+        """Recharge le combo profil selon le type de fixture sélectionné."""
+        fixture_type = self._type_combo.currentText()
+        allowed = TYPE_PROFILES.get(fixture_type, [])
+        self._profile_combo.blockSignals(True)
+        self._profile_combo.clear()
+        self._profile_combo.addItem("↓  Charger un profil...")
+        try:
+            from artnet_dmx import DMX_PROFILES, profile_display_text
+            for pname, pch in DMX_PROFILES.items():
+                if pname in allowed:
+                    self._profile_combo.addItem(f"{pname}  ({profile_display_text(pch)})", pch)
+        except ImportError:
+            pass
+        self._profile_combo.blockSignals(False)
+
     def _update_preview(self):
         channels = self._get_current_channels()
         self._preview.set_channels(channels)
-        n = len(channels)
-        self._ch_count_lbl.setText(f"{n} canal{'x' if n > 1 else ''}")
 
     def _on_profile_selected(self, idx):
         if idx == 0:
@@ -746,6 +750,7 @@ class FixtureEditorDialog(QDialog):
             self._current_idx = len(BUILTIN_FIXTURES) + len(self._fixtures) - 1
         self._save_fixtures()
         self._rebuild_list()
+        self._select_fixture(self._current_idx)
         self._btn_delete.setEnabled(True)
 
     def _duplicate_fixture(self):

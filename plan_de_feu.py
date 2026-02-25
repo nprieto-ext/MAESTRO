@@ -189,17 +189,19 @@ FIXTURE_LIBRARY = {
 
 # Positions par defaut sur le canvas (coordonnees normalisees 0-1)
 _DEFAULT_POSITIONS = {
-    "face":    lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.78),
-    "contre":  lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.10),
-    "douche1": lambda li, n: (0.24 + li * 0.08, 0.50),
-    "douche2": lambda li, n: (0.46 + li * 0.08, 0.50),
-    "douche3": lambda li, n: (0.68 + li * 0.08, 0.50),
-    "lat":     lambda li, n: (0.07 if li == 0 else 0.93, 0.40),
-    "public":  lambda li, n: (0.50, 0.90),
-    "fumee":   lambda li, n: (0.10, 0.90),
-    "lyre":    lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.25),
-    "barre":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.35),
-    "strobe":  lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.45),
+    "face":     lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.78),
+    "contre":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.10),
+    "douche1":  lambda li, n: (0.24 + li * 0.08, 0.50),
+    "douche2":  lambda li, n: (0.46 + li * 0.08, 0.50),
+    "douche3":  lambda li, n: (0.68 + li * 0.08, 0.50),
+    "lat":      lambda li, n: (0.07 if li == 0 else 0.93, 0.40),
+    "public":   lambda li, n: (0.50, 0.90),
+    "fumee":    lambda li, n: (0.10, 0.90),
+    "lyre":     lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.25),
+    "barre":    lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.35),
+    "strobe":   lambda li, n: (0.15 + li * 0.70 / max(n - 1, 1), 0.45),
+    "groupe_e": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.62),
+    "groupe_f": lambda li, n: (0.20 + li * 0.60 / max(n - 1, 1), 0.46),
 }
 
 _MENU_STYLE = """
@@ -228,17 +230,19 @@ QMenu::separator {
 
 # Couleurs de groupe pour les anneaux indicateurs
 _GROUP_COLORS = {
-    "face":    "#ff8844",
-    "contre":  "#4488ff",
-    "douche1": "#44cc88",
-    "douche2": "#44cc88",
-    "douche3": "#44cc88",
-    "lat":     "#aa55ff",
-    "lyre":    "#ff44cc",
-    "barre":   "#44aaff",
-    "strobe":  "#ffee44",
-    "fumee":   "#88aaaa",
-    "public":  "#ff6655",
+    "face":     "#ff8844",
+    "contre":   "#4488ff",
+    "douche1":  "#44cc88",
+    "douche2":  "#44cc88",
+    "douche3":  "#44cc88",
+    "lat":      "#aa55ff",
+    "lyre":     "#ff44cc",
+    "barre":    "#44aaff",
+    "strobe":   "#ffee44",
+    "fumee":    "#88aaaa",
+    "public":   "#ff6655",
+    "groupe_e": "#cc44ff",
+    "groupe_f": "#ffcc22",
 }
 
 # ── FixtureCanvas ─────────────────────────────────────────────────────────────
@@ -1503,6 +1507,7 @@ class _FixtureFormWidget(QWidget):
 
         self.group_combo = QComboBox()
         groups = ["face", "contre", "douche1", "douche2", "douche3", "lat",
+                  "groupe_e", "groupe_f",
                   "lyre", "barre", "strobe", "fumee", "public"]
         for g in groups:
             self.group_combo.addItem(g)

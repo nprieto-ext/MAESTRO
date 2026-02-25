@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 import subprocess
 import shutil
 import time
+import zipfile
+import webbrowser
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -931,6 +933,13 @@ class AdminPanel(QMainWindow):
         self.btn_release.clicked.connect(self._on_release)
         f_lay.addWidget(self.btn_release)
 
+        self.btn_backup = QPushButton("💾  Backup…")
+        self.btn_backup.setStyleSheet(_BTN_SECONDARY)
+        self.btn_backup.setFixedHeight(36)
+        self.btn_backup.setToolTip("Sauvegarde le projet en .zip (Bureau + Google Drive)")
+        self.btn_backup.clicked.connect(self._on_backup)
+        f_lay.addWidget(self.btn_backup)
+
         f_lay.addStretch()
 
         self.count_lbl = QLabel("")
@@ -1095,6 +1104,49 @@ class AdminPanel(QMainWindow):
     def _on_release(self):
         dlg = ReleaseDialog(self)
         dlg.exec()
+
+    def _on_backup(self):
+        """Lance la sauvegarde du projet en .zip sur le Bureau (+ Google Drive si détecté)."""
+        if not _RELEASE_OK:
+            QMessageBox.warning(self, "Backup", "release.py introuvable — impossible de localiser le dossier projet.")
+            return
+
+        src = _RELEASE_DIR  # dossier MyStrow source
+        dest = Path.home() / "Desktop"
+        gdrive = _find_google_drive()
+
+        # Demande confirmation avec info Google Drive
+        gdrive_info = f"\n\nGoogle Drive détecté :\n{gdrive}\n→ Le zip sera également copié là-bas." if gdrive else "\n\n(Google Drive non détecté — zip sur le Bureau uniquement.)"
+        reply = QMessageBox.question(
+            self, "Backup projet",
+            f"Sauvegarder le projet en .zip ?\n\nSource : {src}\nDestination : {dest}{gdrive_info}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.btn_backup.setEnabled(False)
+        self.btn_backup.setText("⏳  Backup…")
+
+        self._backup_thread = QThread(self)
+        self._backup_worker = BackupWorker(src, dest, gdrive)
+        self._backup_worker.moveToThread(self._backup_thread)
+        self._backup_thread.started.connect(self._backup_worker.run)
+        self._backup_worker.progress.connect(lambda msg: self.status_lbl.setText(msg))
+        self._backup_worker.finished.connect(self._on_backup_done)
+        self._backup_worker.finished.connect(self._backup_thread.quit)
+        self._backup_thread.finished.connect(self._backup_thread.deleteLater)
+        self._backup_thread.start()
+
+    def _on_backup_done(self, success: bool, msg: str):
+        self.btn_backup.setEnabled(True)
+        self.btn_backup.setText("💾  Backup…")
+        self.status_lbl.setText(f"Connecté : {self._admin_email}")
+        if success:
+            QMessageBox.information(self, "Backup terminé", msg)
+        else:
+            QMessageBox.critical(self, "Erreur backup", msg)
 
 
 # ---------------------------------------------------------------
@@ -1367,6 +1419,70 @@ class ReleaseWorker(QObject):
                 break
 
 
+# ---------------------------------------------------------------
+# Backup helpers
+# ---------------------------------------------------------------
+
+_BACKUP_EXCLUDE = {"dist", "build", "__pycache__", ".git", ".mypy_cache", ".pytest_cache"}
+
+
+def _find_google_drive() -> Path | None:
+    """Cherche le dossier de synchronisation Google Drive sur Windows."""
+    candidates = [
+        Path.home() / "Google Drive" / "Mon Drive",
+        Path.home() / "Google Drive" / "My Drive",
+        Path.home() / "Google Drive",
+        Path.home() / "My Drive",
+        Path("G:") / "Mon Drive",
+        Path("G:") / "My Drive",
+        Path("G:/"),
+    ]
+    for p in candidates:
+        if p.exists() and p.is_dir():
+            return p
+    return None
+
+
+class BackupWorker(QObject):
+    finished = Signal(bool, str)   # success, message
+    progress = Signal(str)         # step message
+
+    def __init__(self, src_dir: Path, dest_dir: Path, gdrive_dir: Path | None = None):
+        super().__init__()
+        self._src = src_dir
+        self._dest = dest_dir
+        self._gdrive = gdrive_dir
+
+    def run(self):
+        try:
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            zip_name = f"MyStrow_Backup_{ts}.zip"
+            zip_path = self._dest / zip_name
+
+            self.progress.emit(f"Création du zip : {zip_name} …")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                for item in self._src.rglob("*"):
+                    # Exclure les dossiers inutiles
+                    parts = set(item.relative_to(self._src).parts)
+                    if parts & _BACKUP_EXCLUDE:
+                        continue
+                    if item.is_file():
+                        zf.write(item, item.relative_to(self._src))
+
+            size_mb = zip_path.stat().st_size / (1024 * 1024)
+            msg = f"Backup créé : {zip_path}\n({size_mb:.1f} Mo)"
+
+            if self._gdrive:
+                self.progress.emit("Copie vers Google Drive …")
+                gdrive_path = self._gdrive / zip_name
+                shutil.copy2(zip_path, gdrive_path)
+                msg += f"\n\nCopié dans Google Drive :\n{gdrive_path}"
+
+            self.finished.emit(True, msg)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 class ReleaseDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1430,6 +1546,12 @@ class ReleaseDialog(QDialog):
         self.btn_close.clicked.connect(self.accept)
         btns.addWidget(self.btn_close)
         btns.addStretch()
+        btn_gh = QPushButton("GitHub Actions →")
+        btn_gh.setStyleSheet(_BTN_SECONDARY)
+        btn_gh.setFixedHeight(36)
+        btn_gh.setToolTip("Ouvre GitHub Actions dans le navigateur")
+        btn_gh.clicked.connect(lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}/actions"))
+        btns.addWidget(btn_gh)
         lay.addLayout(btns)
 
         # Barre de progression

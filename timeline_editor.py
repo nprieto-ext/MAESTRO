@@ -272,7 +272,8 @@ class LightTimelineEditor(QDialog):
         GROUP_DISPLAY = getattr(self.main_window, 'GROUP_DISPLAY', {
             "face": "Face", "douche1": "Douche 1", "douche2": "Douche 2",
             "douche3": "Douche 3", "lat": "Lat", "contre": "Contres",
-            "public": "Public", "fumee": "Fumee", "lyre": "Lyres",
+            "public": "Public", "groupe_e": "Groupe E", "groupe_f": "Groupe F",
+            "fumee": "Fumee", "lyre": "Lyres",
             "barre": "Barres", "strobe": "Strobos",
         })
         # Groupes sans piste lumiere
@@ -284,6 +285,8 @@ class LightTimelineEditor(QDialog):
             "Groupe B": "#4488ff",
             "Groupe C": "#44cc88",
             "Groupe D": "#ff6655",
+            "Groupe E": "#cc44ff",
+            "Groupe F": "#ffcc22",
             "Fumee":    "#88aaaa",
             "Lyres":    "#ff44cc",
             "Barres":   "#44aaff",
@@ -291,6 +294,7 @@ class LightTimelineEditor(QDialog):
         }
         # Ordre canonique des pistes dans la timeline
         TRACK_ORDER = ["Groupe A", "Groupe B", "Groupe C", "Groupe D",
+                       "Groupe E", "Groupe F",
                        "Lyres", "Barres", "Strobos", "Fumee"]
 
         seen_groups = []
