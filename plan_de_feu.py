@@ -423,16 +423,6 @@ class FixtureCanvas(QWidget):
 
         else:  # PAR LED (defaut)
             painter.drawEllipse(QPoint(cx, cy), r, r)
-            # Point brillant central
-            if is_lit:
-                inner = QColor(
-                    min(255, fill_color.red()   + 90),
-                    min(255, fill_color.green() + 90),
-                    min(255, fill_color.blue()  + 90),
-                )
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(inner))
-                painter.drawEllipse(QPoint(cx, cy), max(1, r // 3), max(1, r // 3))
 
         # ── Croix mute ──────────────────────────────────────────
         if proj.muted:

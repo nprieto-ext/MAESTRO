@@ -260,7 +260,7 @@ class LightTrack(QWidget):
             if cancel_check and cancel_check():
                 return None
             # Essai 2: QAudioDecoder (natif Qt, pas de dependance externe)
-            result = self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback)
+            result = self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback, cancel_check=cancel_check)
             if result:
                 return result
             print("   Aucune methode disponible pour extraire l'audio de la video")
@@ -296,14 +296,21 @@ class LightTrack(QWidget):
                 return self._downsample_waveform(audio_data, max_samples)
 
         except wave.Error:
-            print(f"   Pas un fichier WAV, decodage via miniaudio...")
+            print(f"   Pas un fichier WAV, tentative decodage...")
+            # Essai 1: ffmpeg — le plus robuste, gere tous les MP3 (VBR, ID3 corrompus, encodages non-standard)
+            result = self._extract_waveform_ffmpeg(audio_path, max_samples, cancel_check=cancel_check)
+            if result:
+                return result
+            if cancel_check and cancel_check():
+                return None
+            # Essai 2: miniaudio
             result = self._decode_with_miniaudio(audio_path, max_samples, cancel_check=cancel_check)
             if result:
                 return result
             if cancel_check and cancel_check():
                 return None
-            # Fallback QAudioDecoder pour les formats non supportes par miniaudio
-            return self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback)
+            # Essai 3: QAudioDecoder (fallback natif Qt)
+            return self._extract_waveform_qt(audio_path, max_samples, progress_callback=progress_callback, cancel_check=cancel_check)
 
         except Exception as e:
             print(f"❌ Erreur generation forme d'onde: {e}")
@@ -311,21 +318,39 @@ class LightTrack(QWidget):
 
     def _decode_with_miniaudio(self, audio_path, max_samples, cancel_check=None):
         """Decode un fichier audio (MP3/FLAC/OGG/AAC...) via miniaudio ou subprocess"""
-        # Essai 1 : miniaudio en direct (si installe sur ce Python)
+        # Essai 1 : miniaudio en direct dans un thread pour ne pas bloquer l'UI
         if HAS_MINIAUDIO:
-            try:
-                decoded = miniaudio.decode_file(
-                    audio_path,
-                    output_format=miniaudio.SampleFormat.SIGNED16,
-                    nchannels=1,
-                    sample_rate=22050
-                )
-                samples = array.array('h', decoded.samples)
-                audio_data = [abs(s) for s in samples]
-                print(f"   miniaudio direct: {len(audio_data)} samples")
-                return self._downsample_waveform(audio_data, max_samples)
-            except Exception as e:
-                print(f"   ⚠️ miniaudio direct echoue: {e}")
+            import threading
+            result_holder = [None]
+            error_holder = [None]
+
+            def _run():
+                try:
+                    decoded = miniaudio.decode_file(
+                        audio_path,
+                        output_format=miniaudio.SampleFormat.SIGNED16,
+                        nchannels=1,
+                        sample_rate=22050
+                    )
+                    samples = array.array('h', decoded.samples)
+                    audio_data = [abs(s) for s in samples]
+                    result_holder[0] = self._downsample_waveform(audio_data, max_samples)
+                except Exception as e:
+                    error_holder[0] = e
+
+            thread = threading.Thread(target=_run, daemon=True)
+            thread.start()
+            while thread.is_alive():
+                if cancel_check and cancel_check():
+                    return None
+                QApplication.processEvents()
+                time.sleep(0.05)
+
+            if result_holder[0] is not None:
+                print(f"   miniaudio direct: {len(result_holder[0])} points")
+                return result_holder[0]
+            if error_holder[0]:
+                print(f"   ⚠️ miniaudio direct echoue: {error_holder[0]}")
 
         # Essai 2 : subprocess vers Python 3.12 qui a miniaudio
         return self._decode_via_subprocess(audio_path, max_samples, cancel_check=cancel_check)
@@ -494,7 +519,7 @@ print(json.dumps(waveform))
                 except:
                     pass
 
-    def _extract_waveform_qt(self, media_path, max_samples, progress_callback=None):
+    def _extract_waveform_qt(self, media_path, max_samples, progress_callback=None, cancel_check=None):
         """Extrait la forme d'onde via QAudioDecoder (natif Qt, fonctionne pour audio ET video)"""
         if not HAS_QAUDIO_DECODER:
             print("   QAudioDecoder non disponible")
@@ -563,6 +588,10 @@ print(json.dumps(waveform))
             while not finished[0] and (time.time() - start_time) < 120:
                 QCoreApplication.processEvents()
                 time.sleep(0.005)
+
+                if cancel_check and cancel_check():
+                    decoder.stop()
+                    return None
 
                 # Rapporter la progression
                 if progress_callback and total_duration_ms[0] > 0:

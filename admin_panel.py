@@ -1526,10 +1526,20 @@ class ReleaseDialog(QDialog):
             self.step_label.setText("Terminé !")
             self.step_label.setStyleSheet("color: #4CAF50; font-size: 9px;")
             self._append_log(f"\n{msg}")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
         else:
             self.step_label.setText("Erreur")
             self.step_label.setStyleSheet(f"color: {RED}; font-size: 9px;")
             self._append_log(f"\nERREUR : {msg}")
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONHAND)
+            except Exception:
+                pass
             QMessageBox.critical(self, "Erreur release", msg)
 
 

@@ -2,8 +2,10 @@
 Composants UI pour le controleur AKAI
 DualColorButton, EffectButton, FaderButton, ApcFader
 """
+import json
+from pathlib import Path
 from PySide6.QtWidgets import QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
 
 
@@ -55,21 +57,23 @@ class DualColorButton(QPushButton):
 
 
 EFFECT_PRESETS = [
-    ("⭕ Aucun", None, "#2a2a2a"),
-    ("⚡ Strobe", "Strobe", "#ffffff"),
-    ("💥 Flash", "Flash", "#ffff00"),
-    ("💜 Pulse", "Pulse", "#ff00ff"),
-    ("🌊 Vague", "Wave", "#00ffff"),
-    ("🎲 Random", "Random", "#ff8800"),
-    ("🌈 Rainbow", "Rainbow", "#00ff00"),
-    ("✨ Scintillement", "Sparkle", "#ffccff"),
-    ("🔥 Feu", "Fire", "#ff4400"),
+    ("⭕ Aucun",           None,           "#2a2a2a"),
+    ("⚡ Strobe",          "Strobe",        "#ffffff"),
+    ("💥 Flash",           "Flash",         "#ffff00"),
+    ("💜 Pulse",           "Pulse",         "#ff00ff"),
+    ("🌊 Vague",           "Wave",          "#00ffff"),
+    ("☄️ Comète",          "Comete",        "#ff8800"),
+    ("🌈 Rainbow",         "Rainbow",       "#00ff00"),
+    ("🌠 Etoile Filante",  "Etoile Filante","#aaddff"),
+    ("🔥 Feu",             "Fire",          "#ff4400"),
+    ("⬜ Passage Blanc",   "Chase",         "#e0e0e0"),
+    ("↔️ Bascule",         "Bascule",       "#44ccff"),
 ]
 
 # Effet par defaut pour chaque bouton (index 0-8)
 DEFAULT_EFFECTS = [
     "Strobe", "Flash", "Pulse", "Wave",
-    "Random", "Rainbow", "Sparkle", "Fire", "Strobe"
+    "Comete", "Rainbow", "Etoile Filante", "Chase", "Pulse"
 ]
 
 def get_effect_emoji(effect_name):
@@ -82,6 +86,8 @@ def get_effect_emoji(effect_name):
 
 class EffectButton(QPushButton):
     """Bouton d'effet carre rouge avec menu d'effets"""
+
+    effect_config_selected = Signal(int, dict)  # (btn_index, config_dict)
 
     def __init__(self, index):
         super().__init__()
@@ -108,49 +114,106 @@ class EffectButton(QPushButton):
         return self.current_effect
 
     def show_effects_menu(self, pos):
-        """Affiche le menu des effets avec previsualisation"""
+        """Affiche le menu des effets (chargés depuis l'éditeur d'effets)"""
+        # Charger tous les effets : builtin + custom
+        all_effects = []
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            all_effects = list(BUILTIN_EFFECTS)
+            effects_file = Path.home() / ".mystrow_effects.json"
+            if effects_file.exists():
+                custom = json.loads(effects_file.read_text(encoding="utf-8"))
+                if isinstance(custom, list):
+                    existing_names = {e["name"] for e in all_effects}
+                    for e in custom:
+                        if e.get("name") not in existing_names:
+                            all_effects.append(e)
+        except Exception:
+            pass
+
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
                 background: #1a1a1a;
                 border: 1px solid #3a3a3a;
-                padding: 5px;
+                padding: 4px;
+                font-size: 12px;
             }
             QMenu::item {
-                padding: 8px 15px;
-                border-radius: 4px;
-                color: white;
+                padding: 6px 16px;
+                border-radius: 3px;
+                color: #e0e0e0;
             }
-            QMenu::item:selected {
-                background: #3a3a3a;
-            }
+            QMenu::item:selected { background: #2a3a3a; color: #fff; }
+            QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
+            QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
         """)
 
-        effects = EFFECT_PRESETS
+        # Si current_effect est un nom de type legacy ("Strobe", "Chase"...) sans match
+        # exact dans la liste, on fait un fallback par type pour trouver le premier match
+        cur = self.current_effect
+        name_is_full_match = cur and any(e.get("name") == cur for e in all_effects)
 
-        for name, effect, color in effects:
-            action = QWidgetAction(menu)
-            widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(5, 2, 5, 2)
+        def _is_checked(eff):
+            name = eff.get("name", "")
+            if name == cur:
+                return True
+            # Fallback : current_effect est un type legacy ("Strobe", "Flash"...)
+            if not name_is_full_match and cur and eff.get("type") == cur:
+                # Ne cocher que le premier de ce type
+                first_of_type = next(
+                    (e for e in all_effects if e.get("type") == cur), None
+                )
+                return first_of_type is not None and first_of_type.get("name") == name
+            return False
 
-            # Nom effet
-            label = QLabel(name)
-            label.setStyleSheet("color: white; font-size: 13px;")
-            layout.addWidget(label)
-            layout.addStretch()
+        # Option "Aucun"
+        act_none = menu.addAction("⭕  Aucun")
+        act_none.setCheckable(True)
+        act_none.setChecked(not cur)
+        act_none.triggered.connect(lambda: self._select_editor_effect(None))
+        menu.addSeparator()
 
-            # Marque si c'est l'effet actuel
-            if effect == self.current_effect:
-                check = QLabel("✓")
-                check.setStyleSheet("color: #00ff00; font-weight: bold; font-size: 16px;")
-                layout.addWidget(check)
+        # Grouper par catégorie
+        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés"]
+        for cat in CATS:
+            cat_effs = [e for e in all_effects if e.get("category") == cat]
+            if not cat_effs:
+                continue
+            hdr = menu.addAction(f"  {cat.upper()}")
+            hdr.setEnabled(False)
+            for eff in cat_effs:
+                name = eff.get("name", "")
+                act = menu.addAction(f"  {name}")
+                act.setCheckable(True)
+                act.setChecked(_is_checked(eff))
+                act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
 
-            action.setDefaultWidget(widget)
-            action.triggered.connect(lambda checked=False, e=effect: self.set_effect(e))
-            menu.addAction(action)
+        # Effets sans catégorie connue
+        other = [e for e in all_effects if e.get("category", "") not in CATS]
+        if other:
+            menu.addSeparator()
+            for eff in other:
+                name = eff.get("name", "")
+                act = menu.addAction(f"  {name}")
+                act.setCheckable(True)
+                act.setChecked(_is_checked(eff))
+                act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
 
         menu.exec(self.mapToGlobal(pos))
+
+    def _select_editor_effect(self, cfg_or_none):
+        """Applique un effet sélectionné dans le menu (avec ou sans config)."""
+        if cfg_or_none is None:
+            self.current_effect = None
+            self.active = False
+        else:
+            self.current_effect = cfg_or_none.get("name", "")
+            self.active = bool(self.current_effect)
+        self.setToolTip(self.current_effect or "Aucun effet")
+        self.update_style()
+        cfg = dict(cfg_or_none) if cfg_or_none else {}
+        self.effect_config_selected.emit(self.index, cfg)
 
     def set_effect(self, effect):
         """Definit l'effet actuel"""
@@ -227,12 +290,13 @@ class FaderButton(QPushButton):
 class ApcFader(QWidget):
     """Fader style AKAI APC"""
 
-    def __init__(self, index, callback, vertical=True):
+    def __init__(self, index, callback, vertical=True, label=""):
         super().__init__()
         self.index = index
         self.callback = callback
         self.value = 0
         self.vertical = vertical
+        self.label = label
         if vertical:
             self.setFixedWidth(50)
             self.setMinimumHeight(200)

@@ -450,20 +450,29 @@ class LightTimelineEditor(QDialog):
                     self.main_window.seq.sequences[self.media_row]['waveform'] = [round(x, 3) for x in waveform]
                 bar.setValue(100)
                 status.setText(f"{len(waveform)} points analyses")
+                QApplication.processEvents()
+                loading.close()
             else:
-                status.setText("Forme d'onde indisponible")
+                # Aucune methode n'a reussi — editeur reste ouvert et utilisable sans forme d'onde
+                status.setText("⚠  Analyse Audio Impossible")
+                status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
+                bar.setVisible(False)
+                cancel_btn.setVisible(False)
+                QApplication.processEvents()
+                QTimer.singleShot(1800, loading.close)
         except _AnalysisCancelled:
             print("Analyse annulee par l'utilisateur")
             loading.close()
-            return  # Fermer le dialog, mais PAS l'editeur
         except Exception as e:
-            status.setText(f"Erreur: {e}")
+            status.setText("⚠  Analyse Audio Impossible")
+            status.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8800;")
+            bar.setVisible(False)
+            cancel_btn.setVisible(False)
             print(f"Erreur forme d'onde: {e}")
+            QApplication.processEvents()
+            QTimer.singleShot(1800, loading.close)
 
-        QApplication.processEvents()
-        loading.close()
-
-        # Forcer le rafraichissement apres fermeture du dialog
+        # Forcer le rafraichissement
         self.track_waveform.update()
         for track in self.tracks:
             track.update()

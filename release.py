@@ -203,6 +203,8 @@ def build_admin_panel_exe():
         f"--hidden-import=google.oauth2 "
         f"--hidden-import=google.oauth2.service_account "
         f"--hidden-import=smtp_config "
+        f"--hidden-import=_socket "
+        f"--hidden-import=socket "
         f"--collect-all firebase_admin "
         f"--collect-all google.auth "
         f"--noconfirm admin_panel.py\n"

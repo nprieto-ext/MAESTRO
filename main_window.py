@@ -180,6 +180,8 @@ class MainWindow(QMainWindow):
         self.effect_speed = 0
         self.effect_state = 0
         self.effect_saved_colors = {}
+        self._button_effect_configs = {}   # {btn_idx: config_dict from editor}
+        self.active_effect_config = {}     # config en cours d'exécution
         self.blink_timer = None
         self.pause_mode = False
 
@@ -436,6 +438,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction("⏱ Définir la durée", self._edit_current_duration)
         edit_menu.addSeparator()
         edit_menu.addAction("💡 IA Lumière", self.show_ia_lumiere_config)
+        edit_menu.addSeparator()
+        edit_menu.addAction("🎨 Editeur d'effets", self.open_effect_editor)
         edit_menu.addAction("⌨️ Raccourcis", self.show_shortcuts_dialog)
 
         conn_menu = bar.addMenu("🔗 Connexion")
@@ -801,6 +805,7 @@ class MainWindow(QMainWindow):
 
             effect_btn = EffectButton(r)
             effect_btn.clicked.connect(lambda _, idx=r: self.toggle_effect(idx))
+            effect_btn.effect_config_selected.connect(self._on_effect_assigned)
             self.effect_buttons.append(effect_btn)
             pads.addWidget(effect_btn, r, 9)
 
@@ -824,6 +829,12 @@ class MainWindow(QMainWindow):
             self.faders[i] = fader
             col_layout.addWidget(fader)
 
+            lbl_letter = QLabel("ABCD"[i] if i < 4 else "")
+            lbl_letter.setFixedHeight(12)
+            lbl_letter.setAlignment(Qt.AlignCenter)
+            lbl_letter.setStyleSheet("color:#666;font-size:9px;")
+            col_layout.addWidget(lbl_letter)
+
             fader_container.addLayout(col_layout)
 
             if i == 3:
@@ -835,12 +846,17 @@ class MainWindow(QMainWindow):
 
         last_effect_btn = EffectButton(8)
         last_effect_btn.clicked.connect(lambda: self.toggle_effect(8))
+        last_effect_btn.effect_config_selected.connect(self._on_effect_assigned)
         self.effect_buttons.append(last_effect_btn)
         effect_col.addWidget(last_effect_btn, alignment=Qt.AlignCenter)
 
         effect_fader = ApcFader(8, self.set_effect_speed, vertical=False)
         self.faders[8] = effect_fader
         effect_col.addWidget(effect_fader)
+
+        lbl_effect_spacer = QLabel("")
+        lbl_effect_spacer.setFixedHeight(12)
+        effect_col.addWidget(lbl_effect_spacer)
 
         fader_container.addLayout(effect_col)
         layout.addLayout(fader_container)
@@ -1475,6 +1491,14 @@ class MainWindow(QMainWindow):
     def toggle_effect(self, effect_idx):
         """Active/desactive un effet"""
         btn = self.effect_buttons[effect_idx]
+
+        # Bascule = one-shot sur chaque appui (pas de toggle on/off)
+        if btn.current_effect == "Bascule":
+            self._bascule()
+            btn.active = False
+            btn.update_style()
+            return
+
         btn.active = not btn.active
         if btn.active:
             effect_name = btn.current_effect
@@ -1483,6 +1507,8 @@ class MainWindow(QMainWindow):
                 btn.update_style()
                 return
             self.active_effect = effect_name
+            # Config depuis l'éditeur d'effets (si assigné)
+            self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
             for j, other_btn in enumerate(self.effect_buttons):
                 if j != effect_idx and other_btn.active:
@@ -1492,6 +1518,7 @@ class MainWindow(QMainWindow):
                         self.midi_handler.set_pad_led(j, 8, 0)
         else:
             self.active_effect = None
+            self.active_effect_config = {}
             self.stop_effect()
         btn.update_style()
         # Mise a jour LED AKAI (utile quand l'effet est toggle depuis l'UI)
@@ -1511,16 +1538,37 @@ class MainWindow(QMainWindow):
             self.effect_timer = QTimer()
             self.effect_timer.timeout.connect(self.update_effect)
 
-        intervals = {
-            "Strobe": 100, "Flash": 100, "Pulse": 30,
-            "Wave": 50, "Random": 200, "Rainbow": 50,
-            "Sparkle": 80, "Fire": 60,
-        }
-        self.effect_timer.start(intervals.get(effect_name, 100))
+        if effect_name == "Bascule":
+            self._bascule()
+            return  # one-shot, pas de timer
 
-        if effect_name in ("Rainbow", "Wave"):
+        # Si un config éditeur est actif, initialiser selon son type
+        cfg = self.active_effect_config
+        etype = cfg.get("type", effect_name) if cfg else effect_name
+        speed_raw = cfg.get("speed", 50) if cfg else 50
+        sf = max(0.05, 1.0 - speed_raw / 100.0 * 0.95)
+
+        if cfg:
+            init_intervals = {
+                "Strobe": max(25, int(500 - speed_raw / 100.0 * 475)),
+                "Flash":  max(25, int(500 - speed_raw / 100.0 * 475)),
+                "Pulse": 30, "Wave": int(50 * sf),
+                "Chase": max(40, int(400 * sf)), "Comete": max(30, int(300 * sf)),
+                "Etoile Filante": max(25, int(70 * sf)),
+                "Rainbow": 50, "Fire": int(60 * sf),
+            }
+            self.effect_timer.start(init_intervals.get(etype, 80))
+        else:
+            intervals = {
+                "Strobe": 100, "Flash": 100, "Pulse": 30,
+                "Wave": 50, "Comete": 80, "Rainbow": 50,
+                "Etoile Filante": 60, "Fire": 60, "Chase": 200,
+            }
+            self.effect_timer.start(intervals.get(effect_name, 100))
+
+        if etype in ("Rainbow", "Wave"):
             self.effect_hue = 0
-        elif effect_name == "Pulse":
+        if etype == "Pulse":
             self.effect_brightness = 0
             self.effect_direction = 1
 
@@ -1538,21 +1586,70 @@ class MainWindow(QMainWindow):
                 p.base_color = base_color
                 p.color = color
 
+    def _bascule(self):
+        """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
+        from collections import Counter
+
+        active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+        if not active:
+            return
+
+        def _bucket(c):
+            return (c.red() // 35, c.green() // 35, c.blue() // 35)
+
+        counts = Counter(_bucket(p.base_color) for p in active)
+
+        def _apply(p, col):
+            brightness = p.level / 100.0
+            p.base_color = QColor(col)
+            p.color = QColor(
+                int(col.red()   * brightness),
+                int(col.green() * brightness),
+                int(col.blue()  * brightness),
+            )
+
+        if len(counts) >= 2:
+            # Bicolore : échanger les deux couleurs dominantes
+            top2 = [k for k, _ in counts.most_common(2)]
+            group_a = [p for p in active if _bucket(p.base_color) == top2[0]]
+            group_b = [p for p in active if _bucket(p.base_color) == top2[1]]
+            col_a = QColor(group_a[0].base_color)
+            col_b = QColor(group_b[0].base_color)
+            for p in group_a:
+                _apply(p, col_b)
+            for p in group_b:
+                _apply(p, col_a)
+        else:
+            # Monochrome : un projecteur sur deux passe en blanc, puis inversion
+            phase = getattr(self, '_bascule_phase', 0) % 2
+            white = QColor(255, 255, 255)
+            for i, p in enumerate(active):
+                if i % 2 == phase:
+                    _apply(p, white)
+                else:
+                    _apply(p, p.base_color)
+            self._bascule_phase = phase + 1
+
     def update_effect(self):
         """Met a jour l'effet en cours"""
         if self.active_effect is None:
             return
 
-        if self.effect_speed == 0:
-            speed_factor = 1.0
-        else:
-            speed_factor = max(0.05, 1.0 - (self.effect_speed / 100.0 * 0.95))
+        # Config-driven path (depuis l'éditeur d'effets)
+        cfg = self.active_effect_config
+        if cfg:
+            self._update_effect_from_config(cfg)
+            return
+
+        # speed_factor : fader 0 = lent (1.0), fader 127 = rapide (0.05)
+        speed_factor = max(0.05, 1.0 - (self.effect_speed / 127.0 * 0.95))
 
         eff = self.active_effect
 
         if eff == "Strobe":
-            # Alternance blanc/noir sur tous les projos
-            self.effect_timer.setInterval(int(100 * speed_factor))
+            # Alternance blanc/noir — intervalle 500 ms (lent) → 25 ms (rapide)
+            interval = max(25, int(500 - (self.effect_speed / 127.0) * 475))
+            self.effect_timer.setInterval(interval)
             for p in self.projectors:
                 if p.group == "fumee":
                     continue
@@ -1561,8 +1658,9 @@ class MainWindow(QMainWindow):
             self.effect_state += 1
 
         elif eff == "Flash":
-            # Alternance couleur/noir
-            self.effect_timer.setInterval(int(100 * speed_factor))
+            # Alternance couleur/noir — même mapping vitesse que Strobe
+            interval = max(25, int(500 - (self.effect_speed / 127.0) * 475))
+            self.effect_timer.setInterval(interval)
             for p in self.projectors:
                 if p.group == "fumee":
                     continue
@@ -1615,14 +1713,36 @@ class MainWindow(QMainWindow):
                     )
             self.effect_state += 3 + int(self.effect_speed / 25)
 
-        elif eff == "Random":
-            # Couleurs aleatoires sur chaque projo
-            self.effect_timer.setInterval(int(200 * speed_factor))
-            for p in self.projectors:
-                if p.group == "fumee":
-                    continue
-                if p.level > 0:
-                    p.color = QColor.fromHsv(random.randint(0, 359), 255, int(p.level * 2.55))
+        elif eff == "Comete":
+            # Comète : tête blanche vive + traînée qui fondue vers la couleur de base
+            self.effect_timer.setInterval(max(30, int(300 * speed_factor)))
+            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            n = len(active)
+            if n == 0:
+                return
+            TAIL = 4
+            pos = self.effect_state % (n + TAIL)
+            for i, p in enumerate(active):
+                dist = pos - i
+                brightness = p.level / 100.0
+                if dist == 0:
+                    p.color = QColor(255, 255, 255)
+                elif 1 <= dist <= TAIL:
+                    blend = (1.0 - dist / (TAIL + 1)) * 0.9
+                    base_r = int(p.base_color.red()   * brightness)
+                    base_g = int(p.base_color.green() * brightness)
+                    base_b = int(p.base_color.blue()  * brightness)
+                    p.color = QColor(
+                        min(255, int(base_r + (255 - base_r) * blend)),
+                        min(255, int(base_g + (255 - base_g) * blend)),
+                        min(255, int(base_b + (255 - base_b) * blend)),
+                    )
+                else:
+                    p.color = QColor(
+                        int(p.base_color.red()   * brightness),
+                        int(p.base_color.green() * brightness),
+                        int(p.base_color.blue()  * brightness),
+                    )
             self.effect_state += 1
 
         elif eff == "Rainbow":
@@ -1641,22 +1761,62 @@ class MainWindow(QMainWindow):
                     )
             self.effect_hue += int(5 * (1 + self.effect_speed / 30))
 
-        elif eff == "Sparkle":
-            # Scintillement aleatoire (certains projos flash blanc)
-            self.effect_timer.setInterval(int(80 * speed_factor))
-            for p in self.projectors:
-                if p.group == "fumee":
-                    continue
-                if p.level > 0:
-                    if random.random() < 0.3:
-                        p.color = QColor(255, 255, 255)
-                    else:
-                        brightness = p.level / 100.0
-                        p.color = QColor(
-                            int(p.base_color.red() * brightness),
-                            int(p.base_color.green() * brightness),
-                            int(p.base_color.blue() * brightness)
-                        )
+        elif eff == "Etoile Filante":
+            # Etoile filante : passage sinusoïdal au blanc avec traînée
+            import math
+            self.effect_timer.setInterval(max(25, int(70 * speed_factor)))
+            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            n = len(active)
+            if n == 0:
+                return
+            TAIL = 6
+            total = n + TAIL + 4   # pause noire en fin de cycle
+            pos = self.effect_state % total
+            for i, p in enumerate(active):
+                dist = pos - i
+                brightness = p.level / 100.0
+                if dist == 0:
+                    # Tête : blanc pur
+                    p.color = QColor(255, 255, 255)
+                elif 1 <= dist <= TAIL:
+                    # Traînée sinusoïdale
+                    t = dist / TAIL
+                    white_blend = (math.sin((1.0 - t) * math.pi / 2)) ** 1.5
+                    base_r = int(p.base_color.red()   * brightness)
+                    base_g = int(p.base_color.green() * brightness)
+                    base_b = int(p.base_color.blue()  * brightness)
+                    p.color = QColor(
+                        min(255, int(base_r + (255 - base_r) * white_blend)),
+                        min(255, int(base_g + (255 - base_g) * white_blend)),
+                        min(255, int(base_b + (255 - base_b) * white_blend)),
+                    )
+                else:
+                    p.color = QColor(
+                        int(p.base_color.red()   * brightness),
+                        int(p.base_color.green() * brightness),
+                        int(p.base_color.blue()  * brightness),
+                    )
+            self.effect_state += 1
+
+        elif eff == "Chase":
+            # Passage au blanc : chaque projecteur passe au blanc un par un
+            self.effect_timer.setInterval(max(40, int(400 * speed_factor)))
+            active = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+            n = len(active)
+            if n == 0:
+                return
+            current = self.effect_state % n
+            for i, p in enumerate(active):
+                brightness = p.level / 100.0
+                if i == current:
+                    p.color = QColor(255, 255, 255)
+                else:
+                    p.color = QColor(
+                        int(p.base_color.red()   * brightness),
+                        int(p.base_color.green() * brightness),
+                        int(p.base_color.blue()  * brightness),
+                    )
+            self.effect_state += 1
 
         elif eff == "Fire":
             # Effet feu (rouge/orange/jaune aleatoire)
@@ -1676,6 +1836,192 @@ class MainWindow(QMainWindow):
                         int(base.green() * brightness),
                         int(base.blue() * brightness)
                     )
+
+    # ------------------------------------------------------------------ #
+    #  EDITEUR D'EFFETS                                                    #
+    # ------------------------------------------------------------------ #
+
+    def open_effect_editor(self):
+        """Ouvre l'editeur d'effets (menu Edition)"""
+        from effect_editor import EffectEditorDialog
+        dlg = EffectEditorDialog(self)
+        dlg.effect_assigned.connect(self._on_effect_assigned)
+        dlg.exec()
+
+    def _on_effect_assigned(self, btn_idx: int, cfg: dict):
+        """Reçoit l'assignation depuis l'éditeur ou le menu clic-droit et met à jour le bouton"""
+        if cfg:
+            self._button_effect_configs[btn_idx] = cfg
+        else:
+            self._button_effect_configs.pop(btn_idx, None)
+        if btn_idx < len(self.effect_buttons):
+            name = cfg.get("name", "") if cfg else ""
+            self.effect_buttons[btn_idx].setToolTip(name or "Aucun effet")
+            # Sync current_effect pour que le menu clic-droit affiche le bon check
+            self.effect_buttons[btn_idx].current_effect = name or None
+
+    def _update_effect_from_config(self, cfg: dict):
+        """Exécute l'algorithme paramétré depuis une config éditeur."""
+        import math as _math
+
+        etype      = cfg.get("type", "Pulse")
+        speed_raw  = cfg.get("speed", 50)
+        # Le fader 9 joue le rôle de multiplicateur en temps réel
+        fader      = self.effect_speed  # 0-127
+        if fader > 0:
+            speed_raw = int(speed_raw * (fader / 127.0))
+        target     = cfg.get("target", "all")
+        color_mode = cfg.get("color_mode", "base")
+        custom_hex = cfg.get("custom_color", "#ffffff")
+
+        sf = max(0.05, 1.0 - speed_raw / 100.0 * 0.95)
+
+        def resolve(p, idx):
+            if color_mode == "white":  return QColor(255, 255, 255)
+            if color_mode == "black":  return QColor(0, 0, 0)
+            if color_mode == "custom": return QColor(custom_hex)
+            if color_mode == "fire":
+                return random.choice([QColor(255,50,0), QColor(255,100,0),
+                                      QColor(255,150,0), QColor(255,200,0)])
+            if color_mode == "rainbow":
+                return QColor.fromHsv((getattr(self,"effect_hue",0) + idx*30)%360, 255, 255)
+            return p.base_color  # "base"
+
+        base_all = [p for p in self.projectors if p.group != "fumee" and p.level > 0]
+        if target == "even":
+            active = [p for i, p in enumerate(base_all) if i % 2 == 0]
+        elif target == "odd":
+            active = [p for i, p in enumerate(base_all) if i % 2 == 1]
+        elif target == "rl":
+            active = list(reversed(base_all))
+        else:
+            active = base_all
+
+        black = QColor(0, 0, 0)
+
+        if etype in ("Strobe", "Flash"):
+            interval = max(25, int(500 - speed_raw / 100.0 * 475))
+            self.effect_timer.setInterval(interval)
+            if target == "alternate":
+                phase = self.effect_state % 2
+                for i, p in enumerate(base_all):
+                    c = resolve(p, i)
+                    bv = p.level / 100.0
+                    if i % 2 == phase:
+                        p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
+                    else:
+                        p.color = black
+            else:
+                on = self.effect_state % 2 == 0
+                for i, p in enumerate(active):
+                    c = resolve(p, i)
+                    bv = p.level / 100.0
+                    p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv)) if on else black
+            self.effect_state += 1
+
+        elif etype == "Pulse":
+            for i, p in enumerate(active):
+                if target == "alternate":
+                    b = (self.effect_brightness if i % 2 == 0 else 100 - self.effect_brightness) / 100.0
+                else:
+                    b = self.effect_brightness / 100.0
+                c = resolve(p, i)
+                bv = (p.level / 100.0) * b
+                p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
+            step = 2 + int(speed_raw / 20)
+            self.effect_brightness += self.effect_direction * step
+            if self.effect_brightness >= 100: self.effect_brightness, self.effect_direction = 100, -1
+            if self.effect_brightness <= 0:   self.effect_brightness, self.effect_direction = 0, 1
+
+        elif etype == "Wave":
+            self.effect_timer.setInterval(int(50 * sf))
+            for i, p in enumerate(active):
+                phase = (self.effect_state + i * 15) % 100
+                b = (p.level / 100.0) * (abs(50 - phase) / 50.0)
+                c = resolve(p, i)
+                p.color = QColor(int(c.red()*b), int(c.green()*b), int(c.blue()*b))
+            self.effect_state += 3 + int(speed_raw / 25)
+
+        elif etype == "Chase":
+            self.effect_timer.setInterval(max(40, int(400 * sf)))
+            n = len(active)
+            if n == 0: return
+            pos = self.effect_state % n
+            for i, p in enumerate(active):
+                bv = p.level / 100.0
+                c = resolve(p, i)
+                if i == pos:
+                    p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
+                else:
+                    base_c = p.base_color
+                    p.color = QColor(int(base_c.red()*bv), int(base_c.green()*bv), int(base_c.blue()*bv))
+            self.effect_state += 1
+
+        elif etype == "Comete":
+            self.effect_timer.setInterval(max(30, int(300 * sf)))
+            n = len(active)
+            if n == 0: return
+            TAIL = 4
+            pos = self.effect_state % (n + TAIL)
+            for i, p in enumerate(active):
+                dist, bv = pos - i, p.level / 100.0
+                c = resolve(p, i)
+                if dist == 0:
+                    p.color = QColor(255, 255, 255)
+                elif 1 <= dist <= TAIL:
+                    blend = (1.0 - dist / (TAIL+1)) * 0.9
+                    p.color = QColor(
+                        min(255, int(c.red()*bv   + (255-c.red()*bv)  *blend)),
+                        min(255, int(c.green()*bv + (255-c.green()*bv)*blend)),
+                        min(255, int(c.blue()*bv  + (255-c.blue()*bv) *blend)),
+                    )
+                else:
+                    p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
+            self.effect_state += 1
+
+        elif etype == "Etoile Filante":
+            self.effect_timer.setInterval(max(25, int(70 * sf)))
+            n = len(active)
+            if n == 0: return
+            TAIL, total = 6, n + 10
+            pos = self.effect_state % total
+            for i, p in enumerate(active):
+                dist, bv = pos - i, p.level / 100.0
+                c = resolve(p, i)
+                if dist == 0:
+                    p.color = QColor(255, 255, 255)
+                elif 1 <= dist <= TAIL:
+                    t = dist / TAIL
+                    blend = (_math.sin((1.0 - t) * _math.pi / 2)) ** 1.5
+                    p.color = QColor(
+                        min(255, int(c.red()*bv   + (255-c.red()*bv)  *blend)),
+                        min(255, int(c.green()*bv + (255-c.green()*bv)*blend)),
+                        min(255, int(c.blue()*bv  + (255-c.blue()*bv) *blend)),
+                    )
+                else:
+                    p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
+            self.effect_state += 1
+
+        elif etype == "Rainbow":
+            for i, p in enumerate(active):
+                hue = (self.effect_hue + i * 30) % 360
+                col = QColor.fromHsv(hue, 255, 255)
+                bv = p.level / 100.0
+                p.color = QColor(int(col.red()*bv), int(col.green()*bv), int(col.blue()*bv))
+            self.effect_hue = (getattr(self,"effect_hue",0) + int(5*(1+speed_raw/30))) % 360
+
+        elif etype == "Fire":
+            self.effect_timer.setInterval(int(60 * sf))
+            fire_colors = [QColor(255,50,0), QColor(255,100,0),
+                           QColor(255,150,0), QColor(255,200,0)]
+            for p in active:
+                base = random.choice(fire_colors)
+                bv = p.level / 100.0
+                p.color = QColor(int(base.red()*bv), int(base.green()*bv), int(base.blue()*bv))
+
+        elif etype == "Bascule":
+            self._bascule()
+            self.active_effect_config = {}  # one-shot
 
     def set_effect_speed(self, index, value):
         """Definit la vitesse de l'effet"""
@@ -3557,6 +3903,9 @@ class MainWindow(QMainWindow):
         act_save = m_file.addAction("💾  Enregistrer Patch")
         m_file.addSeparator()
         act_dflt = m_file.addAction("↺  Patch par défaut")
+        m_file.addSeparator()
+        act_import = m_file.addAction("📂  Importer le patch...")
+        act_export = m_file.addAction("📤  Exporter le patch...")
 
         m_edit = menubar.addMenu("Edition")
         act_undo = m_edit.addAction("↩  Annuler\tCtrl+Z")
@@ -3564,7 +3913,25 @@ class MainWindow(QMainWindow):
         m_edit.addSeparator()
         act_auto = m_edit.addAction("⚡  Auto Adresse")
 
-        root.addWidget(menubar)
+        # Conteneur menubar + bouton Editeur de fixture côte à côte
+        menu_row = QWidget()
+        menu_row.setStyleSheet("background:transparent;")
+        menu_row_layout = QHBoxLayout(menu_row)
+        menu_row_layout.setContentsMargins(0, 0, 0, 0)
+        menu_row_layout.setSpacing(4)
+        menu_row_layout.addWidget(menubar)
+
+        btn_fixture_editor = QPushButton("🛠  Editeur de fixture")
+        btn_fixture_editor.setFixedHeight(24)
+        btn_fixture_editor.setStyleSheet(
+            "QPushButton { background:transparent; color:#aaaaaa; border:none;"
+            " padding:2px 10px; font-size:12px; border-radius:4px; }"
+            "QPushButton:hover { background:#1e1e1e; color:#ffffff; }"
+        )
+        menu_row_layout.addWidget(btn_fixture_editor)
+        menu_row_layout.addStretch()
+
+        root.addWidget(menu_row)
 
         # ── Toolbar ───────────────────────────────────────────────────────
         toolbar = QWidget()
@@ -3715,6 +4082,27 @@ class MainWindow(QMainWindow):
         lbl_cnt.setStyleSheet("color:#333333; font-size:10px; padding-left:8px;")
         bsv.addWidget(lbl_cnt)
         bsv.addStretch()
+
+        btn_rename_multi = QPushButton("✏  Renommer")
+        btn_rename_multi.setFixedHeight(26)
+        btn_rename_multi.setVisible(False)
+        btn_rename_multi.setStyleSheet(
+            "QPushButton { background:#0d1820; color:#4488bb; border:1px solid #1a3040;"
+            " border-radius:5px; font-size:11px; padding:0 12px; }"
+            "QPushButton:hover { background:#132535; color:#66aadd; border-color:#2a5070; }"
+        )
+        bsv.addWidget(btn_rename_multi)
+
+        btn_group_multi = QPushButton("⬡  Groupe")
+        btn_group_multi.setFixedHeight(26)
+        btn_group_multi.setVisible(False)
+        btn_group_multi.setStyleSheet(
+            "QPushButton { background:#0d180d; color:#44aa44; border:1px solid #1a3a1a;"
+            " border-radius:5px; font-size:11px; padding:0 12px; }"
+            "QPushButton:hover { background:#132513; color:#66cc66; border-color:#2a502a; }"
+        )
+        bsv.addWidget(btn_group_multi)
+
         btn_del_multi = QPushButton("🗑  Supprimer")
         btn_del_multi.setFixedHeight(26)
         btn_del_multi.setVisible(False)
@@ -4043,6 +4431,9 @@ class MainWindow(QMainWindow):
                 snap.append(entry)
             return snap
 
+        # Snapshot à l'ouverture — utilisé pour "Ignorer les modifications"
+        _initial_snap = _snapshot_current()
+
         def _restore_snap(snap):
             del self.projectors[:]
             fixture_data.clear()
@@ -4301,8 +4692,12 @@ class MainWindow(QMainWindow):
                 else:
                     _checked.discard(i)
                 n_chk = len(_checked)
-                btn_del_multi.setVisible(n_chk > 0)
+                _show = n_chk > 0
+                btn_del_multi.setVisible(_show)
                 btn_del_multi.setText(f"🗑  Supprimer ({n_chk})" if n_chk > 1 else "🗑  Supprimer")
+                btn_rename_multi.setVisible(_show)
+                btn_rename_multi.setText(f"✏  Renommer ({n_chk})" if n_chk > 1 else "✏  Renommer")
+                btn_group_multi.setVisible(_show)
                 if i < len(_cards) and _cards[i] is not None:
                     _cards[i]._upd(i == _sel[0], i in _get_conflicts())
             chk.stateChanged.connect(_on_check)
@@ -4545,6 +4940,8 @@ class MainWindow(QMainWindow):
             _checked.clear()
             _sel[0] = None
             btn_del_multi.setVisible(False)
+            btn_rename_multi.setVisible(False)
+            btn_group_multi.setVisible(False)
             self._rebuild_dmx_patch()
             _rebuild_fd()
             _build_cards(filter_bar.text())
@@ -4682,12 +5079,212 @@ class MainWindow(QMainWindow):
             _build_cards()
             det_stack.setCurrentIndex(0)
 
+        # ── Renommer la sélection ─────────────────────────────────────────────
+        def _rename_checked():
+            if not _checked:
+                return
+            from PySide6.QtWidgets import QInputDialog
+            indices = sorted(_checked)
+            n = len(indices)
+            if n == 1:
+                idx = indices[0]
+                old = fixture_data[idx]['name']
+                new_name, ok = QInputDialog.getText(dialog, "Renommer", "Nouveau nom :", text=old)
+                if not ok or not new_name.strip():
+                    return
+                _push_history()
+                fixture_data[idx]['name'] = new_name.strip()
+                self.projectors[idx].name = new_name.strip()
+            else:
+                base, ok = QInputDialog.getText(
+                    dialog, "Renommer en série",
+                    f"Nom de base pour les {n} fixtures sélectionnées :\n"
+                    "(Ex: « PAR Face » donnera « PAR Face 1 », « PAR Face 2 »...)"
+                )
+                if not ok or not base.strip():
+                    return
+                _push_history()
+                base = base.strip()
+                for seq, idx in enumerate(indices, 1):
+                    if idx < len(fixture_data):
+                        new_name = f"{base} {seq}"
+                        fixture_data[idx]['name'] = new_name
+                        self.projectors[idx].name = new_name
+            _checked.clear()
+            btn_del_multi.setVisible(False)
+            btn_rename_multi.setVisible(False)
+            btn_group_multi.setVisible(False)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            if _sel[0] is not None:
+                _select_card(_sel[0])
+            _mark_dirty()
+
+        # ── Assigner un groupe à la sélection ─────────────────────────────────
+        def _assign_group_checked():
+            if not _checked:
+                return
+            _MNS = (
+                "QMenu { background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:4px; }"
+                "QMenu::item { padding:8px 28px 8px 12px; border-radius:4px; color:#bbb;"
+                " font-size:13px; font-weight:bold; }"
+                "QMenu::item:selected { background:#1e1e1e; color:#fff; }"
+            )
+            m = QMenu(btn_group_multi)
+            m.setStyleSheet(_MNS)
+            for g, letter, gname, color in GROUP_BLOCKS:
+                act = m.addAction(f"{letter}  —  {gname}")
+                act.setData(g)
+                px = QPixmap(12, 12)
+                px.fill(QColor(color))
+                act.setIcon(QIcon(px))
+            chosen = m.exec(btn_group_multi.mapToGlobal(QPoint(0, btn_group_multi.height() + 2)))
+            if not chosen or not chosen.data():
+                return
+            new_group = chosen.data()
+            _push_history()
+            for idx in sorted(_checked):
+                if idx < len(fixture_data):
+                    fixture_data[idx]['group'] = new_group
+                    self.projectors[idx].group = new_group
+            _checked.clear()
+            btn_del_multi.setVisible(False)
+            btn_rename_multi.setVisible(False)
+            btn_group_multi.setVisible(False)
+            self._rebuild_dmx_patch()
+            _rebuild_fd()
+            _build_cards(filter_bar.text())
+            if _sel[0] is not None:
+                _select_card(_sel[0])
+            _mark_dirty()
+
+        # ── Importer le patch ─────────────────────────────────────────────────
+        def _import_patch():
+            path, _ = QFileDialog.getOpenFileName(
+                dialog, "Importer le patch", "",
+                "Patch MyStrow (*.msp);;JSON (*.json);;Tous les fichiers (*)"
+            )
+            if not path:
+                return
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                if 'fixtures' not in config:
+                    QMessageBox.warning(dialog, "Format invalide",
+                        "Ce fichier ne contient pas de données de patch valides.")
+                    return
+                n_fx = len(config['fixtures'])
+                if QMessageBox.question(
+                    dialog, "Importer le patch",
+                    f"Charger ce patch ({n_fx} fixture{'s' if n_fx > 1 else ''}) ?\n"
+                    "Le patch actuel sera remplacé.",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                ) != QMessageBox.Yes:
+                    return
+                _push_history()
+                self.projectors.clear()
+                for i, fd in enumerate(config['fixtures']):
+                    p = Projector(fd['group'], name=fd.get('name', ''),
+                                  fixture_type=fd.get('fixture_type', 'PAR LED'))
+                    p.start_address = fd.get('start_address', (i * 10) + 1)
+                    p.canvas_x = fd.get('pos_x', None)
+                    p.canvas_y = fd.get('pos_y', None)
+                    if fd.get('fixture_type') == "Machine a fumee":
+                        p.fan_speed = 0
+                    self.projectors.append(p)
+                if 'custom_profiles' in config:
+                    self._saved_custom_profiles = config['custom_profiles']
+                self._rebuild_dmx_patch()
+                _rebuild_fd()
+                _sel[0] = None
+                _build_cards()
+                det_stack.setCurrentIndex(0)
+                _mark_dirty()
+                QMessageBox.information(dialog, "Import réussi",
+                    f"{n_fx} fixture{'s' if n_fx > 1 else ''} importée{'s' if n_fx > 1 else ''}.")
+            except Exception as e:
+                QMessageBox.critical(dialog, "Erreur d'import",
+                    f"Impossible de lire le fichier :\n{e}")
+
+        # ── Exporter le patch ─────────────────────────────────────────────────
+        def _export_patch():
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, "Exporter le patch", "patch_dmx.msp",
+                "Patch MyStrow (*.msp);;JSON (*.json)"
+            )
+            if not path:
+                return
+            try:
+                fixtures_list = []
+                for i, proj in enumerate(self.projectors):
+                    proj_key = f"{proj.group}_{i}"
+                    fixtures_list.append({
+                        'name': proj.name,
+                        'fixture_type': proj.fixture_type,
+                        'group': proj.group,
+                        'start_address': proj.start_address,
+                        'profile': self.dmx._get_profile(proj_key),
+                        'pos_x': getattr(proj, 'canvas_x', None),
+                        'pos_y': getattr(proj, 'canvas_y', None),
+                    })
+                config = {
+                    'fixtures': fixtures_list,
+                    'custom_profiles': getattr(self, '_saved_custom_profiles', {}),
+                }
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                QMessageBox.information(dialog, "Export réussi",
+                    f"Patch exporté :\n{path}")
+            except Exception as e:
+                QMessageBox.critical(dialog, "Erreur d'export",
+                    f"Impossible d'exporter le patch :\n{e}")
+
+        def _open_fixture_editor():
+            from fixture_editor import FixtureEditorDialog
+            editor = FixtureEditorDialog(dialog)
+
+            def _on_fixture_added(data):
+                _push_history()
+                profile = data.get("profile", ["R", "G", "B"])
+                if fixture_data:
+                    last_fd = max(fixture_data, key=lambda fd: fd['start_address'])
+                    next_addr = last_fd['start_address'] + len(last_fd['profile'])
+                else:
+                    next_addr = 1
+                p = Projector(
+                    data.get("group", "face"),
+                    name=data.get("name", "Fixture"),
+                    fixture_type=data.get("fixture_type", "PAR LED"),
+                )
+                p.start_address = next_addr
+                if p.fixture_type == "Machine a fumee":
+                    p.fan_speed = 0
+                self.projectors.append(p)
+                i = len(self.projectors) - 1
+                proj_key = f"{p.group}_{i}"
+                channels = [next_addr + c for c in range(len(profile))]
+                self.dmx.set_projector_patch(proj_key, channels, profile=profile)
+                _rebuild_fd()
+                new_idx = len(fixture_data) - 1
+                _build_cards(filter_bar.text())
+                _select_card(new_idx)
+                _mark_dirty()
+
+            editor.fixture_added.connect(_on_fixture_added)
+            editor.exec()
+
         act_new.triggered.connect(_open_wizard)
         act_save.triggered.connect(_do_save)
         act_dflt.triggered.connect(_reset_defaults)
         act_undo.triggered.connect(_undo)
         act_redo.triggered.connect(_redo)
         act_auto.triggered.connect(_auto_address)
+        btn_fixture_editor.clicked.connect(_open_fixture_editor)
+        act_import.triggered.connect(_import_patch)
+        act_export.triggered.connect(_export_patch)
+        btn_rename_multi.clicked.connect(_rename_checked)
+        btn_group_multi.clicked.connect(_assign_group_checked)
         btn_add.clicked.connect(_add_fixture)
         btn_save.clicked.connect(_do_save)
         filter_bar.textChanged.connect(lambda txt: _build_cards(txt))
@@ -4841,6 +5438,9 @@ class MainWindow(QMainWindow):
                     _do_save()
                     event.accept()
                 elif clicked == btn_ignorer:
+                    # Restaurer l'état d'ouverture du dialog (annule renommages, groupes, etc.)
+                    _restore_snap(_initial_snap)
+                    self._rebuild_dmx_patch()
                     event.accept()
                 else:
                     event.ignore()
