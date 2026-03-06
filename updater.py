@@ -94,7 +94,7 @@ class SplashScreen(QWidget):
         self.status_akai = self._create_status_row("AKAI APC mini", "Recherche...")
         layout.addLayout(self.status_akai["layout"])
 
-        self.status_node = self._create_status_row("Node Art-Net", "Recherche...")
+        self.status_node = self._create_status_row("Sortie DMX", "Recherche...")
         layout.addLayout(self.status_node["layout"])
 
         self.status_license = self._create_status_row("Licence", "Verification...")
@@ -155,16 +155,21 @@ class SplashScreen(QWidget):
         return {"layout": row, "indicator": indicator, "value": value}
 
     def set_hw_status(self, target, text, ok):
-        """Met a jour un statut hardware (akai, node, license)"""
+        """Met a jour un statut hardware (akai, node, license).
+        ok=True  -> vert  (connecte)
+        ok=False -> rouge (erreur / non configure)
+        ok=None  -> orange (configure mais non verifie)"""
         row = getattr(self, f"status_{target}", None)
         if not row:
             return
-        if ok:
-            row["indicator"].setStyleSheet("color: #4CAF50;")  # Vert
-            row["value"].setStyleSheet("color: #4CAF50;")
+        if ok is True:
+            color = "#4CAF50"   # Vert
+        elif ok is None:
+            color = "#ff9800"   # Orange (configure, non verifie)
         else:
-            row["indicator"].setStyleSheet("color: #f44336;")  # Rouge
-            row["value"].setStyleSheet("color: #f44336;")
+            color = "#f44336"   # Rouge
+        row["indicator"].setStyleSheet(f"color: {color};")
+        row["value"].setStyleSheet(f"color: {color};")
         row["value"].setText(text)
 
     def _center_on_screen(self):

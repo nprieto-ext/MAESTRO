@@ -1,4 +1,8 @@
 # SECRETS - NE JAMAIS PUSHER
+stripe_config.py
+functions/.env.local
+functions/.env
+functions/.env.*
 firebase_config.py
 smtp_config.py
 service_account.json
@@ -6,6 +10,7 @@ create_client.py
 activate_dev.py
 keygen.py
 .maestro_admin.json
+gdtf_config.py
 
 # Build
 dist/

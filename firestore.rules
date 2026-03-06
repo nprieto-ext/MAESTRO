@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /licenses/{uid} {
+      // Utilisateur : lecture + ecriture machines uniquement
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.resource.data.plan == resource.data.plan
+                   && request.resource.data.expiry_utc == resource.data.expiry_utc
+                   && request.resource.data.email == resource.data.email;
+
+      // Admin : acces complet
+      allow read, write: if request.auth != null
+                         && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+    match /gdtf_fixtures/{doc} {
+      // Lecture publique pour tous les utilisateurs authentifiés (bibliothèque OFL)
+      allow read: if request.auth != null;
+      // Ecriture réservée à l'admin (via gdtf_upload Cloud Function)
+      allow write: if request.auth != null
+                   && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+    match /gdtf_library/{doc} {
+      // Meta de la bibliothèque (version, lastSync) — lecture authentifiée
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.token.email == "nicop421@gmail.com";
+    }
+
+  }
+}

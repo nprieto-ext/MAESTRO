@@ -4,7 +4,10 @@ DualColorButton, EffectButton, FaderButton, ApcFader
 """
 import json
 from pathlib import Path
-from PySide6.QtWidgets import QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout
+from PySide6.QtWidgets import (
+    QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
+    QDoubleSpinBox,
+)
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
 
@@ -87,13 +90,18 @@ def get_effect_emoji(effect_name):
 class EffectButton(QPushButton):
     """Bouton d'effet carre rouge avec menu d'effets"""
 
-    effect_config_selected = Signal(int, dict)  # (btn_index, config_dict)
+    effect_config_selected = Signal(int, dict)   # (btn_index, config_dict)
+    trigger_mode_changed   = Signal(int, str, int)  # (btn_index, mode, duration_ms)
+    press_signal           = Signal(int)          # (btn_index)  — press physique
+    released_signal        = Signal(int)          # (btn_index)  — release physique
 
     def __init__(self, index):
         super().__init__()
         self.index = index
         self.setFixedSize(16, 16)
         self.active = False
+        self.trigger_mode = "toggle"      # "toggle" | "flash" | "timer"
+        self.trigger_duration = 2000      # ms, pour mode Timer
         # Effet par defaut selon la position
         if index < len(DEFAULT_EFFECTS):
             self.current_effect = DEFAULT_EFFECTS[index]
@@ -200,7 +208,88 @@ class EffectButton(QPushButton):
                 act.setChecked(_is_checked(eff))
                 act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
 
+        # ── Sous-menu Mode de déclenchement ──────────────────────────────────
+        menu.addSeparator()
+        trig_menu = menu.addMenu("  ⏱  Mode de déclenchement")
+        trig_menu.setStyleSheet("""
+            QMenu {
+                background: #1a1a1a;
+                border: 1px solid #3a3a3a;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+            QMenu::item:selected { background: #2a3a3a; color: #fff; }
+            QMenu::item:checked { color: #00d4ff; }
+        """)
+
+        def _trig_checked(mode):
+            return self.trigger_mode == mode
+
+        act_tog = trig_menu.addAction("↕  Toggle (appui/relâche)")
+        act_tog.setCheckable(True)
+        act_tog.setChecked(_trig_checked("toggle"))
+        act_tog.triggered.connect(lambda: self._set_trigger_mode("toggle"))
+
+        act_fla = trig_menu.addAction("⚡  Flash (maintenir enfoncé)")
+        act_fla.setCheckable(True)
+        act_fla.setChecked(_trig_checked("flash"))
+        act_fla.triggered.connect(lambda: self._set_trigger_mode("flash"))
+
+        act_tim = trig_menu.addAction("⏳  Timer (durée automatique)")
+        act_tim.setCheckable(True)
+        act_tim.setChecked(_trig_checked("timer"))
+        act_tim.triggered.connect(lambda: self._set_trigger_mode("timer"))
+
+        # Durée du timer (QWidgetAction avec spinbox)
+        trig_menu.addSeparator()
+        dur_widget = QWidget()
+        dur_layout = QHBoxLayout(dur_widget)
+        dur_layout.setContentsMargins(16, 4, 16, 4)
+        dur_layout.setSpacing(6)
+        dur_lbl = QLabel("Durée :")
+        dur_lbl.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
+        dur_spin = QDoubleSpinBox()
+        dur_spin.setRange(0.1, 60.0)
+        dur_spin.setSingleStep(0.5)
+        dur_spin.setValue(self.trigger_duration / 1000.0)
+        dur_spin.setSuffix(" s")
+        dur_spin.setFixedWidth(80)
+        dur_spin.setStyleSheet(
+            "QDoubleSpinBox { background: #222; color: #fff; border: 1px solid #444;"
+            " border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button"
+            " { width: 16px; background: #333; border: none; }"
+        )
+        dur_spin.valueChanged.connect(
+            lambda v: self._set_trigger_duration(int(v * 1000))
+        )
+        dur_layout.addWidget(dur_lbl)
+        dur_layout.addWidget(dur_spin)
+        dur_layout.addStretch()
+        dur_wa = QWidgetAction(trig_menu)
+        dur_wa.setDefaultWidget(dur_widget)
+        trig_menu.addAction(dur_wa)
+
         menu.exec(self.mapToGlobal(pos))
+
+    def _set_trigger_mode(self, mode: str):
+        self.trigger_mode = mode
+        self.trigger_mode_changed.emit(self.index, mode, self.trigger_duration)
+
+    def _set_trigger_duration(self, duration_ms: int):
+        self.trigger_duration = duration_ms
+        self.trigger_mode_changed.emit(self.index, self.trigger_mode, duration_ms)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.press_signal.emit(self.index)
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.released_signal.emit(self.index)
+        super().mouseReleaseEvent(e)
 
     def _select_editor_effect(self, cfg_or_none):
         """Applique un effet sélectionné dans le menu (avec ou sans config)."""

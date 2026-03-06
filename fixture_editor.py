@@ -3,6 +3,7 @@ Editeur de fixture DMX — MyStrow
 Dialog de création et gestion de templates de fixtures pour le patch DMX.
 """
 import copy
+import gzip
 import json
 from pathlib import Path
 
@@ -11,9 +12,61 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget, QLineEdit, QComboBox, QFrame,
     QMessageBox, QListWidget, QListWidgetItem, QMenuBar,
     QFileDialog, QSplitter, QAbstractItemView, QSizePolicy,
+    QProgressBar, QStyledItemDelegate, QStyleFactory,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction, QKeySequence
+from PySide6.QtCore import Qt, Signal, QTimer, QThread, QObject, QRect, QSize
+from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction, QKeySequence, QPalette
+
+from builtin_fixtures import BUILTIN_FIXTURES
+
+_BUNDLE_ROLE = Qt.UserRole + 3   # data role for OFL bundle fixtures in QListWidget
+_BUNDLE_CACHE: list | None = None  # module-level lazy cache
+
+_BUNDLE_GROUP = {
+    "Moving Head":     "lyre",
+    "Barre LED":       "barre",
+    "Stroboscope":     "strobe",
+    "Machine a fumee": "fumee",
+}
+
+
+def _load_bundle() -> list:
+    """Charge fixtures_bundle.json.gz (OFL) en cache module. Thread-safe en lecture."""
+    global _BUNDLE_CACHE
+    if _BUNDLE_CACHE is not None:
+        return _BUNDLE_CACHE
+    try:
+        bundle_path = Path(__file__).parent / "fixtures_bundle.json.gz"
+        if not bundle_path.exists():
+            _BUNDLE_CACHE = []
+            return _BUNDLE_CACHE
+        with gzip.open(bundle_path, "rb") as f:
+            data = json.loads(f.read().decode("utf-8"))
+        items = []
+        for fx in data:
+            modes = fx.get("modes", [])
+            n_modes = len(modes)
+            for m in modes:
+                profile = m.get("profile", [])
+                if not profile:
+                    continue
+                name = fx["name"]
+                if n_modes > 1:
+                    name += f" · {m['name']}"
+                items.append({
+                    "name":         name,
+                    "manufacturer": fx.get("manufacturer", ""),
+                    "fixture_type": fx.get("fixture_type", "PAR LED"),
+                    "group":        _BUNDLE_GROUP.get(fx.get("fixture_type", ""), "face"),
+                    "profile":      profile,
+                    "source":       "ofl",
+                    "_bundle":      True,
+                })
+        _BUNDLE_CACHE = items
+    except Exception:
+        _BUNDLE_CACHE = []
+    return _BUNDLE_CACHE
+
 
 class _NoScrollCombo(QComboBox):
     """QComboBox qui ignore le scroll souris (évite de changer de canal par accident)."""
@@ -54,24 +107,6 @@ CHANNEL_COLORS = {
     "Speed": "#66ff66", "Mode": "#88aaff",
 }
 
-BUILTIN_FIXTURES = [
-    # PAR LED
-    {"name": "PAR LED RGB 3ch",    "fixture_type": "PAR LED",      "group": "face",   "profile": ["R","G","B"],                            "builtin": True},
-    {"name": "PAR LED RGBDS 5ch",  "fixture_type": "PAR LED",      "group": "face",   "profile": ["R","G","B","Dim","Strobe"],             "builtin": True},
-    {"name": "PAR LED RGBWD 5ch",  "fixture_type": "PAR LED",      "group": "face",   "profile": ["R","G","B","W","Dim"],                  "builtin": True},
-    {"name": "PAR LED RGBWDS 6ch", "fixture_type": "PAR LED",      "group": "face",   "profile": ["R","G","B","W","Dim","Strobe"],         "builtin": True},
-    # Moving Head
-    {"name": "Lyre Spot 5ch",      "fixture_type": "Moving Head",  "group": "lyre",   "profile": ["Shutter","Dim","ColorWheel","Gobo1","Speed"],            "builtin": True},
-    {"name": "Lyre Spot 8ch",      "fixture_type": "Moving Head",  "group": "lyre",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed","Mode"], "builtin": True},
-    {"name": "Lyre Wash RGB 8ch",  "fixture_type": "Moving Head",  "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","Dim","Shutter","Speed"],         "builtin": True},
-    {"name": "Lyre Wash RGBW 9ch", "fixture_type": "Moving Head",  "group": "lyre",   "profile": ["Pan","Tilt","R","G","B","W","Dim","Shutter","Speed"],     "builtin": True},
-    # Barre LED
-    {"name": "Barre LED RGB 5ch",  "fixture_type": "Barre LED",    "group": "barre",  "profile": ["R","G","B","Dim","Strobe"],             "builtin": True},
-    # Stroboscope
-    {"name": "Strobe 2ch",         "fixture_type": "Stroboscope",  "group": "strobe", "profile": ["Shutter","Dim"],                        "builtin": True},
-    # Machine a fumee
-    {"name": "Machine a fumee 2ch","fixture_type": "Machine a fumee","group": "fumee","profile": ["Smoke","Fan"],                          "builtin": True},
-]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DmxPreviewWidget — barre colorée représentant les canaux
@@ -132,6 +167,7 @@ class ChannelRowWidget(QWidget):
         super().__init__(parent)
         self.setFixedHeight(38)
         self.setStyleSheet("background:#1e1e1e;border-radius:3px;")
+        self._prev_type = ch_type
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 3, 4, 3)
@@ -187,6 +223,15 @@ class ChannelRowWidget(QWidget):
             f"border-radius:3px;color:{color};font-weight:bold;font-size:11px;}}"
         )
 
+    def set_type(self, t):
+        """Change le type sans déclencher la validation (revert)."""
+        self._combo.blockSignals(True)
+        idx = ALL_CHANNEL_TYPES.index(t) if t in ALL_CHANNEL_TYPES else 0
+        self._combo.setCurrentIndex(idx)
+        self._set_num_style(CHANNEL_COLORS.get(t, "#666"))
+        self._combo.blockSignals(False)
+        self._prev_type = t
+
     def _on_type_changed(self, ch_type):
         color = CHANNEL_COLORS.get(ch_type, "#666")
         self._set_num_style(color)
@@ -203,6 +248,54 @@ class ChannelRowWidget(QWidget):
         return self._combo.currentText()
 
 
+_SUB_ROLE = Qt.UserRole + 2   # sous-texte type · canaux
+
+class _FixtureItemDelegate(QStyledItemDelegate):
+    """Affiche 2 lignes : nom (blanc) + type·canaux (gris)."""
+    def sizeHint(self, option, index):
+        if not index.data(Qt.UserRole):  # headers
+            return QSize(option.rect.width(), 22)
+        return QSize(option.rect.width(), 46)
+
+    def paint(self, painter, option, index):
+        if not index.data(Qt.UserRole):  # section header — rendu standard
+            super().paint(painter, option, index)
+            return
+        painter.save()
+        from PySide6.QtWidgets import QStyle
+        is_selected = bool(option.state & QStyle.State_Selected)
+        is_hovered  = bool(option.state & QStyle.State_MouseOver)
+        if is_selected:
+            bg = QColor("#00d4ff18")
+        elif is_hovered:
+            bg = QColor("#1e1e1e")
+        else:
+            bg = QColor(0, 0, 0, 0)
+        painter.fillRect(option.rect, bg)
+        x, y, w, h = option.rect.x(), option.rect.y(), option.rect.width(), option.rect.height()
+        if is_selected:
+            name_color = QColor("#00d4ff")
+        else:
+            fg = index.data(Qt.ForegroundRole)
+            name_color = fg.color() if fg else QColor("#aaa")
+        f_name = painter.font()
+        f_name.setPointSize(11)
+        f_name.setBold(is_selected)
+        painter.setFont(f_name)
+        painter.setPen(name_color)
+        painter.drawText(QRect(x + 10, y + 4, w - 14, 20), Qt.AlignVCenter | Qt.AlignLeft,
+                         index.data(Qt.DisplayRole) or "")
+        sub = index.data(_SUB_ROLE) or ""
+        if sub:
+            f_sub = painter.font()
+            f_sub.setPointSize(9)
+            f_sub.setBold(False)
+            painter.setFont(f_sub)
+            painter.setPen(QColor("#00d4ff88") if is_selected else QColor("#444"))
+            painter.drawText(QRect(x + 10, y + 26, w - 14, 16), Qt.AlignVCenter | Qt.AlignLeft, sub)
+        painter.restore()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # FixtureEditorDialog
 # ──────────────────────────────────────────────────────────────────────────────
@@ -212,32 +305,50 @@ class FixtureEditorDialog(QDialog):
     fixture_added = Signal(dict)
 
     _STYLE = """
-        QDialog      { background: #141414; color: #e0e0e0; }
-        QLabel        { color: #e0e0e0; }
-        QLineEdit     { background: #222; color: #e0e0e0; border: 1px solid #3a3a3a;
-                        border-radius: 4px; padding: 5px 8px; font-size: 13px; }
-        QLineEdit:focus { border: 1px solid #00d4ff; }
-        QComboBox     { background: #222; color: #e0e0e0; border: 1px solid #3a3a3a;
-                        border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+        QDialog       { background: #141414; color: #e0e0e0; }
+        QWidget       { background: #141414; color: #e0e0e0; }
+        QLabel        { color: #e0e0e0; background: transparent; }
+        QLineEdit     { background: #1e1e1e; color: #fff;
+                        border: 1px solid #444; border-radius: 6px;
+                        padding: 6px 12px; font-size: 13px; }
+        QLineEdit:focus { border-color: #00d4ff88; }
+        QComboBox     { background: #1e1e1e; color: #e0e0e0; border: 1px solid #444;
+                        border-radius: 6px; padding: 4px 10px; font-size: 12px; }
         QComboBox::drop-down { border: none; width: 20px; }
-        QComboBox QAbstractItemView { background: #222; color: #e0e0e0;
-                        selection-background-color: #00d4ff33; }
-        QListWidget   { background: #1a1a1a; color: #e0e0e0; border: 1px solid #2a2a2a;
-                        border-radius: 4px; outline: none; }
-        QListWidget::item { padding: 5px 10px; border-radius: 3px; }
-        QListWidget::item:selected { background: #00d4ff22; color: #00d4ff; }
-        QListWidget::item:hover { background: #2a2a2a; }
+        QComboBox QAbstractItemView { background: #1e1e1e; color: #e0e0e0;
+                        selection-background-color: #00d4ff; selection-color: #000;
+                        border: 1px solid #444; }
+        QListWidget   { background: #1e1e1e; color: #e0e0e0;
+                        border: 1px solid #333; border-radius: 6px;
+                        font-size: 12px; outline: none; }
+        QListWidget::item { padding: 5px 10px; }
+        QListWidget::item:selected { background: #00d4ff; color: #000; font-weight: bold; }
+        QListWidget::item:hover:!selected { background: #2a2a2a; }
+        QPushButton   { background: #2a2a2a; color: #ccc;
+                        border: 1px solid #4a4a4a; border-radius: 6px;
+                        padding: 6px 16px; font-size: 12px; }
+        QPushButton:hover { border-color: #00d4ff; color: #fff; }
+        QPushButton:disabled { background: #1a1a1a; color: #333; border-color: #2a2a2a; }
         QScrollArea   { background: transparent; border: none; }
         QScrollBar:vertical { background: #1a1a1a; width: 7px; border-radius: 3px; }
         QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 3px; min-height: 16px; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QSplitter::handle { background: #2a2a2a; width: 2px; }
+        QMenuBar { background: #0d0d0d; color: #888; border-bottom: 1px solid #1a1a1a;
+                   padding: 2px 8px; font-size: 12px; }
+        QMenuBar::item { padding: 5px 14px; background: transparent; border-radius: 4px; }
+        QMenuBar::item:selected { background: #1a1a1a; color: #ddd; }
+        QMenu { background: #111; color: #ccc; border: 1px solid #2a2a2a; padding: 4px; font-size: 12px; }
+        QMenu::item { padding: 7px 28px; border-radius: 3px; }
+        QMenu::item:selected { background: #00d4ff22; color: #00d4ff; }
+        QMenu::separator { background: #1e1e1e; height: 1px; margin: 3px 8px; }
     """
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
         self.setWindowTitle("Editeur de fixture — MyStrow")
-        self.setMinimumSize(860, 580)
-        self.resize(980, 660)
+        self.setMinimumSize(960, 580)
+        self.resize(1120, 700)
         self._fixtures   = []   # custom fixtures (user-saved)
         self._current_idx = -1  # index in _all_fixtures()
         self._is_builtin  = False
@@ -247,6 +358,7 @@ class FixtureEditorDialog(QDialog):
 
         self._load_fixtures()
         self._build_ui()
+        self._rebuild_mfr_list()
         self._rebuild_list()
         if self._all_fixtures():
             self._select_fixture(0)
@@ -261,7 +373,8 @@ class FixtureEditorDialog(QDialog):
             if FIXTURE_FILE.exists():
                 data = json.loads(FIXTURE_FILE.read_text(encoding="utf-8"))
                 if isinstance(data, list):
-                    self._fixtures = [f for f in data if not f.get("builtin")]
+                    self._fixtures = [f for f in data
+                                      if isinstance(f, dict) and not f.get("builtin")]
         except Exception:
             self._fixtures = []
 
@@ -302,177 +415,209 @@ class FixtureEditorDialog(QDialog):
         splitter.setHandleWidth(2)
         outer.addWidget(splitter, 1)
 
-        # ── Left panel ───────────────────────────────────────────────────────
-        left = QWidget()
-        left.setFixedWidth(236)
-        left.setStyleSheet("QWidget{background:#1a1a1a;}")
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(8, 8, 8, 8)
-        lv.setSpacing(6)
+        _LIST_SS = (
+            "QListWidget{background:transparent;border:none;color:#aaa;"
+            "font-size:12px;outline:none;}"
+            "QListWidget::item{padding:7px 10px;border-radius:5px;margin:1px 0;}"
+            "QListWidget::item:selected{background:#00d4ff18;color:#00d4ff;font-weight:bold;}"
+            "QListWidget::item:hover:!selected{background:#1e1e1e;color:#ddd;}"
+        )
 
-        hdr = QLabel("FIXTURES DISPONIBLES")
-        hdr.setStyleSheet("font-size:10px;color:#555;letter-spacing:2px;font-weight:bold;")
-        lv.addWidget(hdr)
+        # ── Col 1 : Fabricants ───────────────────────────────────────────────
+        mfr_panel = QWidget()
+        mfr_panel.setMinimumWidth(160)
+        mfr_panel.setStyleSheet("QWidget{background:#0d0d0d;border-right:1px solid #1a1a1a;}")
+        mv = QVBoxLayout(mfr_panel)
+        mv.setContentsMargins(10, 14, 10, 12)
+        mv.setSpacing(6)
+
+        mfr_hdr = QLabel("FABRICANTS")
+        mfr_hdr.setStyleSheet(
+            "font-size:9px;color:#444;font-weight:bold;letter-spacing:1.5px;background:transparent;"
+        )
+        mv.addWidget(mfr_hdr)
+
+        self._mfr_list = QListWidget()
+        self._mfr_list.setStyleSheet(_LIST_SS)
+        self._mfr_list.currentItemChanged.connect(self._on_mfr_changed)
+        mv.addWidget(self._mfr_list, 1)
+        splitter.addWidget(mfr_panel)
+
+        # ── Col 2 : Fixtures ─────────────────────────────────────────────────
+        fix_panel = QWidget()
+        fix_panel.setMinimumWidth(200)
+        fix_panel.setStyleSheet("QWidget{background:#0d0d0d;border-right:1px solid #1a1a1a;}")
+        fv2 = QVBoxLayout(fix_panel)
+        fv2.setContentsMargins(10, 14, 10, 12)
+        fv2.setSpacing(6)
+
+        fx_hdr = QLabel("FIXTURES")
+        fx_hdr.setStyleSheet(
+            "font-size:9px;color:#444;font-weight:bold;letter-spacing:1.5px;background:transparent;"
+        )
+        fv2.addWidget(fx_hdr)
+
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("🔍  Rechercher...")
+        self._search_edit.setFixedHeight(32)
+        self._search_edit.textChanged.connect(self._on_search_changed)
+        fv2.addWidget(self._search_edit)
 
         self._list_widget = QListWidget()
+        self._list_widget.setStyleSheet(_LIST_SS)
         self._list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        lv.addWidget(self._list_widget, 1)
+        self._list_widget.setSpacing(1)
+        self._list_widget.setMouseTracking(True)
+        self._list_widget.viewport().setMouseTracking(True)
+        self._list_widget.setItemDelegate(_FixtureItemDelegate(self._list_widget))
+        fv2.addWidget(self._list_widget, 1)
 
-        btn_new = QPushButton("  + Nouvelle fixture")
+        btn_new = QPushButton("✦  Nouvelle fixture")
         btn_new.setFixedHeight(34)
         btn_new.setStyleSheet(
-            "QPushButton{background:#1e3a1e;color:#44cc44;border:1px solid #2a6a2a;"
-            "border-radius:4px;font-size:12px;font-weight:bold;text-align:left;padding-left:8px;}"
-            "QPushButton:hover{background:#2a4a2a;border:1px solid #44aa44;}"
+            "QPushButton{background:#1a3a2a;color:#44cc88;border:1px solid #44cc8844;"
+            "border-radius:6px;font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{border-color:#44cc88;color:#66ee99;}"
         )
         btn_new.clicked.connect(self._new_fixture)
-        lv.addWidget(btn_new)
-        splitter.addWidget(left)
+        fv2.addWidget(btn_new)
+        splitter.addWidget(fix_panel)
 
-        # ── Right panel ──────────────────────────────────────────────────────
+        # ── Col 3 : Édition ──────────────────────────────────────────────────
         right = QWidget()
         right.setStyleSheet("QWidget{background:#141414;}")
         rv = QVBoxLayout(right)
-        rv.setContentsMargins(16, 12, 16, 12)
-        rv.setSpacing(8)
+        rv.setContentsMargins(20, 16, 20, 16)
+        rv.setSpacing(10)
 
+        hdr_row = QHBoxLayout()
         self._header_lbl = QLabel("Nouvelle fixture")
-        self._header_lbl.setStyleSheet("font-size:16px;font-weight:bold;color:#00d4ff;")
-        rv.addWidget(self._header_lbl)
+        self._header_lbl.setStyleSheet(
+            "font-size:18px;font-weight:bold;color:#00d4ff;background:transparent;"
+        )
+        hdr_row.addWidget(self._header_lbl, 1)
+        rv.addLayout(hdr_row)
 
-        self._builtin_badge = QLabel("  ⚙  Template intégré — dupliquer pour créer votre version  ")
+        self._builtin_badge = QLabel("  ⚙  Fixture intégrée — Dupliquer pour créer votre version  ")
         self._builtin_badge.setStyleSheet(
-            "QLabel{background:#1a2a1a;color:#777;border:1px solid #2a3a2a;"
-            "border-radius:4px;padding:4px 10px;font-size:11px;}"
+            "QLabel{background:#001a10;color:#44aa66;border:1px solid #00d4ff22;"
+            "border-radius:6px;padding:6px 12px;font-size:11px;}"
         )
         self._builtin_badge.setVisible(False)
         rv.addWidget(self._builtin_badge)
 
         _sep = lambda: self._make_sep()
-
         rv.addWidget(_sep())
 
-        # Form row: Name / Type / Group
         form_row = QHBoxLayout()
         form_row.setSpacing(16)
 
         def _labeled(lbl_txt, widget):
             col = QVBoxLayout()
-            col.setSpacing(2)
+            col.setSpacing(4)
             lbl = QLabel(lbl_txt)
-            lbl.setStyleSheet("font-size:10px;color:#888;font-weight:bold;letter-spacing:1px;")
+            lbl.setStyleSheet(
+                "font-size:10px;color:#555;font-weight:bold;letter-spacing:1px;background:transparent;"
+            )
             col.addWidget(lbl)
             col.addWidget(widget)
             return col
 
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("Nom de la fixture...")
-        self._name_edit.setFixedHeight(34)
+        self._name_edit.setFixedHeight(36)
         self._name_edit.textChanged.connect(lambda t: self._header_lbl.setText(t or "Nouvelle fixture"))
         form_row.addLayout(_labeled("NOM", self._name_edit), 2)
 
+        self._manufacturer_edit = QLineEdit()
+        self._manufacturer_edit.setPlaceholderText("Ex: Chauvet DJ, ADJ...")
+        self._manufacturer_edit.setFixedHeight(36)
+        form_row.addLayout(_labeled("FABRICANT", self._manufacturer_edit), 1)
+
         self._type_combo = _NoScrollCombo()
-        self._type_combo.setFixedHeight(34)
+        self._type_combo.setFixedHeight(36)
         for ft in FIXTURE_TYPES:
             self._type_combo.addItem(ft)
-        self._type_combo.currentIndexChanged.connect(self._rebuild_profile_combo)
         form_row.addLayout(_labeled("TYPE", self._type_combo), 1)
         rv.addLayout(form_row)
 
         rv.addWidget(_sep())
 
-        # Channel builder header
         ch_hdr = QHBoxLayout()
         ch_lbl = QLabel("CANAUX DMX")
-        ch_lbl.setStyleSheet("font-size:10px;color:#888;font-weight:bold;letter-spacing:1px;")
+        ch_lbl.setStyleSheet(
+            "font-size:10px;color:#555;font-weight:bold;letter-spacing:1px;background:transparent;"
+        )
         ch_hdr.addWidget(ch_lbl)
         ch_hdr.addStretch()
-        # Quick-load profile combo
-        self._profile_combo = _NoScrollCombo()
-        self._profile_combo.setFixedHeight(28)
-        self._profile_combo.setFixedWidth(220)
-        self._profile_combo.setStyleSheet(
-            "QComboBox{background:#1e2a3a;color:#00d4ff;border:1px solid #00d4ff44;"
-            "border-radius:4px;padding:2px 6px;font-size:11px;}"
-            "QComboBox::drop-down{border:none;width:16px;}"
-            "QComboBox QAbstractItemView{background:#222;color:#e0e0e0;}"
+        self._add_ch_combo = _NoScrollCombo()
+        self._add_ch_combo.setFixedHeight(30)
+        self._add_ch_combo.setFixedWidth(110)
+        for ct in ALL_CHANNEL_TYPES:
+            self._add_ch_combo.addItem(ct)
+        ch_hdr.addWidget(self._add_ch_combo)
+        btn_add_ch = QPushButton("+ Canal")
+        btn_add_ch.setFixedHeight(30)
+        btn_add_ch.setStyleSheet(
+            "QPushButton{background:#1a2a3a;color:#00d4ff;border:1px solid #00d4ff44;"
+            "border-radius:6px;font-size:12px;padding:0 12px;}"
+            "QPushButton:hover{border-color:#00d4ff;}"
         )
-        self._profile_combo.currentIndexChanged.connect(self._on_profile_selected)
-        ch_hdr.addWidget(self._profile_combo)
-        self._rebuild_profile_combo()  # populate with default type (PAR LED)
+        btn_add_ch.clicked.connect(self._add_channel)
+        ch_hdr.addWidget(btn_add_ch)
         rv.addLayout(ch_hdr)
 
-        # Channel rows scroll area
         self._ch_scroll = QScrollArea()
         self._ch_scroll.setWidgetResizable(True)
-        self._ch_scroll.setFixedHeight(170)
+        self._ch_scroll.setFixedHeight(180)
         self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
         self._ch_container = QWidget()
-        self._ch_container.setStyleSheet("QWidget{background:#1a1a1a;border-radius:4px;}")
+        self._ch_container.setStyleSheet(
+            "QWidget{background:#1e1e1e;border-radius:6px;border:1px solid #2a2a2a;}"
+        )
         self._ch_vbox = QVBoxLayout(self._ch_container)
-        self._ch_vbox.setContentsMargins(4, 4, 4, 4)
-        self._ch_vbox.setSpacing(2)
+        self._ch_vbox.setContentsMargins(6, 6, 6, 6)
+        self._ch_vbox.setSpacing(3)
         self._ch_vbox.addStretch()
         self._ch_scroll.setWidget(self._ch_container)
         rv.addWidget(self._ch_scroll)
 
-        # Add-channel row
-        add_row = QHBoxLayout()
-        add_row.setSpacing(6)
-        self._add_ch_combo = QComboBox()
-        self._add_ch_combo.setFixedHeight(30)
-        for ct in ALL_CHANNEL_TYPES:
-            self._add_ch_combo.addItem(ct)
-        add_row.addWidget(self._add_ch_combo)
-        btn_add_ch = QPushButton("+ Ajouter canal")
-        btn_add_ch.setFixedHeight(30)
-        btn_add_ch.setStyleSheet(
-            "QPushButton{background:#1a2a3a;color:#00d4ff;border:1px solid #00d4ff44;"
-            "border-radius:4px;font-size:12px;padding:0 12px;}"
-            "QPushButton:hover{background:#1e3a4a;border:1px solid #00d4ff;}"
-        )
-        btn_add_ch.clicked.connect(self._add_channel)
-        add_row.addWidget(btn_add_ch)
-        add_row.addStretch()
-        rv.addLayout(add_row)
-
         rv.addWidget(_sep())
 
-        # Preview
         prev_lbl = QLabel("PRÉVISUALISATION")
-        prev_lbl.setStyleSheet("font-size:10px;color:#888;font-weight:bold;letter-spacing:1px;")
+        prev_lbl.setStyleSheet(
+            "font-size:10px;color:#555;font-weight:bold;letter-spacing:1px;background:transparent;"
+        )
         rv.addWidget(prev_lbl)
 
         self._preview = DmxPreviewWidget()
-        self._preview.setStyleSheet("background:#1a1a1a;border-radius:4px;")
+        self._preview.setStyleSheet("background:#1e1e1e;border-radius:6px;border:1px solid #2a2a2a;")
         rv.addWidget(self._preview)
 
         rv.addStretch()
         rv.addWidget(_sep())
 
-        # Action buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._btn_duplicate = QPushButton("Dupliquer")
-        self._btn_duplicate.setFixedHeight(34)
+        self._btn_duplicate = QPushButton("⎘  Dupliquer")
+        self._btn_duplicate.setFixedHeight(36)
         self._btn_duplicate.setStyleSheet(
-            "QPushButton{background:#2a2a1a;color:#cccc44;border:1px solid #4a4a22;"
-            "border-radius:4px;font-size:12px;padding:0 12px;}"
-            "QPushButton:hover{background:#3a3a1a;border:1px solid #aaaa33;}"
+            "QPushButton{background:#1a1a2a;color:#8888cc;border:1px solid #33335555;"
+            "border-radius:6px;font-size:12px;padding:0 14px;}"
+            "QPushButton:hover{border-color:#8888cc;color:#aaaaee;}"
         )
         self._btn_duplicate.clicked.connect(self._duplicate_fixture)
         btn_row.addWidget(self._btn_duplicate)
 
-        self._btn_delete = QPushButton("Supprimer")
-        self._btn_delete.setFixedHeight(34)
+        self._btn_delete = QPushButton("🗑  Supprimer")
+        self._btn_delete.setFixedHeight(36)
         self._btn_delete.setEnabled(False)
         self._btn_delete.setStyleSheet(
-            "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #4a2222;"
-            "border-radius:4px;font-size:12px;padding:0 12px;}"
-            "QPushButton:hover{background:#400000;border:1px solid #cc4444;}"
-            "QPushButton:disabled{background:#1a1a1a;color:#444;border:1px solid #2a2a2a;}"
+            "QPushButton{background:#1a0808;color:#cc4444;border:1px solid #55111144;"
+            "border-radius:6px;font-size:12px;padding:0 14px;}"
+            "QPushButton:hover{border-color:#cc4444;color:#ff6666;}"
+            "QPushButton:disabled{background:#141414;color:#333;border-color:#222;}"
         )
         self._btn_delete.clicked.connect(self._delete_fixture)
         btn_row.addWidget(self._btn_delete)
@@ -482,17 +627,17 @@ class FixtureEditorDialog(QDialog):
         self._btn_save = QPushButton("💾  Enregistrer")
         self._btn_save.setFixedHeight(36)
         self._btn_save.setStyleSheet(
-            "QPushButton{background:#1a2a3a;color:#00aaff;border:1px solid #00aaff44;"
-            "border-radius:4px;font-size:13px;font-weight:bold;padding:0 16px;}"
-            "QPushButton:hover{background:#1e3a4a;border:1px solid #00aaff;}"
+            "QPushButton{background:#00d4ff;color:#000;border:none;"
+            "border-radius:6px;font-size:13px;font-weight:bold;padding:0 20px;}"
+            "QPushButton:hover{background:#33ddff;}"
+            "QPushButton:disabled{background:#1a1a1a;color:#333;border:1px solid #2a2a2a;}"
         )
         self._btn_save.clicked.connect(self._save_current)
         btn_row.addWidget(self._btn_save)
 
-
         rv.addLayout(btn_row)
         splitter.addWidget(right)
-        splitter.setSizes([236, 744])
+        splitter.setSizes([170, 250, 700])
 
         self._list_widget.currentRowChanged.connect(self._on_list_selection)
 
@@ -530,28 +675,139 @@ class FixtureEditorDialog(QDialog):
 
     # ── List management ───────────────────────────────────────────────────────
 
+    def _on_search_changed(self, text):
+        self._rebuild_mfr_list()
+        self._rebuild_list()
+
+    def _on_mfr_changed(self, current, previous):
+        self._rebuild_list()
+
+    def _rebuild_mfr_list(self):
+        """Peuple la colonne Fabricants depuis les fixtures + OFL si recherche active."""
+        if not hasattr(self, '_mfr_list'):
+            return
+        query = self._search_edit.text().strip().lower() if hasattr(self, '_search_edit') else ""
+
+        cur_item = self._mfr_list.currentItem()
+        cur_mfr = cur_item.data(Qt.UserRole) if cur_item else None  # None = "Tous"
+
+        self._mfr_list.blockSignals(True)
+        self._mfr_list.clear()
+
+        all_item = QListWidgetItem("Tous")
+        all_item.setData(Qt.UserRole, None)
+        self._mfr_list.addItem(all_item)
+
+        mfr_counts: dict[str, int] = {}
+        for fx in self._all_fixtures():
+            mfr = fx.get("manufacturer") or "Générique"
+            name = fx.get("name", "")
+            if query and query not in name.lower() and query not in mfr.lower():
+                continue
+            mfr_counts[mfr] = mfr_counts.get(mfr, 0) + 1
+
+        sorted_mfrs = []
+        if "Générique" in mfr_counts:
+            sorted_mfrs.append("Générique")
+        for m in sorted(mfr_counts):
+            if m != "Générique":
+                sorted_mfrs.append(m)
+
+        for mfr in sorted_mfrs:
+            item = QListWidgetItem(mfr)
+            item.setData(Qt.UserRole, mfr)
+            self._mfr_list.addItem(item)
+
+        if query:
+            bundle_matches = [
+                fx for fx in _load_bundle()
+                if query in fx["name"].lower() or query in fx["manufacturer"].lower()
+            ]
+            if bundle_matches:
+                ofl_item = QListWidgetItem(f"OFL  ({min(len(bundle_matches), 150)})")
+                ofl_item.setData(Qt.UserRole, "__ofl__")
+                ofl_item.setForeground(QColor("#4488aa"))
+                self._mfr_list.addItem(ofl_item)
+
+        self._mfr_list.blockSignals(False)
+
+        # Restore selection
+        for i in range(self._mfr_list.count()):
+            item = self._mfr_list.item(i)
+            if item and item.data(Qt.UserRole) == cur_mfr:
+                self._mfr_list.blockSignals(True)
+                self._mfr_list.setCurrentRow(i)
+                self._mfr_list.blockSignals(False)
+                return
+        self._mfr_list.blockSignals(True)
+        self._mfr_list.setCurrentRow(0)
+        self._mfr_list.blockSignals(False)
+
     def _rebuild_list(self):
+        query = self._search_edit.text().strip().lower() if hasattr(self, '_search_edit') else ""
+
+        cur_mfr_item = self._mfr_list.currentItem() if hasattr(self, '_mfr_list') else None
+        mfr_filter = cur_mfr_item.data(Qt.UserRole) if cur_mfr_item else None
+
         self._list_widget.blockSignals(True)
         self._list_widget.clear()
-        current_type = None
-        for i, fx in enumerate(self._all_fixtures()):
-            ftype = fx.get("fixture_type", "?")
-            if ftype != current_type:
-                current_type = ftype
-                hdr = QListWidgetItem(f"  {ftype.upper()}")
-                hdr.setFlags(Qt.NoItemFlags)
-                hdr.setForeground(QColor("#555"))
-                f = hdr.font(); f.setPointSize(8); hdr.setFont(f)
-                hdr.setBackground(QColor("#111"))
-                self._list_widget.addItem(hdr)
-            is_builtin = fx.get("builtin", False)
-            n_ch = len(fx.get("profile", []))
-            icon = "◦" if is_builtin else "◈"
-            item = QListWidgetItem(f"  {icon} {fx['name']}")
-            item.setData(Qt.UserRole, i)
-            item.setForeground(QColor("#666" if is_builtin else "#cccccc"))
-            item.setToolTip(f"{fx.get('fixture_type','?')} · {n_ch} canaux · groupe: {fx.get('group','?')}")
-            self._list_widget.addItem(item)
+
+        if mfr_filter == "__ofl__":
+            # Afficher les résultats OFL bundle uniquement
+            bundle_matches = [
+                fx for fx in _load_bundle()
+                if not query or query in fx["name"].lower() or query in fx["manufacturer"].lower()
+            ][:150]
+            for bfx in bundle_matches:
+                bname  = bfx.get("name", "")
+                bmfr   = bfx.get("manufacturer", "")
+                bftype = bfx.get("fixture_type", "")
+                bn_ch  = len(bfx.get("profile", []))
+                bitem  = QListWidgetItem(f"◦  {bname}")
+                bitem.setData(_BUNDLE_ROLE, bfx)
+                bitem.setData(_SUB_ROLE, f"{bftype}  ·  {bn_ch} ch  ·  {bmfr}")
+                bitem.setForeground(QColor("#4488aa"))
+                bitem.setToolTip(f"{bmfr} — {bname}\n{bftype} · {bn_ch} canaux")
+                self._list_widget.addItem(bitem)
+        else:
+            # Trier : Générique en tête, builtin ensuite, custom en dernier
+            all_fx = self._all_fixtures()
+            def _sort_key(pair):
+                _, fx = pair
+                if not isinstance(fx, dict):
+                    return (3, "")
+                mfr = fx.get("manufacturer", "")
+                is_builtin = fx.get("builtin", False)
+                if mfr.lower() == "générique":
+                    return (0, fx.get("name", ""))
+                if is_builtin:
+                    return (1, fx.get("name", ""))
+                return (2, fx.get("name", ""))
+            ordered = sorted(enumerate(all_fx), key=_sort_key)
+            for i, fx in ordered:
+                name = fx.get("name", "")
+                mfr  = fx.get("manufacturer") or "Générique"
+                if query and query not in name.lower() and query not in mfr.lower():
+                    continue
+                if mfr_filter is not None and mfr != mfr_filter:
+                    continue
+                is_builtin = fx.get("builtin", False)
+                ftype  = fx.get("fixture_type", "")
+                n_ch   = len(fx.get("profile", []))
+                icon   = "◦" if is_builtin else "◈"
+                item   = QListWidgetItem(f"{icon}  {name}")
+                item.setData(Qt.UserRole, i)
+                item.setData(_SUB_ROLE, f"{ftype}  ·  {n_ch} ch")
+                item.setForeground(QColor("#777" if is_builtin else "#dddddd"))
+                item.setToolTip(f"{mfr} — {name}\n{ftype} · {n_ch} canaux")
+                self._list_widget.addItem(item)
+
+            if not query and mfr_filter is None:
+                hint = QListWidgetItem("  🔍  Tapez pour chercher dans la bibliothèque OFL")
+                hint.setFlags(Qt.NoItemFlags)
+                hint.setForeground(QColor("#2a2a2a"))
+                self._list_widget.addItem(hint)
+
         self._list_widget.blockSignals(False)
         if self._current_idx >= 0:
             self._select_list_item(self._current_idx)
@@ -560,10 +816,40 @@ class FixtureEditorDialog(QDialog):
         item = self._list_widget.item(row)
         if item is None:
             return
+        bundle_fx = item.data(_BUNDLE_ROLE)
+        if bundle_fx is not None:
+            self._select_bundle_fixture(bundle_fx)
+            return
         idx = item.data(Qt.UserRole)
         if idx is None:
             return
         self._select_fixture(idx)
+
+    def _select_bundle_fixture(self, fx: dict):
+        """Affiche une fixture OFL (lecture seule) dans le formulaire."""
+        self._current_idx = -1
+        self._is_builtin  = True
+
+        self._name_edit.blockSignals(True)
+        self._name_edit.setText(fx.get("name", ""))
+        self._name_edit.blockSignals(False)
+        self._header_lbl.setText(fx.get("name", ""))
+
+        self._manufacturer_edit.setText(fx.get("manufacturer", ""))
+        fi = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
+        if fi >= 0:
+            self._type_combo.setCurrentIndex(fi)
+
+        self._set_channels(fx.get("profile", []))
+
+        self._builtin_badge.setVisible(True)
+        self._btn_delete.setEnabled(False)
+        self._btn_save.setEnabled(False)
+        self._btn_save.setToolTip("Fixture OFL — utilisez « Dupliquer » pour créer votre propre version.")
+        self._btn_save.setCursor(Qt.ForbiddenCursor)
+        self._manufacturer_edit.setReadOnly(True)
+        if self._btn_add_to_patch:
+            self._btn_add_to_patch.setEnabled(True)
 
     def _select_fixture(self, idx):
         all_fx = self._all_fixtures()
@@ -578,6 +864,8 @@ class FixtureEditorDialog(QDialog):
         self._name_edit.blockSignals(False)
         self._header_lbl.setText(fx.get("name", ""))
 
+        self._manufacturer_edit.setText(fx.get("manufacturer", ""))
+
         fi = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
         if fi >= 0:
             self._type_combo.setCurrentIndex(fi)
@@ -587,11 +875,32 @@ class FixtureEditorDialog(QDialog):
         self._builtin_badge.setVisible(self._is_builtin)
         self._btn_delete.setEnabled(not self._is_builtin)
         self._btn_save.setEnabled(not self._is_builtin)
-        self._profile_combo.setVisible(not self._is_builtin)
-        self._rebuild_profile_combo()
+        self._btn_save.setToolTip(
+            "Cette fixture est intégrée et ne peut pas être modifiée.\n"
+            "Utilisez « Dupliquer » pour créer votre propre version."
+            if self._is_builtin else ""
+        )
+        self._btn_save.setCursor(
+            Qt.ForbiddenCursor if self._is_builtin else Qt.ArrowCursor
+        )
+        self._manufacturer_edit.setReadOnly(self._is_builtin)
         self._select_list_item(idx)
 
     def _select_list_item(self, fx_idx):
+        # Sélectionner le bon fabricant dans la colonne gauche
+        if hasattr(self, '_mfr_list') and fx_idx >= 0:
+            all_fx = self._all_fixtures()
+            if fx_idx < len(all_fx):
+                mfr = all_fx[fx_idx].get("manufacturer") or "Générique"
+                for i in range(self._mfr_list.count()):
+                    mi = self._mfr_list.item(i)
+                    if mi and mi.data(Qt.UserRole) == mfr:
+                        if self._mfr_list.currentItem() is not mi:
+                            self._mfr_list.blockSignals(True)
+                            self._mfr_list.setCurrentRow(i)
+                            self._mfr_list.blockSignals(False)
+                            self._rebuild_list()
+                        break
         for i in range(self._list_widget.count()):
             item = self._list_widget.item(i)
             if item and item.data(Qt.UserRole) == fx_idx:
@@ -617,7 +926,7 @@ class FixtureEditorDialog(QDialog):
         row.remove_requested.connect(self._remove_channel_row)
         row.move_up_requested.connect(self._move_channel_up)
         row.move_dn_requested.connect(self._move_channel_dn)
-        row.changed.connect(self._update_preview)
+        row.changed.connect(lambda row=row: self._on_channel_type_changed(row))
         self._ch_vbox.insertWidget(self._ch_vbox.count() - 1, row)
         self._channel_rows.append(row)
 
@@ -653,8 +962,25 @@ class FixtureEditorDialog(QDialog):
         for i, row in enumerate(self._channel_rows):
             row.set_num(i + 1)
 
+    def _on_channel_type_changed(self, row):
+        """Validation : refuse un doublon de type (sauf Mode)."""
+        new_type = row.get_type()
+        if new_type != "Mode":
+            for other in self._channel_rows:
+                if other is not row and other.get_type() == new_type:
+                    row.set_type(row._prev_type)
+                    return
+        row._prev_type = new_type
+        self._update_preview()
+
     def _add_channel(self):
         ch_type = self._add_ch_combo.currentText()
+        if ch_type != "Mode":
+            used = [r.get_type() for r in self._channel_rows]
+            if ch_type in used:
+                QMessageBox.warning(self, "Canal dupliqué",
+                    f"Le canal «{ch_type}» est déjà présent dans ce profil.")
+                return
         self._append_channel_row(len(self._channel_rows) + 1, ch_type)
         self._update_preview()
         self._ch_scroll.verticalScrollBar().setValue(
@@ -664,39 +990,16 @@ class FixtureEditorDialog(QDialog):
     def _get_current_channels(self):
         return [row.get_type() for row in self._channel_rows]
 
-    def _rebuild_profile_combo(self):
-        """Recharge le combo profil selon le type de fixture sélectionné."""
-        fixture_type = self._type_combo.currentText()
-        allowed = TYPE_PROFILES.get(fixture_type, [])
-        self._profile_combo.blockSignals(True)
-        self._profile_combo.clear()
-        self._profile_combo.addItem("↓  Charger un profil...")
-        try:
-            from artnet_dmx import DMX_PROFILES, profile_display_text
-            for pname, pch in DMX_PROFILES.items():
-                if pname in allowed:
-                    self._profile_combo.addItem(f"{pname}  ({profile_display_text(pch)})", pch)
-        except ImportError:
-            pass
-        self._profile_combo.blockSignals(False)
-
     def _update_preview(self):
         channels = self._get_current_channels()
         self._preview.set_channels(channels)
-
-    def _on_profile_selected(self, idx):
-        if idx == 0:
-            return
-        channels = self._profile_combo.itemData(idx)
-        if channels:
-            self._set_channels(channels)
-        self._profile_combo.setCurrentIndex(0)
 
     # ── Form data ─────────────────────────────────────────────────────────────
 
     def _get_form_data(self):
         return {
             "name":         self._name_edit.text().strip(),
+            "manufacturer": self._manufacturer_edit.text().strip() or "Générique",
             "fixture_type": self._type_combo.currentText(),
             "group":        "face",
             "profile":      self._get_current_channels(),
@@ -710,12 +1013,15 @@ class FixtureEditorDialog(QDialog):
         self._name_edit.blockSignals(True)
         self._name_edit.setText("")
         self._name_edit.blockSignals(False)
+        self._manufacturer_edit.setText("")
         self._header_lbl.setText("Nouvelle fixture")
         self._type_combo.setCurrentIndex(0)
         self._set_channels(["R", "G", "B"])
         self._builtin_badge.setVisible(False)
         self._btn_delete.setEnabled(False)
         self._btn_save.setEnabled(True)
+        self._btn_save.setToolTip("")
+        self._btn_save.setCursor(Qt.ArrowCursor)
         self._list_widget.blockSignals(True)
         self._list_widget.clearSelection()
         self._list_widget.blockSignals(False)
@@ -811,39 +1117,97 @@ class FixtureEditorDialog(QDialog):
     # ── Import / Export ───────────────────────────────────────────────────────
 
     def _import_fixtures(self):
-        path, _ = QFileDialog.getOpenFileName(
+        from fixture_parser import parse_file
+        from PySide6.QtWidgets import QInputDialog
+
+        paths, _ = QFileDialog.getOpenFileNames(
             self, "Importer des fixtures", str(Path.home()),
-            "Fixtures MyStrow (*.mft *.json)"
+            "Tous les formats supportés (*.mft *.json *.xml *.mystrow);;"
+            "Fixture MyStrow (*.mft *.json *.mystrow);;"
+            "GrandMA2/3 XML (*.xml)"
         )
-        if not path:
+        if not paths:
             return
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                data = [data]
-            if not isinstance(data, list):
-                raise ValueError("Format invalide")
-            self._push_undo()
-            existing = {f["name"] for f in self._fixtures}
-            imported = 0
-            for fx in data:
-                if "name" not in fx or "profile" not in fx:
-                    continue
-                fx.pop("builtin", None)
-                name = fx["name"]
-                if name in existing:
-                    c = 2
-                    while f"{name} ({c})" in existing:
-                        c += 1
-                    fx["name"] = f"{name} ({c})"
-                self._fixtures.append(fx)
-                existing.add(fx["name"])
-                imported += 1
-            self._save_fixtures()
-            self._rebuild_list()
-            QMessageBox.information(self, "Import réussi", f"{imported} fixture(s) importée(s).")
-        except Exception as e:
-            QMessageBox.warning(self, "Erreur d'import", f"Impossible d'importer:\n{e}")
+
+        _GROUP = {"Moving Head": "lyre", "Barre LED": "barre",
+                  "Stroboscope": "strobe", "Machine a fumee": "fumee"}
+
+        self._push_undo()
+        existing = {f["name"] for f in self._fixtures}
+        imported = 0
+        errors = []
+
+        for path in paths:
+            ext = Path(path).suffix.lower()
+            try:
+                raw = Path(path).read_bytes()
+
+                if ext == ".xml":
+                    # ── Fichier GrandMA2/3 XML ────────────────────────────────
+                    ofl_fx = parse_file(path)
+                    modes = [m for m in (ofl_fx.get("modes") or [])
+                             if isinstance(m, dict) and m.get("profile")]
+                    if not modes:
+                        raise ValueError("Aucun canal DMX trouvé dans ce fichier XML.")
+                    ftype = ofl_fx.get("fixture_type", "PAR LED")
+                    candidates = [{
+                        "name":         ofl_fx.get("name", Path(path).stem)
+                                        + (f" — {m['name']}" if len(modes) > 1 else ""),
+                        "manufacturer": ofl_fx.get("manufacturer", ""),
+                        "fixture_type": ftype,
+                        "group":        _GROUP.get(ftype, "face"),
+                        "profile":      m["profile"],
+                        "source":       ofl_fx.get("source", "ma"),
+                    } for m in modes]
+                    if len(candidates) > 1:
+                        mode_names = [c["name"] for c in candidates]
+                        choice, ok = QInputDialog.getItem(
+                            self, "Choisir un mode",
+                            f"{ofl_fx.get('name')} — {len(candidates)} modes.\nMode à importer :",
+                            mode_names, 0, False
+                        )
+                        if not ok:
+                            continue
+                        to_add = [candidates[mode_names.index(choice)]]
+                    else:
+                        to_add = candidates
+
+                else:
+                    # ── Fichier JSON / mystrow / mft ──────────────────────────
+                    parsed = json.loads(raw.decode("utf-8"))
+                    to_add = [parsed] if isinstance(parsed, dict) else parsed
+                    if not isinstance(to_add, list):
+                        raise ValueError("Format invalide (liste de fixtures attendue).")
+                    to_add = [f for f in to_add if isinstance(f, dict)]
+
+                for fx in to_add:
+                    if not isinstance(fx, dict):
+                        continue
+                    if not fx.get("name") or not fx.get("profile"):
+                        continue
+                    fx.pop("builtin", None)
+                    name = fx["name"]
+                    if name in existing:
+                        c = 2
+                        while f"{name} ({c})" in existing:
+                            c += 1
+                        fx["name"] = f"{name} ({c})"
+                    self._fixtures.append(fx)
+                    existing.add(fx["name"])
+                    imported += 1
+
+            except Exception as e:
+                errors.append(f"• {Path(path).name} : {e}")
+
+        self._save_fixtures()
+        self._rebuild_list()
+
+        msg = f"{imported} fixture(s) importée(s)."
+        if errors:
+            msg += f"\n\n{len(errors)} fichier(s) ignoré(s) :\n" + "\n".join(errors)
+            QMessageBox.warning(self, "Import partiel", msg)
+        else:
+            QMessageBox.information(self, "Import réussi", msg)
 
     def _export_fixture(self):
         data = self._get_form_data()
@@ -877,3 +1241,394 @@ class FixtureEditorDialog(QDialog):
         self._rebuild_list()
         if BUILTIN_FIXTURES:
             self._select_fixture(0)
+
+    def _open_ofl_browser(self):
+        dlg = OflBrowserDialog(self)
+        dlg.fixture_selected.connect(self._import_from_ofl)
+        dlg.exec()
+
+    def _import_from_ofl(self, fx: dict):
+        """Reçoit une fixture depuis le browser OFL et l'ajoute aux customs."""
+        fx.pop("builtin", None)
+        self._push_undo()
+        existing = {f["name"] for f in self._fixtures}
+        name = fx.get("name", "Fixture OFL")
+        if name in existing:
+            c = 2
+            while f"{name} ({c})" in existing:
+                c += 1
+            fx["name"] = f"{name} ({c})"
+        self._fixtures.append(fx)
+        self._save_fixtures()
+        self._current_idx = len(BUILTIN_FIXTURES) + len(self._fixtures) - 1
+        self._is_builtin = False
+        self._rebuild_list()
+        self._select_fixture(self._current_idx)
+        self._btn_delete.setEnabled(True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OflFetchWorker — thread de chargement Firebase
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _OflFetchWorker(QObject):
+    finished = Signal(list, object)  # (fixtures, next_cursor)
+    error    = Signal(str)
+
+    def __init__(self, id_token, fixture_type, cursor):
+        super().__init__()
+        self._id_token    = id_token
+        self._fixture_type = fixture_type
+        self._cursor      = cursor  # None ou {"manufacturer": ..., "name": ...}
+
+    def run(self):
+        try:
+            import firebase_client as fc
+            kw = {}
+            if self._cursor:
+                kw["cursor_manufacturer"] = self._cursor["manufacturer"]
+                kw["cursor_name"]         = self._cursor["name"]
+            result = fc.fetch_gdtf_fixtures(
+                self._id_token,
+                fixture_type=self._fixture_type,
+                page_size=100,
+                **kw,
+            )
+            self.finished.emit(result["fixtures"], result["next_cursor"])
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OflBrowserDialog — navigateur de la bibliothèque OFL Firebase
+# ──────────────────────────────────────────────────────────────────────────────
+
+class OflBrowserDialog(QDialog):
+    """Dialogue de navigation / import de la bibliothèque OFL Firebase."""
+    fixture_selected = Signal(dict)  # dict fixture prêt à importer
+
+    _STYLE = """
+        QDialog      { background: #141414; color: #e0e0e0; }
+        QLabel        { color: #e0e0e0; }
+        QLineEdit     { background: #222; color: #e0e0e0; border: 1px solid #3a3a3a;
+                        border-radius: 4px; padding: 5px 8px; font-size: 13px; }
+        QLineEdit:focus { border: 1px solid #00d4ff; }
+        QComboBox     { background: #222; color: #e0e0e0; border: 1px solid #3a3a3a;
+                        border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+        QComboBox::drop-down { border: none; width: 20px; }
+        QComboBox QAbstractItemView { background: #222; color: #e0e0e0;
+                        selection-background-color: #00d4ff33; }
+        QListWidget   { background: #1a1a1a; color: #e0e0e0; border: 1px solid #2a2a2a;
+                        border-radius: 4px; outline: none; }
+        QListWidget::item { padding: 5px 10px; border-radius: 3px; }
+        QListWidget::item:selected { background: #00d4ff22; color: #00d4ff; }
+        QListWidget::item:hover { background: #2a2a2a; }
+        QPushButton   { background: #1e2a3a; color: #00d4ff; border: 1px solid #00d4ff44;
+                        border-radius: 4px; font-size: 12px; padding: 5px 14px; }
+        QPushButton:hover  { background: #1e3a4a; border-color: #00d4ff; }
+        QPushButton:disabled { background: #1a1a1a; color: #444; border-color: #2a2a2a; }
+        QProgressBar  { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 4px;
+                        height: 6px; text-align: center; }
+        QProgressBar::chunk { background: #00d4ff; border-radius: 4px; }
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)
+        self.setWindowTitle("Bibliothèque OFL — MyStrow")
+        self.setMinimumSize(720, 560)
+        self.resize(820, 620)
+        self.setStyleSheet(self._STYLE)
+
+        self._all_loaded: list = []   # toutes les fixtures chargées pour le type courant
+        self._next_cursor = None       # curseur Firestore pour la page suivante
+        self._id_token    = None
+        self._thread      = None
+        self._worker      = None
+        self._selected_fx = None       # fixture OFL actuellement sélectionnée
+
+        self._build_ui()
+        self._load_token()
+
+    # ── Token ──────────────────────────────────────────────────────────────
+
+    def _load_token(self):
+        try:
+            from license_manager import get_current_id_token
+            self._id_token = get_current_id_token()
+        except Exception:
+            self._id_token = None
+
+        if not self._id_token:
+            self._status_lbl.setText(
+                "⚠  Connexion requise — connectez-vous avec votre compte MyStrow pour accéder à la bibliothèque."
+            )
+            self._btn_search.setEnabled(False)
+
+    # ── UI ─────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 12, 16, 12)
+        outer.setSpacing(10)
+
+        # Titre
+        title = QLabel("🌐  Bibliothèque de fixtures OFL")
+        title.setStyleSheet("font-size:16px;font-weight:bold;color:#00d4ff;")
+        outer.addWidget(title)
+
+        sub = QLabel("Parcourez les milliers de profils récupérés depuis Open Fixture Library.")
+        sub.setStyleSheet("font-size:11px;color:#666;")
+        outer.addWidget(sub)
+
+        # Barre de filtres
+        flt = QHBoxLayout()
+        flt.setSpacing(8)
+
+        self._type_combo = _NoScrollCombo()
+        self._type_combo.addItem("Tous les types", "")
+        for ft in FIXTURE_TYPES:
+            self._type_combo.addItem(ft, ft)
+        self._type_combo.setFixedHeight(32)
+        flt.addWidget(QLabel("Type :"))
+        flt.addWidget(self._type_combo)
+
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Filtrer par nom ou fabricant…")
+        self._search_edit.setFixedHeight(32)
+        self._search_edit.textChanged.connect(self._apply_filter)
+        flt.addWidget(self._search_edit, 1)
+
+        self._btn_search = QPushButton("Charger")
+        self._btn_search.setFixedHeight(32)
+        self._btn_search.clicked.connect(self._do_search)
+        flt.addWidget(self._btn_search)
+
+        outer.addLayout(flt)
+
+        # Progress bar
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setFixedHeight(6)
+        self._progress.setVisible(False)
+        outer.addWidget(self._progress)
+
+        # Status
+        self._status_lbl = QLabel("Choisissez un type et cliquez sur Charger.")
+        self._status_lbl.setStyleSheet("font-size:11px;color:#666;")
+        outer.addWidget(self._status_lbl)
+
+        # Liste résultats
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._list.currentItemChanged.connect(self._on_item_changed)
+        outer.addWidget(self._list, 1)
+
+        # Charger plus
+        self._btn_more = QPushButton("Charger 100 de plus…")
+        self._btn_more.setVisible(False)
+        self._btn_more.clicked.connect(self._load_more)
+        outer.addWidget(self._btn_more)
+
+        # Panneau de sélection du mode
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        mode_row.addWidget(QLabel("Mode DMX :"))
+        self._mode_combo = _NoScrollCombo()
+        self._mode_combo.setFixedHeight(30)
+        self._mode_combo.setEnabled(False)
+        mode_row.addWidget(self._mode_combo, 1)
+        mode_row.addWidget(QLabel("Groupe :"))
+        self._group_combo = _NoScrollCombo()
+        for g in GROUP_OPTIONS:
+            self._group_combo.addItem(g)
+        self._group_combo.setFixedHeight(30)
+        self._group_combo.setEnabled(False)
+        mode_row.addWidget(self._group_combo)
+        outer.addLayout(mode_row)
+
+        # Boutons bas
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self._btn_import = QPushButton("⊕  Importer dans mes fixtures")
+        self._btn_import.setFixedHeight(36)
+        self._btn_import.setEnabled(False)
+        self._btn_import.setStyleSheet(
+            "QPushButton{background:#1a3a1a;color:#44cc44;border:1px solid #2a6a2a;"
+            "border-radius:4px;font-size:12px;font-weight:bold;padding:0 16px;}"
+            "QPushButton:hover{background:#2a4a2a;border-color:#44aa44;}"
+            "QPushButton:disabled{background:#1a1a1a;color:#444;border-color:#2a2a2a;}"
+        )
+        self._btn_import.clicked.connect(self._do_import)
+        btn_row.addWidget(self._btn_import)
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(36)
+        btn_close.clicked.connect(self.close)
+        btn_row.addWidget(btn_close)
+        outer.addLayout(btn_row)
+
+    # ── Chargement Firebase ────────────────────────────────────────────────
+
+    def _do_search(self):
+        """Lance un nouveau chargement (réinitialise la liste)."""
+        self._all_loaded.clear()
+        self._next_cursor = None
+        self._list.clear()
+        self._selected_fx = None
+        self._btn_import.setEnabled(False)
+        self._mode_combo.clear()
+        self._mode_combo.setEnabled(False)
+        self._group_combo.setEnabled(False)
+        self._btn_more.setVisible(False)
+        self._load_page()
+
+    def _load_more(self):
+        self._load_page(cursor=self._next_cursor)
+
+    def _load_page(self, cursor=None):
+        if not self._id_token:
+            return
+        if self._thread and self._thread.isRunning():
+            return
+
+        fixture_type = self._type_combo.currentData()
+        self._progress.setVisible(True)
+        self._btn_search.setEnabled(False)
+        self._btn_more.setVisible(False)
+        self._status_lbl.setText("Chargement en cours…")
+
+        self._worker = _OflFetchWorker(self._id_token, fixture_type, cursor)
+        self._thread = QThread()
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_fetch_done)
+        self._worker.error.connect(self._on_fetch_error)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.error.connect(self._thread.quit)
+        self._thread.start()
+
+    def _on_fetch_done(self, fixtures: list, next_cursor):
+        self._progress.setVisible(False)
+        self._btn_search.setEnabled(True)
+
+        self._all_loaded.extend(fixtures)
+        self._next_cursor = next_cursor
+
+        self._apply_filter()
+
+        total = len(self._all_loaded)
+        self._status_lbl.setText(f"{total} fixture(s) chargée(s).")
+
+        if next_cursor:
+            self._btn_more.setText(f"Charger 100 de plus… (total actuel : {total})")
+            self._btn_more.setVisible(True)
+
+    def _on_fetch_error(self, msg: str):
+        self._progress.setVisible(False)
+        self._btn_search.setEnabled(True)
+        self._status_lbl.setText(f"Erreur : {msg}")
+
+    # ── Filtrage local ──────────────────────────────────────────────────────
+
+    def _apply_filter(self):
+        query = self._search_edit.text().strip().lower()
+        self._list.blockSignals(True)
+        self._list.clear()
+
+        current_mfr = None
+        for fx in self._all_loaded:
+            name = fx.get("name", "")
+            mfr  = fx.get("manufacturer", "")
+            if query and query not in name.lower() and query not in mfr.lower():
+                continue
+            if mfr != current_mfr:
+                current_mfr = mfr
+                hdr = QListWidgetItem(f"  {mfr.upper()}")
+                hdr.setFlags(Qt.NoItemFlags)
+                hdr.setForeground(QColor("#555"))
+                f = hdr.font(); f.setPointSize(8); hdr.setFont(f)
+                hdr.setBackground(QColor("#111"))
+                self._list.addItem(hdr)
+
+            modes = fx.get("modes", [])
+            mode_info = ""
+            if modes:
+                counts = " / ".join(f"{m.get('channelCount', len(m.get('profile', [])))}ch" for m in modes[:3])
+                mode_info = f" [{fx.get('fixture_type', '?')} · {counts}]"
+            item = QListWidgetItem(f"    {name}{mode_info}")
+            item.setData(Qt.UserRole, fx)
+            item.setForeground(QColor("#cccccc"))
+            self._list.addItem(item)
+
+        self._list.blockSignals(False)
+
+    # ── Sélection / Import ─────────────────────────────────────────────────
+
+    def _on_item_changed(self, item):
+        if item is None:
+            self._selected_fx = None
+            self._btn_import.setEnabled(False)
+            self._mode_combo.setEnabled(False)
+            self._group_combo.setEnabled(False)
+            return
+        fx = item.data(Qt.UserRole)
+        if not fx:
+            self._selected_fx = None
+            self._btn_import.setEnabled(False)
+            return
+        self._selected_fx = fx
+        self._btn_import.setEnabled(True)
+
+        # Remplir le combo de modes
+        self._mode_combo.blockSignals(True)
+        self._mode_combo.clear()
+        modes = fx.get("modes", [])
+        for m in modes:
+            n_ch = m.get("channelCount") or len(m.get("profile", []))
+            self._mode_combo.addItem(f"{m.get('name', 'Mode')} — {n_ch} canaux", m)
+        self._mode_combo.blockSignals(False)
+        self._mode_combo.setEnabled(bool(modes))
+
+        # Groupe par défaut selon type
+        ftype = fx.get("fixture_type", "PAR LED")
+        default_group = {
+            "Moving Head": "lyre",
+            "Barre LED":   "barre",
+            "Stroboscope": "strobe",
+            "Machine a fumee": "fumee",
+        }.get(ftype, "face")
+        idx = GROUP_OPTIONS.index(default_group) if default_group in GROUP_OPTIONS else 0
+        self._group_combo.setCurrentIndex(idx)
+        self._group_combo.setEnabled(True)
+
+    def _do_import(self):
+        if not self._selected_fx:
+            return
+        fx = self._selected_fx
+        mode_data = self._mode_combo.currentData()
+        if not mode_data:
+            modes = fx.get("modes", [])
+            mode_data = modes[0] if modes else {"name": "Mode 1", "profile": []}
+
+        profile = mode_data.get("profile", [])
+        group   = self._group_combo.currentText()
+        ftype   = fx.get("fixture_type", "PAR LED")
+
+        # Construire le dict custom fixture (format fixture_editor)
+        custom = {
+            "name":         fx.get("name", "Fixture OFL"),
+            "manufacturer": fx.get("manufacturer", ""),
+            "fixture_type": ftype,
+            "group":        group,
+            "profile":      profile,
+        }
+        self.fixture_selected.emit(custom)
+
+        # Feedback visuel
+        self._btn_import.setText("✓  Importé !")
+        self._btn_import.setEnabled(False)
+        QTimer.singleShot(1200, self._reset_import_btn)
+
+    def _reset_import_btn(self):
+        self._btn_import.setText("⊕  Importer dans mes fixtures")
+        self._btn_import.setEnabled(self._selected_fx is not None)

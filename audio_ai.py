@@ -45,6 +45,13 @@ class AudioColorAI:
         self._bicolor_active = False
         self._bicolor_until = 0
 
+        # Face (Groupe A)
+        self._face_color_idx = 0
+        self._face_alt_color_idx = 0
+
+        # Douches — chase sequentiel (D/E/F)
+        self._def_chase_idx = 0  # 0,1,2 = douche1,2,3
+
     def set_dominant_color(self, color):
         """Definit la couleur dominante et genere la palette"""
         self.dominant_color = color
@@ -328,6 +335,13 @@ print(json.dumps(energy))
             else:
                 self._lat_color_idx = self._contre_color_idx
 
+            # Face change de couleur tous les 2 beats (rythme plus lent)
+            if self._beat_group_count % 2 == 0:
+                self._face_color_idx = (self._contre_color_idx + 3) % len(self.palette)
+
+            # Chase douches : avancer d'une douche a chaque beat
+            self._def_chase_idx = beat_idx % 3
+
             # Flash sur beats forts (energie > 0.75) toutes les 4 mesures
             if energy > 0.75 and self._beat_group_count % 4 == 0:
                 self._flash_until = time_ms + 150  # flash 150ms
@@ -349,6 +363,7 @@ print(json.dumps(energy))
                 # Couleur alternative = complementaire dans la palette
                 self._contre_alt_color_idx = (self._contre_color_idx + 4) % len(self.palette)
                 self._lat_alt_color_idx = (self._lat_color_idx + 3) % len(self.palette)
+                self._face_alt_color_idx = (self._face_color_idx + 2) % len(self.palette)
                 # Estimer duree de 4 beats
                 avg_beat_ms = 500
                 if len(self.beats) > 1:
@@ -378,7 +393,7 @@ print(json.dumps(energy))
         # Flash actif ?
         is_flashing = time_ms < self._flash_until
 
-        # === FACE : blanc, dimmer dynamique ===
+        # === FACE : couleur reactive au beat (rythme x0.5 par rapport aux contres) ===
         if face_max == 0:
             face_color = QColor(0, 0, 0)
             face_level = 0
@@ -386,8 +401,8 @@ print(json.dumps(energy))
             face_color = QColor(255, 255, 255)
             face_level = int(100 * global_fade * face_max)
         else:
-            face_color = QColor(255, 255, 255)
-            face_level = int((60 + energy * 20) * global_fade * face_max)
+            face_color = self.palette[self._face_color_idx] if self.palette else self.dominant_color
+            face_level = int((65 + energy * 25) * global_fade * face_max)
 
         # === CONTRES : couleur reactive au beat ===
         if contre_max == 0:
@@ -422,26 +437,38 @@ print(json.dumps(energy))
             if not strobe_on:
                 lat_level = 0
 
-        # === DOUCHES : l'IA ne joue pas sur les douches ===
-        douche_color = QColor(0, 0, 0)
-        douche_level = 0
+        # === GROUPES D/E/F : chase sequentiel — un groupe actif a la fois ===
+        grp_d_max = max_dimmers.get('douche1', 100) / 100.0
+        grp_e_max = max_dimmers.get('douche2', 100) / 100.0
+        grp_f_max = max_dimmers.get('douche3', 100) / 100.0
+        def_color = self.palette[self._contre_color_idx] if self.palette else self.dominant_color
+        def_base_level = int((70 + energy * 30) * global_fade)
+        if is_flashing:
+            def_color = QColor(255, 255, 255)
+            def_base_level = 100
+        grp_d_level = def_base_level if self._def_chase_idx == 0 else 0
+        grp_e_level = def_base_level if self._def_chase_idx == 1 else 0
+        grp_f_level = def_base_level if self._def_chase_idx == 2 else 0
 
         # Couleurs alternatives pour mode bicolore
         contre_alt = None
         lat_alt = None
+        face_alt = None
         if self._bicolor_active and self.palette:
             contre_alt = self.palette[self._contre_alt_color_idx]
             lat_alt = self.palette[self._lat_alt_color_idx]
+            face_alt = self.palette[self._face_alt_color_idx]
 
         return {
             'face': (face_color, max(0, min(100, face_level))),
             'contre': (contre_color, max(0, min(100, contre_level))),
             'lat': (lat_color, max(0, min(100, lat_level))),
-            'douche1': (douche_color, douche_level),
-            'douche2': (douche_color, douche_level),
-            'douche3': (douche_color, douche_level),
+            'douche1': (def_color, max(0, min(100, int(grp_d_level * grp_d_max)))),
+            'douche2': (def_color, max(0, min(100, int(grp_e_level * grp_e_max)))),
+            'douche3': (def_color, max(0, min(100, int(grp_f_level * grp_f_max)))),
             'contre_alt': contre_alt,
             'lat_alt': lat_alt,
+            'face_alt': face_alt,
             'contre_effect': self._effect_contre_type if contre_max > 0 else None,
             'lat_effect': self._effect_lat_type if lat_max > 0 else None,
         }
@@ -462,5 +489,8 @@ print(json.dumps(energy))
         self._effect_lat_type = None
         self._contre_alt_color_idx = 0
         self._lat_alt_color_idx = 0
+        self._face_color_idx = 0
+        self._face_alt_color_idx = 0
+        self._def_chase_idx = 0
         self._bicolor_active = False
         self._bicolor_until = 0

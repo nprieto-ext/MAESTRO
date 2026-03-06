@@ -1,9 +1,20 @@
 """
-Gestion de l'envoi DMX via Art-Net vers le Node 2
+Gestion de l'envoi DMX :
+  - ENTTEC Open DMX USB (port serie 250000 bauds)
+  - Boitier reseau Art-Net (ElectroConcept, MA Lighting, etc.)
 """
+import os
+import json
 import socket
 import struct
 import time
+
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
 
 # Profils DMX pre-definis : nom -> liste ordonnee de types de canaux
 DMX_PROFILES = {
@@ -34,7 +45,7 @@ DMX_PROFILES = {
 
 # Types de canaux disponibles pour les profils custom
 CHANNEL_TYPES = [
-    "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom",
+    "R", "G", "B", "W", "Dim", "Strobe", "UV", "Ambre", "Orange", "Zoom", "Iris",
     "Smoke", "Fan",
     "Pan", "PanFine", "Tilt", "TiltFine", "Gobo1", "Gobo2",
     "Prism", "Focus", "ColorWheel", "Shutter", "Speed", "Mode",
@@ -44,7 +55,7 @@ CHANNEL_TYPES = [
 CHANNEL_DISPLAY = {
     "R": "R", "G": "G", "B": "B", "W": "W",
     "Dim": "Dim", "Strobe": "Strob", "UV": "UV",
-    "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom",
+    "Ambre": "Ambre", "Orange": "Orange", "Zoom": "Zoom", "Iris": "Iris",
     "Smoke": "Smoke", "Fan": "Fan",
     "Pan": "Pan", "PanFine": "PanF", "Tilt": "Tilt", "TiltFine": "TiltF",
     "Gobo1": "Gobo1", "Gobo2": "Gobo2", "Prism": "Prism", "Focus": "Focus",
@@ -61,7 +72,7 @@ _LEGACY_MODE_MAP = {
     "3CH": "RGB",
     "4CH": "RGBD",
     "5CH": "RGBDS",
-    "6CH": "RGBDS",  # 6CH = RGBDS + 1 canal inutilise
+    "6CH": "RGBDS",
     "2CH_FUMEE": "2CH_FUMEE",
 }
 
@@ -71,10 +82,8 @@ def profile_for_mode(mode):
     name = _LEGACY_MODE_MAP.get(mode, mode)
     if name in DMX_PROFILES:
         return list(DMX_PROFILES[name])
-    # Si c'est deja une liste (profil custom), la retourner telle quelle
     if isinstance(mode, list):
         return mode
-    # Fallback
     return list(DMX_PROFILES["RGBDS"])
 
 
@@ -86,128 +95,290 @@ def profile_name(profile):
     return None
 
 
+# ------------------------------------------------------------------
+# Constantes de transport
+# ------------------------------------------------------------------
+TRANSPORT_ENTTEC = "enttec"   # ENTTEC Open DMX USB (serie)
+TRANSPORT_ARTNET = "artnet"   # Boitier reseau Art-Net (ElectroConcept...)
+
+
 class ArtNetDMX:
-    """Gestion de l'envoi DMX via Art-Net vers le Node 2"""
+    """Envoi DMX via ENTTEC Open DMX USB ou boitier reseau Art-Net.
+    Le mode de transport est selectionnable et persiste dans ~/.mystrow_dmx.json."""
+
+    CONFIG_FILE = os.path.expanduser("~/.mystrow_dmx.json")
 
     def __init__(self):
-        self.target_ip = "2.0.0.15"  # IP du Node 2 selon documentation Electroconcept
-        self.target_port = 6454  # Port Art-Net standard
-        self.universe = 0  # Univers 0 par defaut
-        self.sequence = 0
-        self.dmx_data = [0] * 512  # 512 canaux DMX
-        self.socket = None
+        # --- Transport actif ---
+        self.transport = TRANSPORT_ENTTEC
+
+        # --- Produit selectionne ---
+        self.product_id   = "enttec_open"
+        self.product_name = "ENTTEC Open DMX USB"
+
+        # --- ENTTEC Open DMX USB ---
+        self.com_port = None
+        self._serial = None
+
+        # --- Art-Net reseau ---
+        self.target_ip = "2.0.0.15"
+        self.target_port = 6454       # Port Art-Net standard
+        self.universe = 0             # Univers Art-Net (0-based)
+        self._artnet_seq = 0
+        self._socket = None
+
+        # --- Etat commun ---
+        self.connected = False
+        self.dmx_data = [0] * 512
+
+        # --- Patch projecteurs ---
+        self.projector_channels = {}
+        self.projector_profiles = {}
+        self.projector_modes = {}     # Retro-compat
+
+        self._load_config()
+
+    # ------------------------------------------------------------------
+    # Config persistence
+    # ------------------------------------------------------------------
+
+    def _load_config(self):
+        try:
+            if os.path.exists(self.CONFIG_FILE):
+                with open(self.CONFIG_FILE, "r") as f:
+                    cfg = json.load(f)
+                self.transport    = cfg.get("transport", TRANSPORT_ENTTEC)
+                self.product_id   = cfg.get("product_id", "enttec_open")
+                self.product_name = cfg.get("product_name", "ENTTEC Open DMX USB")
+                self.com_port     = cfg.get("com_port")
+                self.target_ip    = cfg.get("target_ip", "2.0.0.15")
+                self.target_port  = int(cfg.get("target_port", 6454))
+                self.universe     = int(cfg.get("universe", 0))
+        except Exception:
+            pass
+
+    def _save_config(self):
+        try:
+            with open(self.CONFIG_FILE, "w") as f:
+                json.dump({
+                    "transport":    self.transport,
+                    "product_id":   self.product_id,
+                    "product_name": self.product_name,
+                    "com_port":     self.com_port,
+                    "target_ip":    self.target_ip,
+                    "target_port":  self.target_port,
+                    "universe":     self.universe,
+                }, f, indent=2)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Connexion (route vers le bon transport)
+    # ------------------------------------------------------------------
+
+    def connect(self, com_port=None, target_ip=None, target_port=None,
+                universe=None, transport=None, product_id=None, product_name=None):
+        """Ouvre la connexion DMX selon le transport configure.
+        Les parametres optionnels ecrasent la config et la sauvegardent."""
+        if transport is not None:
+            self.transport = transport
+        if product_id is not None:
+            self.product_id = product_id
+        if product_name is not None:
+            self.product_name = product_name
+        if com_port is not None:
+            self.com_port = com_port
+        if target_ip is not None:
+            self.target_ip = target_ip
+        if target_port is not None:
+            self.target_port = int(target_port)
+        if universe is not None:
+            self.universe = int(universe)
+
+        self._save_config()
+
+        if self.transport == TRANSPORT_ENTTEC:
+            return self._connect_enttec()
+        else:
+            return self._connect_artnet()
+
+    def disconnect(self):
+        """Ferme toutes les connexions ouvertes"""
+        if self._serial and self._serial.is_open:
+            self._serial.close()
+        self._serial = None
+        if self._socket:
+            self._socket.close()
+        self._socket = None
         self.connected = False
 
-        # Mapping des projecteurs vers les canaux DMX
-        # Format: {"face_0": [1, 2, 3, 4, 5], ...}
-        self.projector_channels = {}
+    # ------------------------------------------------------------------
+    # Transport ENTTEC Open DMX USB
+    # ------------------------------------------------------------------
 
-        # Profils des projecteurs : proj_key -> liste de types ["R","G","B","Dim","Strobe"]
-        self.projector_profiles = {}
-
-        # Retro-compat : garde projector_modes comme alias lecture
-        self.projector_modes = {}
-
-    def connect(self):
-        """Initialise la connexion UDP Art-Net"""
-        try:
-            if self.socket:
-                self.socket.close()
-
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            self.connected = True
-            return True
-        except Exception as e:
-            print(f"Erreur connexion Art-Net: {e}")
+    def _connect_enttec(self):
+        if not SERIAL_AVAILABLE:
+            print("pyserial non disponible — pip install pyserial")
             self.connected = False
             return False
 
-    def disconnect(self):
-        """Ferme la connexion"""
-        if self.socket:
-            self.socket.close()
-            self.socket = None
-        self.connected = False
+        if not self.com_port:
+            print("Aucun port COM configure pour l'ENTTEC")
+            self.connected = False
+            return False
+
+        try:
+            if self._serial and self._serial.is_open:
+                self._serial.close()
+            self._serial = serial.Serial(
+                port=self.com_port,
+                baudrate=250000,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_TWO,
+                timeout=0.1,
+            )
+            self.connected = True
+            print(f"ENTTEC Open DMX USB connecte sur {self.com_port}")
+            return True
+        except Exception as e:
+            print(f"Erreur connexion ENTTEC ({self.com_port}): {e}")
+            self._serial = None
+            self.connected = False
+            return False
+
+    def _send_enttec(self):
+        """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux"""
+        if not self._serial or not self._serial.is_open:
+            return False
+        try:
+            self._serial.send_break(duration=0.001)
+            self._serial.write(b'\x00' + bytes(self.dmx_data[:512]))
+            return True
+        except Exception as e:
+            print(f"Erreur envoi ENTTEC: {e}")
+            self.connected = False
+            return False
+
+    # ------------------------------------------------------------------
+    # Transport Art-Net (boitier reseau ElectroConcept, MA, etc.)
+    # ------------------------------------------------------------------
+
+    def _connect_artnet(self):
+        try:
+            if self._socket:
+                self._socket.close()
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.connected = True
+            print(f"Art-Net connecte vers {self.target_ip}:{self.target_port} (univers {self.universe})")
+            return True
+        except Exception as e:
+            print(f"Erreur connexion Art-Net: {e}")
+            self._socket = None
+            self.connected = False
+            return False
+
+    def _send_artnet(self):
+        """Protocole Art-Net ArtDMX (OpCode 0x5000)"""
+        if not self._socket or not self.target_ip:
+            return False
+        try:
+            self._artnet_seq = (self._artnet_seq + 1) % 256
+            sub_uni = self.universe & 0xFF
+            net     = (self.universe >> 8) & 0x7F
+            packet = (
+                b'Art-Net\x00'                           # ID
+                + b'\x00\x50'                            # OpCode ArtDMX (LE)
+                + b'\x00\x0e'                            # ProtVer 14
+                + bytes([self._artnet_seq])              # Sequence
+                + b'\x00'                                # Physical
+                + bytes([sub_uni, net])                  # SubUni / Net
+                + b'\x02\x00'                            # Length = 512 (BE)
+                + bytes(self.dmx_data[:512])
+            )
+            self._socket.sendto(packet, (self.target_ip, self.target_port))
+            self._last_artnet_error = None   # Effacer l'erreur précédente si succès
+            return True
+        except Exception as e:
+            err = str(e)
+            if getattr(self, '_last_artnet_error', None) != err:
+                print(f"Erreur Art-Net: {e}")
+                self._last_artnet_error = err
+            # Recréer le socket si invalide
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            try:
+                self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except Exception:
+                self._socket = None
+                self.connected = False
+            return False
+
+    # ------------------------------------------------------------------
+    # API publique DMX
+    # ------------------------------------------------------------------
+
+    def send_dmx(self):
+        """Envoie les donnees DMX via le transport actif"""
+        if not self.connected:
+            return False
+        if self.transport == TRANSPORT_ENTTEC:
+            return self._send_enttec()
+        else:
+            return self._send_artnet()
 
     def set_channel(self, channel, value):
-        """Definit la valeur d'un canal DMX (1-512)"""
         if 1 <= channel <= 512:
             self.dmx_data[channel - 1] = max(0, min(255, value))
 
     def get_channel(self, channel):
-        """Retourne la valeur d'un canal DMX (1-512)"""
         if 1 <= channel <= 512:
             return self.dmx_data[channel - 1]
         return 0
 
     def set_rgb(self, start_channel, r, g, b):
-        """Definit RGB sur 3 canaux consecutifs"""
         self.set_channel(start_channel, r)
         self.set_channel(start_channel + 1, g)
         self.set_channel(start_channel + 2, b)
 
     def blackout(self):
-        """Met tous les canaux a 0"""
         self.dmx_data = [0] * 512
 
-    def send_dmx(self):
-        """Envoie les donnees DMX via Art-Net"""
-        if not self.connected or not self.socket:
-            return False
-
-        try:
-            # En-tete Art-Net
-            packet = bytearray()
-            packet.extend(b'Art-Net\x00')  # ID (8 bytes)
-            packet.extend(struct.pack('<H', 0x5000))  # OpCode ArtDMX (little-endian)
-            packet.extend(struct.pack('>H', 14))  # Protocol version (big-endian)
-            packet.append(self.sequence)  # Sequence
-            packet.append(0)  # Physical
-            packet.extend(struct.pack('<H', self.universe))  # Universe (little-endian)
-            packet.extend(struct.pack('>H', 512))  # Length (big-endian)
-            packet.extend(self.dmx_data)  # DMX data (512 bytes)
-
-            self.socket.sendto(packet, (self.target_ip, self.target_port))
-
-            # Incrementer la sequence
-            self.sequence = (self.sequence + 1) % 256
-            return True
-        except Exception as e:
-            print(f"Erreur envoi DMX: {e}")
-            return False
+    # ------------------------------------------------------------------
+    # Patch projecteurs (inchange)
+    # ------------------------------------------------------------------
 
     def _get_profile(self, proj_key):
-        """Retourne le profil d'un projecteur (liste de types de canaux)"""
         if proj_key in self.projector_profiles:
             return self.projector_profiles[proj_key]
-        # Retro-compat : convertir depuis projector_modes
         mode = self.projector_modes.get(proj_key, "5CH")
         return profile_for_mode(mode)
 
     def _channel_index(self, profile, channel_type):
-        """Retourne l'index d'un type de canal dans le profil, ou -1 si absent"""
         try:
             return profile.index(channel_type)
         except ValueError:
             return -1
 
     def update_from_projectors(self, projectors, effect_speed=0):
-        """Met a jour les canaux DMX depuis la liste des projecteurs en utilisant le patch"""
+        """Met a jour les canaux DMX depuis la liste des projecteurs"""
         for i, proj in enumerate(projectors):
             proj_key = f"{proj.group}_{i}"
-
             if proj_key not in self.projector_channels:
                 continue
 
             channels = self.projector_channels[proj_key]
-            profile = self._get_profile(proj_key)
+            profile  = self._get_profile(proj_key)
 
-            # Traitement special fumee
+            # Fumee
             if "Smoke" in profile:
-                is_muted = hasattr(proj, 'muted') and proj.muted
+                is_muted  = hasattr(proj, 'muted') and proj.muted
                 smoke_idx = self._channel_index(profile, "Smoke")
-                fan_idx = self._channel_index(profile, "Fan")
+                fan_idx   = self._channel_index(profile, "Fan")
                 if smoke_idx >= 0 and smoke_idx < len(channels):
                     smoke = int((proj.level / 100.0) * 255) if not is_muted else 0
                     self.set_channel(channels[smoke_idx], smoke)
@@ -216,43 +387,34 @@ class ArtNetDMX:
                     self.set_channel(channels[fan_idx], fan)
                 continue
 
-            # Si le projecteur est mute, envoyer des 0
+            # Mute
             if hasattr(proj, 'muted') and proj.muted:
                 for ch in channels:
                     if ch > 0:
                         self.set_channel(ch, 0)
                 continue
 
-            # Recuperer RGB depuis proj.color
-            r = proj.color.red() if hasattr(proj, 'color') else 0
+            r = proj.color.red()   if hasattr(proj, 'color') else 0
             g = proj.color.green() if hasattr(proj, 'color') else 0
-            b = proj.color.blue() if hasattr(proj, 'color') else 0
+            b = proj.color.blue()  if hasattr(proj, 'color') else 0
 
-            # Dimmer : convertir de 0-100 vers 0-255
-            level = proj.level if hasattr(proj, 'level') else 0
+            level  = proj.level if hasattr(proj, 'level') else 0
             dimmer = int((level / 100.0) * 255)
 
-            # Verifier presence de Dim dans le profil
-            dim_idx = self._channel_index(profile, "Dim")
+            dim_idx    = self._channel_index(profile, "Dim")
             has_dimmer = dim_idx >= 0 and dim_idx < len(channels)
-
-            # Si pas de dimmer hardware, appliquer le dimmer sur RGB
             if not has_dimmer:
-                dimmer_factor = level / 100.0
-                r = int(r * dimmer_factor)
-                g = int(g * dimmer_factor)
-                b = int(b * dimmer_factor)
+                factor = level / 100.0
+                r = int(r * factor)
+                g = int(g * factor)
+                b = int(b * factor)
 
-            # Verifier presence de Strobe
             strobe_idx = self._channel_index(profile, "Strobe")
             has_strobe = strobe_idx >= 0 and strobe_idx < len(channels)
-
-            # Si pas de strobe hardware mais strobe actif, creer strobe logiciel
             if not has_strobe and hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
                 if int(time.time() * 10) % 2 == 0:
                     r, g, b = 0, 0, 0
 
-            # Envoyer chaque canal selon son type dans le profil
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
@@ -267,42 +429,34 @@ class ArtNetDMX:
                 elif ch_type == "B":
                     self.set_channel(ch, b)
                 elif ch_type == "W":
-                    # Blanc = minimum des RGB (composante blanche commune)
-                    w = min(r, g, b)
-                    self.set_channel(ch, w)
+                    self.set_channel(ch, min(r, g, b))
                 elif ch_type == "Ambre":
-                    # Ambre = approximation ton chaud
                     ambre = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
                     self.set_channel(ch, ambre)
                 elif ch_type == "Orange":
-                    # Orange = approximation ton chaud (R fort, un peu de G)
                     orange = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
                     self.set_channel(ch, orange)
                 elif ch_type == "UV":
                     self.set_channel(ch, 0)
                 elif ch_type == "Zoom":
-                    zoom = getattr(proj, 'zoom', 0)
-                    self.set_channel(ch, zoom)
+                    self.set_channel(ch, getattr(proj, 'zoom', 0))
+                elif ch_type == "Iris":
+                    self.set_channel(ch, getattr(proj, 'iris', 0))
                 elif ch_type == "Dim":
                     self.set_channel(ch, dimmer)
                 elif ch_type == "Strobe":
                     strobe_value = 0
                     if hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
-                        if effect_speed > 0:
-                            strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16))
-                        else:
-                            strobe_value = 100
+                        strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100
                     self.set_channel(ch, strobe_value)
                 elif ch_type == "Pan":
                     self.set_channel(ch, getattr(proj, 'pan', 128))
                 elif ch_type == "PanFine":
-                    pan = getattr(proj, 'pan', 128)
-                    self.set_channel(ch, (pan * 256) % 256)
+                    self.set_channel(ch, (getattr(proj, 'pan', 128) * 256) % 256)
                 elif ch_type == "Tilt":
                     self.set_channel(ch, getattr(proj, 'tilt', 128))
                 elif ch_type == "TiltFine":
-                    tilt = getattr(proj, 'tilt', 128)
-                    self.set_channel(ch, (tilt * 256) % 256)
+                    self.set_channel(ch, (getattr(proj, 'tilt', 128) * 256) % 256)
                 elif ch_type == "Gobo1":
                     self.set_channel(ch, getattr(proj, 'gobo', 0))
                 elif ch_type == "ColorWheel":
@@ -314,11 +468,9 @@ class ArtNetDMX:
                     self.set_channel(ch, 0)
 
     def set_projector_patch(self, proj_key, channels, profile=None, mode=None):
-        """Configure le patch d'un projecteur"""
         self.projector_channels[proj_key] = channels
         if profile is not None:
             self.projector_profiles[proj_key] = profile
-            # Garder projector_modes synchronise pour retro-compat
             name = profile_name(profile)
             self.projector_modes[proj_key] = name if name else "CUSTOM"
         elif mode is not None:
@@ -326,7 +478,6 @@ class ArtNetDMX:
             self.projector_profiles[proj_key] = profile_for_mode(mode)
 
     def clear_patch(self):
-        """Efface tout le patch"""
         self.projector_channels.clear()
         self.projector_modes.clear()
         self.projector_profiles.clear()

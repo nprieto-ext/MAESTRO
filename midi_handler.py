@@ -21,6 +21,7 @@ class MIDIHandler(QObject):
     """Gestionnaire MIDI pour l'AKAI APC mini"""
     fader_changed = Signal(int, int)  # (fader_index, value)
     pad_pressed = Signal(int, int)    # (row, col)
+    pad_released = Signal(int, int)   # (row, col)
 
     def __init__(self):
         super().__init__()
@@ -145,14 +146,34 @@ class MIDIHandler(QObject):
             self.midi_out = None
 
     def poll_midi(self):
-        """Lit les messages MIDI en attente"""
+        """Lit tous les messages MIDI en attente, avec coalescing des faders"""
         if not self.midi_in:
             return
 
         try:
-            message = self.midi_in.get_message()
-            if message:
-                self.handle_midi_message(message[0])
+            # Collecter tous les messages disponibles
+            fader_latest = {}  # {fader_idx: value} — garde seulement la derniere valeur
+            other_messages = []
+
+            while True:
+                message = self.midi_in.get_message()
+                if not message:
+                    break
+                msg = message[0]
+                if len(msg) >= 3 and msg[0] == 0xB0 and 48 <= msg[1] <= 56:
+                    # Fader CC: coalescence (seule la derniere valeur compte)
+                    fader_latest[msg[1] - 48] = msg[2]
+                else:
+                    other_messages.append(msg)
+
+            # Emettre les evenements faders coalescés
+            for fader_idx, value in fader_latest.items():
+                self.fader_changed.emit(fader_idx, value)
+
+            # Traiter les autres messages dans l'ordre
+            for msg in other_messages:
+                self.handle_midi_message(msg)
+
         except Exception as e:
             print(f"❌ Erreur lecture MIDI: {e}")
 
@@ -183,6 +204,13 @@ class MIDIHandler(QObject):
                 if 48 <= data1 <= 56:
                     fader_idx = data1 - 48
                     self.fader_changed.emit(fader_idx, data2)
+
+            # Note Off (boutons EFFETS seulement — pour Flash/Timer trigger mode)
+            elif status == 0x80 or (status == 0x90 and data2 == 0):
+                note = data1
+                if 112 <= note <= 119:
+                    row = note - 112
+                    self.pad_released.emit(row, 8)
 
             # Note On (pads et boutons)
             elif status == 0x90 and data2 > 0:  # Note On avec velocite > 0

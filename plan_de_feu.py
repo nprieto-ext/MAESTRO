@@ -233,8 +233,8 @@ _GROUP_COLORS = {
     "face":     "#ff8844",
     "contre":   "#4488ff",
     "douche1":  "#44cc88",
-    "douche2":  "#44cc88",
-    "douche3":  "#44cc88",
+    "douche2":  "#ffcc44",
+    "douche3":  "#ff4488",
     "lat":      "#aa55ff",
     "lyre":     "#ff44cc",
     "barre":    "#44aaff",
@@ -639,7 +639,7 @@ class FixtureCanvas(QWidget):
                     self.update()
                 self.pdf._show_fixture_context_menu(event.globalPos(), idx)
             else:
-                self.pdf._show_canvas_context_menu(event.globalPos())
+                self.pdf._show_canvas_context_menu(event.globalPos(), event.pos())
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton and self._editable:
@@ -1036,10 +1036,12 @@ class PlanDeFeu(QFrame):
         self.canvas.compact = True
         root.addWidget(self.canvas)
 
-        # Timer de refresh (60 ms ~ 16 fps)
+        self._dirty = True  # Redessiner seulement si les données ont changé
+
+        # Timer de refresh (100 ms ~ 10 fps) — suffisant visuellement, -40% CPU vs 60ms
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(60)
+        self.timer.start(100)
 
     # ── API externe (identique a l'ancienne version) ────────────────
 
@@ -1056,10 +1058,18 @@ class PlanDeFeu(QFrame):
         return result
 
     def refresh(self):
-        self.canvas.update()
+        if self._dirty:
+            self.canvas.update()
+            self._dirty = False
+
+    def mark_dirty(self):
+        """Signale qu'un repaint est nécessaire au prochain tick."""
+        self._dirty = True
 
     def set_htp_overrides(self, overrides):
-        self._htp_overrides = overrides
+        if overrides != self._htp_overrides:
+            self._htp_overrides = overrides
+            self._dirty = True
 
     def set_dmx_blocked(self):
         self.dmx_toggle_btn.setChecked(False)
@@ -1293,7 +1303,7 @@ class PlanDeFeu(QFrame):
         menu.addAction(dim_wa)
         menu.exec(global_pos)
 
-    def _show_canvas_context_menu(self, global_pos):
+    def _show_canvas_context_menu(self, global_pos, local_pos=None):
         menu = QMenu(self)
         menu.setStyleSheet(_MENU_STYLE)
 
@@ -1368,6 +1378,9 @@ class PlanDeFeu(QFrame):
                 p.start_address = data['start_address']
                 p.canvas_x = 0.5
                 p.canvas_y = 0.5
+                profile = data.get('profile')
+                if isinstance(profile, list) and profile:
+                    p.dmx_profile = profile
                 self.projectors.append(p)
                 if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
                     self.main_window._rebuild_dmx_patch()
@@ -1561,12 +1574,14 @@ class _FixtureFormWidget(QWidget):
 
     def get_data(self):
         from artnet_dmx import DMX_PROFILES
+        profile_key = self.profile_combo.currentData() or 'RGBDS'
+        profile = list(DMX_PROFILES.get(profile_key, DMX_PROFILES['RGBDS']))
         return {
             'name': self.name_edit.text().strip(),
             'fixture_type': self.type_combo.currentText(),
             'start_address': self.addr_spin.value(),
             'group': self.group_combo.currentText(),
-            'profile': self.profile_combo.currentData() or 'RGBDS',
+            'profile': profile,
         }
 
 
@@ -1891,6 +1906,8 @@ class NewPlanWizard(QDialog):
 
         self._counts = [s['default'] for s in self._STEPS]
         self._step = 0
+        self._step_custom_fixtures = [None] * len(self._STEPS)  # fixture choisie par l'user
+        self.fixture_selector_cb = None  # injecté par main_window
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1976,7 +1993,28 @@ class NewPlanWizard(QDialog):
         subtitle.setStyleSheet("color: #888; font-size: 13px;")
         subtitle.setAlignment(Qt.AlignCenter)
         vl.addWidget(subtitle)
-        vl.addSpacing(36)
+        vl.addSpacing(28)
+
+        # Sélecteur de fixture
+        fx_row = QHBoxLayout()
+        fx_row.setSpacing(8)
+        fx_lbl = QLabel(f"{step['ftype']}  (défaut)")
+        fx_lbl.setStyleSheet(
+            "color:#555; font-size:11px; background:#1a1a1a;"
+            " border:1px solid #2a2a2a; border-radius:4px; padding:4px 10px;"
+        )
+        btn_pick = QPushButton("Choisir fixture…")
+        btn_pick.setFixedHeight(30)
+        btn_pick.setStyleSheet(
+            "QPushButton { background:#1e1e1e; color:#aaa; border:1px solid #333;"
+            " border-radius:4px; padding:0 12px; font-size:11px; }"
+            "QPushButton:hover { border-color:#00d4ff55; color:#fff; background:#1e2530; }"
+        )
+        btn_pick.clicked.connect(lambda checked=False, i=idx: self._pick_fixture(i))
+        fx_row.addWidget(fx_lbl, 1)
+        fx_row.addWidget(btn_pick)
+        vl.addLayout(fx_row)
+        vl.addSpacing(20)
 
         counter = _CounterWidget(value=self._counts[idx], max_val=step['max'])
         counter.valueChanged.connect(lambda v, i=idx: self._on_count(i, v))
@@ -1996,16 +2034,40 @@ class NewPlanWizard(QDialog):
         page._counter = counter
         page._preview = preview
         page._info = info_lbl
+        page._fx_lbl = fx_lbl
         page._idx = idx
         self._refresh_step_page(page)
         return page
+
+    def _pick_fixture(self, idx):
+        if not self.fixture_selector_cb:
+            return
+        result = self.fixture_selector_cb()
+        if not result:
+            return
+        fx = result[0]  # (preset, qty, custom_name)
+        self._step_custom_fixtures[idx] = fx
+        page = self._step_pages[idx]
+        name = fx.get('name', '?')
+        mfr  = fx.get('manufacturer', '')
+        n_ch = len(fx.get('profile', []))
+        page._fx_lbl.setText(f"{mfr}  {name}  ·  {n_ch}ch")
+        page._fx_lbl.setStyleSheet(
+            "color:#00d4ff; font-size:11px; background:#0d1a20;"
+            " border:1px solid #00d4ff44; border-radius:4px; padding:4px 10px;"
+        )
+        self._refresh_step_page(page)
 
     def _refresh_step_page(self, page):
         from artnet_dmx import DMX_PROFILES
         idx = page._idx
         step = self._STEPS[idx]
         count = self._counts[idx]
-        ch_per = len(DMX_PROFILES.get(step['profile'], ['?'] * 5))
+        custom_fx = self._step_custom_fixtures[idx]
+        if custom_fx:
+            ch_per = len(custom_fx.get('profile', []))
+        else:
+            ch_per = len(DMX_PROFILES.get(step['profile'], ['?'] * 5))
         page._preview.set_count(count)
         if count == 0:
             page._info.setText("Ce groupe sera vide")
@@ -2183,14 +2245,22 @@ class NewPlanWizard(QDialog):
         addr = 1
         for i, step in enumerate(self._STEPS):
             count = self._counts[i]
-            profile = list(DMX_PROFILES.get(step['profile'], ['R', 'G', 'B', 'Dim', 'Strobe']))
+            custom_fx = self._step_custom_fixtures[i]
+            if custom_fx:
+                profile   = list(custom_fx.get('profile', ['R', 'G', 'B', 'Dim', 'Strobe']))
+                ftype     = custom_fx.get('fixture_type', step['ftype'])
+                prefix    = custom_fx.get('name', step['prefix'])
+            else:
+                profile = list(DMX_PROFILES.get(step['profile'], ['R', 'G', 'B', 'Dim', 'Strobe']))
+                ftype   = step['ftype']
+                prefix  = step['prefix']
             ch = len(profile)
             for j in range(count):
-                name = f"{step['prefix']} {j + 1}" if count > 1 else step['prefix']
+                name = f"{prefix} {j + 1}" if count > 1 else prefix
                 fixtures.append({
                     'name': name,
                     'group': step['group'],
-                    'fixture_type': step['ftype'],
+                    'fixture_type': ftype,
                     'start_address': addr,
                     'profile': profile,
                 })
@@ -2212,12 +2282,14 @@ class _PatchCanvasProxy:
         self.main_window = main_window
         self.selected_lamps = set()
         self._htp_overrides = None
+        self.canvas_widget = None           # Référence au FixtureCanvas (pour calcul de position)
         # Callbacks injectés par le dialog
         self._add_cb               = None
         self._wizard_cb            = None
         self._align_row_cb         = None   # Aligner sur la même ligne (même Y)
         self._distribute_cb        = None   # Centrer + distribuer également
         self._select_fixture_cb    = None   # Basculer sur l'onglet Fixtures + sélectionner la carte
+        self._refresh_cb           = None   # Rafraîchir l'onglet Fixtures après modif externe
 
     # ── Menus contextuels ───────────────────────────────────────────
 
@@ -2231,24 +2303,59 @@ class _PatchCanvasProxy:
         info = menu.addAction(f"{proj.name or proj.group}  ·  CH {proj.start_address}")
         info.setEnabled(False)
         menu.addSeparator()
-        act_edit = menu.addAction("Modifier...")
+        menu.addAction("Modifier...", lambda: self._edit_fixture(idx))
+        menu.addSeparator()
 
-        action = menu.exec(global_pos)
-        if action == act_edit:
-            self._edit_fixture(idx)
+        grp_menu = menu.addMenu("⬡  Assigner groupe")
+        for _letter in ["A", "B", "C", "D", "E", "F"]:
+            grp_menu.addAction(_letter).triggered.connect(
+                lambda checked, l=_letter: self._assign_group_to_selected(l)
+            )
 
-    def _show_canvas_context_menu(self, global_pos):
+        menu.addSeparator()
+        n = len(self.selected_lamps)
+        menu.addAction(f"🗑  Supprimer ({n})" if n > 1 else "🗑  Supprimer",
+                       self._delete_selected_fixtures)
+
+        menu.exec(global_pos)
+
+    def _show_canvas_context_menu(self, global_pos, local_pos=None):
+        # Calculer la position normalisée pour le placement à l'emplacement du clic
+        norm_x, norm_y = 0.5, 0.5
+        if local_pos is not None and self.canvas_widget:
+            w = max(1, self.canvas_widget.width())
+            h = max(1, self.canvas_widget.height())
+            norm_x = max(0.0, min(1.0, local_pos.x() / w))
+            norm_y = max(0.0, min(1.0, local_pos.y() / h))
+
         menu = QMenu()
         menu.setStyleSheet(_MENU_STYLE)
 
         if self._add_cb:
-            menu.addAction("➕  Ajouter fixture", self._add_cb)
+            menu.addAction("➕  Ajouter fixture",
+                           lambda: self._add_cb(norm_x, norm_y))
         menu.addSeparator()
 
-        act_all  = menu.addAction("Tout sélectionner")
-        act_none = menu.addAction("Tout désélectionner")
+        def _sel_all():
+            g_cnt = {}
+            for p in self.projectors:
+                g = p.group; li = g_cnt.get(g, 0); g_cnt[g] = li + 1
+                self.selected_lamps.add((g, li))
 
-        # Actions d'alignement rapide (visible quand sélection active)
+        menu.addAction("Tout sélectionner", _sel_all)
+        menu.addAction("Tout désélectionner", lambda: self.selected_lamps.clear())
+
+        if self.selected_lamps:
+            menu.addSeparator()
+            grp_menu = menu.addMenu("⬡  Assigner groupe")
+            for _letter in ["A", "B", "C", "D", "E", "F"]:
+                grp_menu.addAction(_letter).triggered.connect(
+                    lambda checked, l=_letter: self._assign_group_to_selected(l)
+                )
+            n = len(self.selected_lamps)
+            menu.addAction(f"🗑  Supprimer ({n})" if n > 1 else "🗑  Supprimer",
+                           self._delete_selected_fixtures)
+
         if self.selected_lamps and (self._align_row_cb or self._distribute_cb):
             menu.addSeparator()
             if self._align_row_cb:
@@ -2256,16 +2363,28 @@ class _PatchCanvasProxy:
             if self._distribute_cb:
                 menu.addAction("⟺  Distribuer également",      self._distribute_cb)
 
-        action = menu.exec(global_pos)
-        if action == act_all:
-            g_cnt = {}
-            for p in self.projectors:
-                g = p.group
-                li = g_cnt.get(g, 0)
-                g_cnt[g] = li + 1
-                self.selected_lamps.add((g, li))
-        elif action == act_none:
-            self.selected_lamps.clear()
+        menu.exec(global_pos)
+
+    # ── Assigner groupe ──────────────────────────────────────────────
+
+    def _assign_group_to_selected(self, letter):
+        _MAP = {"A": "face", "B": "lat", "C": "contre",
+                "D": "douche1", "E": "douche2", "F": "douche3"}
+        new_group = _MAP.get(letter, letter)
+        g_cnt = {}
+        to_update = []
+        for i, proj in enumerate(self.projectors):
+            li = g_cnt.get(proj.group, 0)
+            if (proj.group, li) in self.selected_lamps:
+                to_update.append(i)
+            g_cnt[proj.group] = li + 1
+        for i in to_update:
+            self.projectors[i].group = new_group
+        self.selected_lamps.clear()
+        if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
+            self.main_window._rebuild_dmx_patch()
+        if self._refresh_cb:
+            self._refresh_cb()
 
     # ── Modifier / Supprimer ────────────────────────────────────────
 
@@ -2323,6 +2442,8 @@ class _PatchCanvasProxy:
         self.selected_lamps.clear()
         if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
             self.main_window._rebuild_dmx_patch()
+        if self._refresh_cb:
+            self._refresh_cb()
 
 
 # ── PlanDeFeuPreview ──────────────────────────────────────────────────────────

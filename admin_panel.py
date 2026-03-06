@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QDialog, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
-    QProgressBar,
+    QProgressBar, QFileDialog, QSizePolicy, QStackedWidget,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QColor
@@ -31,6 +31,16 @@ from PySide6.QtGui import QFont, QColor
 import firebase_client as fc
 from core import FIREBASE_PROJECT_ID
 import email_sender
+
+try:
+    from gdtf_config import GDTF_SYNC_SECRET as _GDTF_SYNC_SECRET
+except ImportError:
+    _GDTF_SYNC_SECRET = ""
+
+
+_GDTF_UPLOAD_URL = (
+    f"https://us-central1-{FIREBASE_PROJECT_ID}.cloudfunctions.net/gdtf_upload"
+)
 
 try:
     from release import (
@@ -256,6 +266,33 @@ def _query_all_licenses(id_token: str) -> list:
         fields["_uid"] = uid
         results.append(fields)
     return results
+
+
+def _query_all_fixtures(id_token: str) -> list:
+    """Charge tous les documents de la collection 'fixtures' dans Firestore."""
+    results = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/fixtures?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        docs = data.get("documents", [])
+        for doc in docs:
+            doc_id = doc["name"].split("/")[-1]
+            fields = {k: fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+            fields["_doc_id"] = doc_id
+            results.append(fields)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return results
+
+
+def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
+    return _delete_firestore_doc(f"fixtures/{doc_id}", id_token)
 
 
 def _fetch_license_doc(uid: str, id_token: str) -> dict:
@@ -793,16 +830,581 @@ class MachinesDialog(QDialog):
 
 
 # ---------------------------------------------------------------
+# OflSyncWorker + OflSyncDialog
+# ---------------------------------------------------------------
+
+_OFL_ZIP_URL = (
+    "https://github.com/OpenLightingProject/open-fixture-library"
+    "/archive/refs/heads/master.zip"
+)
+_OFL_BATCH = 50
+
+
+class OflSyncWorker(QObject):
+    """
+    Télécharge le ZIP GitHub d'Open Fixture Library (~50 Mo),
+    parse toutes les fixtures JSON via ofl_parser, uploade par lots
+    via la CF gdtf_upload. Tourne dans un QThread séparé.
+    """
+    progress = Signal(int, int, str)   # (done, total, message)
+    finished = Signal(dict)
+    error    = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def run(self):
+        try:
+            result = self._do_sync()
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    def _do_sync(self) -> dict:
+        import io as _io
+        import zipfile as _zf
+        import ofl_parser
+
+        # ── 1. Téléchargement du ZIP OFL (~50 Mo) ─────────────────────────
+        self.progress.emit(0, 0, "Téléchargement du ZIP Open Fixture Library…")
+        req = urllib.request.Request(
+            _OFL_ZIP_URL,
+            headers={"User-Agent": "MyStrow-Admin/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            zip_bytes = resp.read()
+        self.progress.emit(0, 0, f"ZIP téléchargé ({len(zip_bytes) // 1024} Ko) — extraction…")
+
+        zf = _zf.ZipFile(_io.BytesIO(zip_bytes))
+
+        # ── 2. Lire manufacturers.json ─────────────────────────────────────
+        mfr_names: dict = {}
+        for name in zf.namelist():
+            if name.endswith("fixtures/manufacturers.json"):
+                raw_mfr = json.loads(zf.read(name).decode("utf-8"))
+                # {"robe": {"name": "Robe", ...}, ...}
+                for key, val in raw_mfr.items():
+                    if isinstance(val, dict):
+                        mfr_names[key] = val.get("name", key)
+                break
+
+        # ── 3. Collecter tous les fichiers fixture JSON ────────────────────
+        fixture_entries = []
+        for member in zf.namelist():
+            # open-fixture-library-master/fixtures/{mfr}/{fixture}.json
+            parts = member.replace("\\", "/").split("/")
+            if (len(parts) == 4
+                    and parts[1] == "fixtures"
+                    and not parts[2].startswith("$")
+                    and member.endswith(".json")
+                    and parts[3] != ""):
+                fixture_entries.append((parts[2], parts[3][:-5], member))
+
+        total = len(fixture_entries)
+        self.progress.emit(0, total, f"{total} fixtures trouvées — parsing…")
+
+        done   = 0
+        errors = []
+        upload_batch = []
+
+        def _flush_batch():
+            if not upload_batch:
+                return
+            payload = json.dumps({"fixtures": upload_batch}).encode("utf-8")
+            r_req = urllib.request.Request(
+                _GDTF_UPLOAD_URL,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Sync-Secret": _GDTF_SYNC_SECRET,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(r_req, timeout=120) as r_resp:
+                r = json.loads(r_resp.read().decode())
+            if not r.get("ok"):
+                raise Exception(r.get("error", "Upload batch échoué"))
+            upload_batch.clear()
+
+        for mfr_key, fix_key, member in fixture_entries:
+            if self._stop:
+                break
+            try:
+                raw = zf.read(member)
+                mfr_name = mfr_names.get(mfr_key, mfr_key)
+                parsed = ofl_parser.parse_ofl_json(raw, mfr_key, fix_key, mfr_name)
+                upload_batch.append(parsed)
+                done += 1
+                self.progress.emit(done, total, f"✅ {mfr_name} — {parsed['name']}")
+                if len(upload_batch) >= _OFL_BATCH:
+                    _flush_batch()
+            except Exception as exc:
+                err_msg = f"{mfr_key}/{fix_key}: {exc}"
+                errors.append(err_msg)
+                self.progress.emit(done, total, f"⚠ {err_msg}")
+
+        if not self._stop:
+            try:
+                _flush_batch()
+            except Exception as exc:
+                errors.append(f"Erreur upload final : {exc}")
+
+        return {"done": done, "total": total, "stopped": self._stop, "errors": errors}
+
+
+class OflSyncDialog(QDialog):
+    """
+    Télécharge le ZIP GitHub OFL, parse toutes les fixtures et
+    uploade les profils complets dans Firestore via gdtf_upload CF.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Open Fixture Library — Sync Firestore")
+        self.setMinimumSize(640, 520)
+        self._thread = None
+        self._worker = None
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(10)
+
+        title = QLabel("Sync Open Fixture Library → Firestore")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        sub = QLabel(
+            "Télécharge le ZIP GitHub d'Open Fixture Library (~50 Mo), parse ~5 000 fixtures "
+            "JSON et uploade les profils complets dans Firestore. "
+            "Durée estimée : 5–15 minutes selon la connexion."
+        )
+        sub.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        # Progress
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(False)
+        self.progress.setFixedHeight(6)
+        self.progress.setStyleSheet(
+            f"QProgressBar {{ border:none; background:#2a2a2a; border-radius:3px; }}"
+            f"QProgressBar::chunk {{ background:{ACCENT}; border-radius:3px; }}"
+        )
+        lay.addWidget(self.progress)
+
+        self.status_lbl = QLabel("Prêt.")
+        self.status_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        lay.addWidget(self.status_lbl)
+
+        # Log
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(QFont("Consolas", 9))
+        self.log.setStyleSheet(
+            f"background: {BG_PANEL}; color: {TEXT_DIM}; border: 1px solid #2a2a2a; border-radius:4px;"
+        )
+        lay.addWidget(self.log)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.btn_start = QPushButton("▶  Lancer la sync OFL")
+        self.btn_start.setStyleSheet(_BTN_PRIMARY)
+        self.btn_start.setFixedHeight(34)
+        self.btn_start.clicked.connect(self._start)
+        btn_row.addWidget(self.btn_start)
+
+        self.btn_stop = QPushButton("⏹  Arrêter")
+        self.btn_stop.setStyleSheet(_BTN_SECONDARY)
+        self.btn_stop.setFixedHeight(34)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self._stop)
+        btn_row.addWidget(self.btn_stop)
+
+        btn_row.addStretch()
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setStyleSheet(_BTN_SECONDARY)
+        btn_close.setFixedHeight(34)
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+
+        lay.addLayout(btn_row)
+
+    def _append_log(self, msg: str, color: str = None):
+        if color:
+            self.log.append(f'<span style="color:{color};">{msg}</span>')
+        else:
+            self.log.append(msg)
+
+    def _start(self):
+        if not _GDTF_SYNC_SECRET:
+            self._append_log("❌ GDTF_SYNC_SECRET non configuré (gdtf_config.py).", RED)
+            return
+
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(True)
+        self.status_lbl.setText("Démarrage…")
+        self._append_log("▶ Démarrage de la sync OFL…")
+
+        self._worker = OflSyncWorker()
+        self._thread = QThread()
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_done)
+        self._worker.error.connect(self._on_error)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.error.connect(self._thread.quit)
+        self._thread.start()
+
+    def _stop(self):
+        if self._worker:
+            self._worker.stop()
+        self.btn_stop.setEnabled(False)
+        self._append_log("⏸ Arrêt demandé…", "#e67e22")
+
+    def _on_progress(self, done: int, total: int, msg: str):
+        if total > 0:
+            self.progress.setRange(0, total)
+            self.progress.setValue(done)
+        self.status_lbl.setText(f"{done} / {total}" if total > 0 else msg[:60])
+        color = RED if "⚠" in msg else "#2ecc71" if "✅" in msg else TEXT_DIM
+        self._append_log(msg, color)
+
+    def _on_done(self, result: dict):
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.progress.setRange(0, 1)
+        self.progress.setValue(1)
+        done    = result["done"]
+        total   = result["total"]
+        errors  = result["errors"]
+        stopped = result.get("stopped", False)
+        label   = "Interrompu" if stopped else "Terminé"
+        self.status_lbl.setText(f"{label} — {done}/{total} fixtures uploadées")
+        self._append_log(
+            f"{'⏸' if stopped else '✅'} {label} — {done}/{total} fixtures uploadées",
+            "#e67e22" if stopped else "#2ecc71",
+        )
+        if errors:
+            self._append_log(f"⚠ {len(errors)} erreur(s) :", "#e67e22")
+            for e in errors[:20]:
+                self._append_log(f"  {e}", "#e67e22")
+
+    def _on_error(self, msg: str):
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.progress.setVisible(False)
+        self.status_lbl.setText("Erreur.")
+        self._append_log(f"❌ Erreur : {msg}", RED)
+
+
+# GdtfSyncDialog
+# ---------------------------------------------------------------
+
+class GdtfUploadDialog(QDialog):
+    """
+    Dialog d'import de fichiers .gdtf / .mystrow vers Firestore.
+    Parse les fichiers localement puis les envoie via la CF gdtf_upload.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importer fixtures vers Firestore")
+        self.setMinimumSize(680, 500)
+        self._parsed: list = []   # liste de dicts fixture parsés
+        self._thread = None
+        self._worker = None
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(10)
+
+        title = QLabel("Importer fixtures vers Firestore")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setStyleSheet(f"color: {ACCENT};")
+        lay.addWidget(title)
+
+        sub = QLabel(
+            "Formats acceptés : .xml (GrandMA2/3) · .mystrow — "
+            "parsés localement puis uploadés dans Firestore avec profil complet."
+        )
+        sub.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        # Boutons choisir fichiers / dossier
+        pick_row = QHBoxLayout()
+        pick_row.setSpacing(6)
+
+        btn_pick = QPushButton("📂  Fichiers…")
+        btn_pick.setStyleSheet(_BTN_PRIMARY)
+        btn_pick.setFixedHeight(32)
+        btn_pick.setToolTip("Sélectionner des fichiers .xml / .mystrow")
+        btn_pick.clicked.connect(self._on_pick_files)
+        pick_row.addWidget(btn_pick)
+
+        btn_folder = QPushButton("📁  Dossier…")
+        btn_folder.setStyleSheet(_BTN_SECONDARY)
+        btn_folder.setFixedHeight(32)
+        btn_folder.setToolTip("Charger tous les .xml / .mystrow d'un dossier")
+        btn_folder.clicked.connect(self._on_pick_folder)
+        pick_row.addWidget(btn_folder)
+
+        self.lbl_count = QLabel("Aucun fichier sélectionné")
+        self.lbl_count.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        pick_row.addWidget(self.lbl_count)
+        pick_row.addStretch()
+
+        btn_clear = QPushButton("✕  Vider")
+        btn_clear.setStyleSheet(_BTN_SECONDARY)
+        btn_clear.setFixedHeight(28)
+        btn_clear.clicked.connect(self._on_clear)
+        pick_row.addWidget(btn_clear)
+        lay.addLayout(pick_row)
+
+        # Table des fixtures parsées
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Statut", "Nom", "Fabricant", "Modes"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(160)
+        self.table.verticalHeader().setVisible(False)
+        lay.addWidget(self.table)
+
+        # Log
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(QFont("Consolas", 9))
+        self.log.setMaximumHeight(120)
+        self.log.setStyleSheet(
+            f"background: {BG_PANEL}; color: {TEXT_DIM}; border: 1px solid #2a2a2a; border-radius:4px;"
+        )
+        lay.addWidget(self.log)
+
+        # Progress + status
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self.progress.setFixedHeight(5)
+        self.progress.setStyleSheet(
+            f"QProgressBar {{ border:none; background:#2a2a2a; border-radius:2px; }}"
+            f"QProgressBar::chunk {{ background:{ACCENT}; border-radius:2px; }}"
+        )
+        lay.addWidget(self.progress)
+
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        lay.addWidget(self.status_lbl)
+
+        # Boutons bas
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.btn_upload = QPushButton("📤  Uploader vers Firestore")
+        self.btn_upload.setStyleSheet(_BTN_PRIMARY)
+        self.btn_upload.setFixedHeight(34)
+        self.btn_upload.setEnabled(False)
+        self.btn_upload.clicked.connect(self._on_upload)
+        btn_row.addWidget(self.btn_upload)
+
+        btn_row.addStretch()
+
+        btn_close = QPushButton("Fermer")
+        btn_close.setStyleSheet(_BTN_SECONDARY)
+        btn_close.setFixedHeight(34)
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+        lay.addLayout(btn_row)
+
+    # ------------------------------------------------------------------
+
+    def _append_log(self, msg: str, color: str = None):
+        if color:
+            self.log.append(f'<span style="color:{color};">{msg}</span>')
+        else:
+            self.log.append(msg)
+
+    def _set_busy(self, busy: bool):
+        self.btn_upload.setEnabled(not busy and bool(self._parsed))
+        self.progress.setVisible(busy)
+
+    def _on_clear(self):
+        self._parsed.clear()
+        self.table.setRowCount(0)
+        self.lbl_count.setText("Aucun fichier sélectionné")
+        self.btn_upload.setEnabled(False)
+        self.log.clear()
+
+    _FIXTURE_EXTS = {".mystrow", ".xml"}
+
+    def _on_pick_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Choisir des fichiers fixture", "",
+            "Fixtures (*.xml *.mystrow);;Tous les fichiers (*)"
+        )
+        if paths:
+            self._process_paths(paths)
+
+    def _on_pick_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Choisir un dossier de fixtures")
+        if not folder:
+            return
+        paths = []
+        for root, _dirs, files in os.walk(folder):
+            for fname in sorted(files):
+                if os.path.splitext(fname)[1].lower() in self._FIXTURE_EXTS:
+                    paths.append(os.path.join(root, fname))
+        if not paths:
+            self._append_log(f"⚠ Aucun fichier .xml / .mystrow trouvé dans {folder}", "#e67e22")
+            return
+        self._append_log(f"📁 {len(paths)} fichier(s) trouvé(s) dans {folder}")
+        self._process_paths(paths)
+
+    def _process_paths(self, paths: list):
+        from fixture_parser import parse_file
+        ok = 0
+        for path in paths:
+            fname = os.path.basename(path)
+            try:
+                fx = parse_file(path)
+                fx["_source_file"] = fname
+                self._parsed.append(fx)
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                self.table.setItem(row, 0, QTableWidgetItem("✅"))
+                self.table.item(row, 0).setForeground(QColor("#2ecc71"))
+                self.table.setItem(row, 1, QTableWidgetItem(fx.get("name", "")))
+                self.table.setItem(row, 2, QTableWidgetItem(fx.get("manufacturer", "")))
+                modes_info = ", ".join(
+                    f"{m['name']} ({m.get('channelCount', 0)}ch)"
+                    for m in fx.get("modes", [])
+                )
+                self.table.setItem(row, 3, QTableWidgetItem(modes_info))
+                self._append_log(
+                    f"✅ {fname}  →  {fx.get('name')} "
+                    f"[{fx.get('source','?').upper()}]  "
+                    f"({len(fx.get('modes', []))} mode(s))",
+                    "#2ecc71",
+                )
+                ok += 1
+            except Exception as e:
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                self.table.setItem(row, 0, QTableWidgetItem("❌"))
+                self.table.item(row, 0).setForeground(QColor(RED))
+                self.table.setItem(row, 1, QTableWidgetItem(fname))
+                self.table.setItem(row, 2, QTableWidgetItem(""))
+                self.table.setItem(row, 3, QTableWidgetItem(str(e)))
+                self._append_log(f"❌ {fname}  :  {e}", RED)
+
+        total = len(self._parsed)
+        self.lbl_count.setText(
+            f"{total} fixture{'s' if total > 1 else ''} "
+            f"({ok}/{len(paths)} parsée{'s' if ok > 1 else ''})"
+        )
+        self.btn_upload.setEnabled(total > 0)
+
+    def _on_upload(self):
+        if not self._parsed:
+            return
+        if not _GDTF_SYNC_SECRET:
+            self._append_log("❌ GDTF_SYNC_SECRET non configuré (gdtf_config.py manquant).", RED)
+            return
+
+        n = len(self._parsed)
+        self._append_log(f"▶ Upload de {n} fixture(s) vers Firestore…")
+        self._set_busy(True)
+        self.status_lbl.setText("Upload en cours…")
+        self.progress.setRange(0, 0)
+
+        _run_async(
+            self,
+            self._do_upload,
+            on_success=self._on_upload_ok,
+            on_error=self._on_upload_err,
+        )
+
+    def _do_upload(self) -> dict:
+        # Nettoyer les clés internes avant envoi
+        fixtures_to_send = []
+        for fx in self._parsed:
+            clean = {k: v for k, v in fx.items() if not k.startswith("_")}
+            fixtures_to_send.append(clean)
+
+        payload = json.dumps({"fixtures": fixtures_to_send}).encode("utf-8")
+        req = urllib.request.Request(
+            _GDTF_UPLOAD_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Sync-Secret": _GDTF_SYNC_SECRET,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()
+            except Exception:
+                pass
+            raise Exception(f"HTTP {e.code}: {body or str(e)}")
+
+    def _on_upload_ok(self, result: dict):
+        self._set_busy(False)
+        self.progress.setRange(0, 1)
+        self.progress.setValue(1)
+        written = result.get("written", 0)
+        errors  = result.get("errors", [])
+        ver     = result.get("newVersion", "?")
+        self.status_lbl.setText(f"{written} fixture(s) écrite(s) — v{ver}")
+        self._append_log(
+            f"✅ Upload OK — {written} fixture(s) dans Firestore (v{ver})"
+            + (f" | {len(errors)} erreur(s)" if errors else ""),
+            "#2ecc71",
+        )
+        for err in errors:
+            self._append_log(f"  ⚠ {err}", "#e67e22")
+
+    def _on_upload_err(self, msg: str):
+        self._set_busy(False)
+        self.status_lbl.setText("Erreur upload.")
+        self._append_log(f"❌ Erreur : {msg}", RED)
+
+
+# ---------------------------------------------------------------
 # AdminPanel — fenêtre principale
 # ---------------------------------------------------------------
 
 class AdminPanel(QMainWindow):
     def __init__(self, id_token: str, refresh_token: str, admin_email: str):
         super().__init__()
-        self._id_token      = id_token
-        self._refresh_token = refresh_token
-        self._admin_email   = admin_email
-        self._clients: list = []
+        self._id_token          = id_token
+        self._refresh_token     = refresh_token
+        self._admin_email       = admin_email
+        self._clients: list     = []
+        self._filtered_clients: list = []
 
         self.setWindowTitle("MyStrow — Admin")
         self.setMinimumSize(900, 580)
@@ -816,39 +1418,76 @@ class AdminPanel(QMainWindow):
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(0)
 
-        # --- Header ---
+        # ── Header ── titre + outils admin ───────────────────────────────────
         header = QFrame()
         header.setFixedHeight(52)
-        header.setStyleSheet(f"background: {BG_PANEL}; border-bottom: 1px solid #333;")
+        header.setStyleSheet(f"background: {BG_PANEL}; border-bottom: 1px solid #2a2a2a;")
         h_lay = QHBoxLayout(header)
-        h_lay.setContentsMargins(16, 0, 16, 0)
+        h_lay.setContentsMargins(20, 0, 16, 0)
         h_lay.setSpacing(8)
 
-        title_lbl = QLabel("MyStrow — Admin")
+        title_lbl = QLabel("MyStrow  ·  Admin")
         title_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title_lbl.setStyleSheet(f"color: {ACCENT}; background: transparent;")
         h_lay.addWidget(title_lbl)
+
         h_lay.addStretch()
 
-        self.status_lbl = QLabel(f"Connecté : {self._admin_email}")
+        # Outils admin (Release / Backup) — toujours actifs, côté gauche du groupe droit
+        self.btn_release = QPushButton("⚙  Release…")
+        self.btn_release.setStyleSheet(_BTN_ORANGE)
+        self.btn_release.setFixedHeight(32)
+        self.btn_release.setEnabled(_RELEASE_OK)
+        self.btn_release.setToolTip("" if _RELEASE_OK else "release.py introuvable")
+        self.btn_release.clicked.connect(self._on_release)
+        h_lay.addWidget(self.btn_release)
+
+        self.btn_gdtf_upload = QPushButton("📥  Importer fixtures")
+        self.btn_gdtf_upload.setStyleSheet(_BTN_SECONDARY)
+        self.btn_gdtf_upload.setFixedHeight(32)
+        self.btn_gdtf_upload.setToolTip("Importer des fichiers .gdtf / .xml / .mystrow vers Firestore (profils complets)")
+        self.btn_gdtf_upload.clicked.connect(self._on_gdtf_upload)
+        h_lay.addWidget(self.btn_gdtf_upload)
+
+        self.btn_gdtf_enrich = QPushButton("🌐  Sync OFL")
+        self.btn_gdtf_enrich.setStyleSheet(_BTN_SECONDARY)
+        self.btn_gdtf_enrich.setFixedHeight(32)
+        self.btn_gdtf_enrich.setToolTip("Télécharger Open Fixture Library (GitHub) et peupler les profils de canaux dans Firestore")
+        self.btn_gdtf_enrich.clicked.connect(self._on_gdtf_enrich)
+        h_lay.addWidget(self.btn_gdtf_enrich)
+
+        self.btn_backup = QPushButton("💾  Backup")
+        self.btn_backup.setStyleSheet(_BTN_SECONDARY)
+        self.btn_backup.setFixedHeight(32)
+        self.btn_backup.setToolTip("Sauvegarde le projet en .zip (Bureau + Google Drive)")
+        self.btn_backup.clicked.connect(self._on_backup)
+        h_lay.addWidget(self.btn_backup)
+
+        h_lay.addSpacing(16)
+        _sep_h = QFrame(); _sep_h.setFrameShape(QFrame.VLine)
+        _sep_h.setStyleSheet("QFrame { color: #333; max-height: 24px; }")
+        h_lay.addWidget(_sep_h)
+        h_lay.addSpacing(16)
+
+        self.status_lbl = QLabel(self._admin_email)
         self.status_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; background: transparent;")
         h_lay.addWidget(self.status_lbl)
-        h_lay.addSpacing(12)
 
-        self.btn_refresh = QPushButton("↻  Actualiser")
+        h_lay.addSpacing(10)
+
+        self.btn_refresh = QPushButton("↻")
         self.btn_refresh.setStyleSheet(_BTN_SECONDARY)
-        self.btn_refresh.setFixedHeight(32)
+        self.btn_refresh.setFixedSize(32, 32)
+        self.btn_refresh.setToolTip("Actualiser la liste")
         self.btn_refresh.clicked.connect(self._load_clients)
         h_lay.addWidget(self.btn_refresh)
-        h_lay.addSpacing(6)
 
-        btn_restart = QPushButton("⟳  Redémarrer")
+        btn_restart = QPushButton("⟳")
         btn_restart.setStyleSheet(_BTN_SECONDARY)
-        btn_restart.setFixedHeight(32)
-        btn_restart.setToolTip("Relance admin_panel.py pour prendre en compte les modifications")
+        btn_restart.setFixedSize(32, 32)
+        btn_restart.setToolTip("Relancer admin_panel.py")
         btn_restart.clicked.connect(self._on_restart)
         h_lay.addWidget(btn_restart)
-        h_lay.addSpacing(6)
 
         btn_logout = QPushButton("Déconnexion")
         btn_logout.setStyleSheet(_BTN_RED)
@@ -858,95 +1497,317 @@ class AdminPanel(QMainWindow):
 
         main_lay.addWidget(header)
 
-        # --- Chargement ---
+        # ── Navigation Licences / Fixtures ────────────────────────────────────
+        nav_bar = QFrame()
+        nav_bar.setFixedHeight(38)
+        nav_bar.setStyleSheet(f"background: {BG_PANEL}; border-bottom: 1px solid #1e1e1e;")
+        nav_lay = QHBoxLayout(nav_bar)
+        nav_lay.setContentsMargins(16, 0, 16, 0)
+        nav_lay.setSpacing(4)
+
+        _nav_active = (f"QPushButton {{ background: transparent; color: {ACCENT};"
+                       f" border: none; border-bottom: 2px solid {ACCENT};"
+                       f" border-radius: 0; font-size: 12px; font-weight: bold; padding: 0 14px; }}")
+        _nav_idle   = (f"QPushButton {{ background: transparent; color: {TEXT_DIM};"
+                       f" border: none; border-bottom: 2px solid transparent;"
+                       f" border-radius: 0; font-size: 12px; padding: 0 14px; }}"
+                       f"QPushButton:hover {{ color: {TEXT}; }}")
+
+        self._btn_nav_lic = QPushButton("Licences")
+        self._btn_nav_lic.setFixedHeight(38)
+        self._btn_nav_lic.setStyleSheet(_nav_active)
+        self._btn_nav_lic.clicked.connect(lambda: self._switch_view(0))
+        nav_lay.addWidget(self._btn_nav_lic)
+
+        self._btn_nav_fix = QPushButton("Fixtures")
+        self._btn_nav_fix.setFixedHeight(38)
+        self._btn_nav_fix.setStyleSheet(_nav_idle)
+        self._btn_nav_fix.clicked.connect(lambda: self._switch_view(1))
+        nav_lay.addWidget(self._btn_nav_fix)
+
+        nav_lay.addStretch()
+        main_lay.addWidget(nav_bar)
+
+        # ── Stacked content ───────────────────────────────────────────────────
+        self._content_stack = QStackedWidget()
+        main_lay.addWidget(self._content_stack, 1)
+
+        # ── Page 0 : Licences ─────────────────────────────────────────────────
+        lic_page = QWidget()
+        lic_lay = QVBoxLayout(lic_page)
+        lic_lay.setContentsMargins(0, 0, 0, 0)
+        lic_lay.setSpacing(0)
+        self._content_stack.addWidget(lic_page)
+
+        # ── Barre recherche + compteur ────────────────────────────────────────
+        search_bar = QFrame()
+        search_bar.setFixedHeight(46)
+        search_bar.setStyleSheet(f"background: {BG_MAIN}; border-bottom: 1px solid #242424;")
+        s_lay = QHBoxLayout(search_bar)
+        s_lay.setContentsMargins(20, 0, 20, 0)
+        s_lay.setSpacing(10)
+
+        search_icon = QLabel("🔍")
+        search_icon.setStyleSheet("background: transparent; font-size: 13px;")
+        s_lay.addWidget(search_icon)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Rechercher par email, plan, statut, source…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setFixedHeight(30)
+        self.search_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background: {BG_INPUT}; color: {TEXT};
+                border: 1px solid #3a3a3a; border-radius: 5px;
+                padding: 0 10px; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+        """)
+        self.search_edit.textChanged.connect(self._on_search)
+        s_lay.addWidget(self.search_edit)
+
+        self.count_lbl = QLabel("")
+        self.count_lbl.setStyleSheet(
+            f"color: {TEXT_DIM}; font-size: 11px; background: transparent; min-width: 90px;"
+        )
+        self.count_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        s_lay.addWidget(self.count_lbl)
+
+        lic_lay.addWidget(search_bar)
+
+        # ── Indicateur de chargement ──────────────────────────────────────────
         self.loading_lbl = QLabel("Chargement…")
         self.loading_lbl.setAlignment(Qt.AlignCenter)
         self.loading_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 13px; padding: 20px;")
         self.loading_lbl.hide()
-        main_lay.addWidget(self.loading_lbl)
+        lic_lay.addWidget(self.loading_lbl)
 
-        # --- Tableau ---
+        # ── Tableau ───────────────────────────────────────────────────────────
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Email", "Plan", "Expiration", "Statut", "Machines"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(
+            ["Email", "Plan", "Forfait", "Source", "Expiration", "Statut", "Machines"]
+        )
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        for col in range(1, 7):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
-        main_lay.addWidget(self.table)
+        lic_lay.addWidget(self.table)
 
-        # --- Footer ---
-        footer = QFrame()
-        footer.setFixedHeight(52)
-        footer.setStyleSheet(f"background: {BG_PANEL}; border-top: 1px solid #333;")
-        f_lay = QHBoxLayout(footer)
-        f_lay.setContentsMargins(16, 0, 16, 0)
-        f_lay.setSpacing(10)
+        # ── Barre d'actions client ────────────────────────────────────────────
+        action_bar = QFrame()
+        action_bar.setFixedHeight(56)
+        action_bar.setStyleSheet(f"background: {BG_PANEL}; border-top: 1px solid #2a2a2a;")
+        a_lay = QHBoxLayout(action_bar)
+        a_lay.setContentsMargins(20, 0, 20, 0)
+        a_lay.setSpacing(8)
 
-        self.btn_new = QPushButton("+ Nouveau client")
+        # Créer nouveau client — toujours actif
+        self.btn_new = QPushButton("＋  Nouveau client")
         self.btn_new.setStyleSheet(_BTN_PRIMARY)
         self.btn_new.setFixedHeight(36)
         self.btn_new.clicked.connect(self._on_new_client)
-        f_lay.addWidget(self.btn_new)
+        a_lay.addWidget(self.btn_new)
 
+        a_lay.addSpacing(12)
+        sep1 = QFrame(); sep1.setFrameShape(QFrame.VLine)
+        sep1.setStyleSheet("QFrame { color: #333; max-height: 28px; }")
+        a_lay.addWidget(sep1)
+        a_lay.addSpacing(8)
+
+        # Actions sur le client sélectionné
         self.btn_renew = QPushButton("Renouveler")
         self.btn_renew.setStyleSheet(_BTN_GREEN)
         self.btn_renew.setFixedHeight(36)
         self.btn_renew.setEnabled(False)
         self.btn_renew.clicked.connect(self._on_renew)
-        f_lay.addWidget(self.btn_renew)
+        a_lay.addWidget(self.btn_renew)
 
         self.btn_machines = QPushButton("Machines")
         self.btn_machines.setStyleSheet(_BTN_SECONDARY)
         self.btn_machines.setFixedHeight(36)
         self.btn_machines.setEnabled(False)
         self.btn_machines.clicked.connect(self._on_machines)
-        f_lay.addWidget(self.btn_machines)
+        a_lay.addWidget(self.btn_machines)
 
-        self.btn_delete = QPushButton("Supprimer")
-        self.btn_delete.setStyleSheet(_BTN_RED)
+        self.btn_stripe_open = QPushButton("Stripe ↗")
+        self.btn_stripe_open.setStyleSheet("""
+            QPushButton { background:#635bff; color:white; border:none;
+                          border-radius:4px; font-size:12px; font-weight:bold;
+                          padding: 0 14px; }
+            QPushButton:hover { background:#7a73ff; }
+            QPushButton:disabled { background:#252525; color:#444; border:1px solid #333; }
+        """)
+        self.btn_stripe_open.setFixedHeight(36)
+        self.btn_stripe_open.setEnabled(False)
+        self.btn_stripe_open.clicked.connect(self._on_stripe_open)
+        a_lay.addWidget(self.btn_stripe_open)
+
+        self.btn_cancel_sub = QPushButton("Annuler abo.")
+        self.btn_cancel_sub.setStyleSheet("""
+            QPushButton { background:transparent; color:#9c27b0; border:1px solid #7b1fa2;
+                          border-radius:4px; font-size:12px; font-weight:bold;
+                          padding: 0 12px; }
+            QPushButton:hover { background:#7b1fa2; color:white; }
+            QPushButton:disabled { color:#444; border-color:#333; }
+        """)
+        self.btn_cancel_sub.setFixedHeight(36)
+        self.btn_cancel_sub.setEnabled(False)
+        self.btn_cancel_sub.clicked.connect(self._on_cancel_subscription)
+        a_lay.addWidget(self.btn_cancel_sub)
+
+        a_lay.addStretch()
+
+        # Supprimer — danger, isolé à droite
+        self.btn_delete = QPushButton("🗑  Supprimer")
+        self.btn_delete.setStyleSheet(f"""
+            QPushButton {{ background:transparent; color:{RED}; border:1px solid #6a2020;
+                          border-radius:4px; font-size:11px; padding: 0 12px; }}
+            QPushButton:hover {{ background:{RED}; color:white; }}
+            QPushButton:disabled {{ color:#444; border-color:#333; }}
+        """)
         self.btn_delete.setFixedHeight(36)
         self.btn_delete.setEnabled(False)
         self.btn_delete.clicked.connect(self._on_delete)
-        f_lay.addWidget(self.btn_delete)
+        a_lay.addWidget(self.btn_delete)
 
-        f_lay.addSpacing(12)
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("QFrame { color: #333; }")
-        f_lay.addWidget(sep)
-        f_lay.addSpacing(12)
+        lic_lay.addWidget(action_bar)
 
-        self.btn_release = QPushButton("⚙  Release…")
-        self.btn_release.setStyleSheet(_BTN_ORANGE)
-        self.btn_release.setFixedHeight(36)
-        self.btn_release.setEnabled(_RELEASE_OK)
-        self.btn_release.setToolTip("" if _RELEASE_OK else "release.py introuvable")
-        self.btn_release.clicked.connect(self._on_release)
-        f_lay.addWidget(self.btn_release)
+        # ── Page 1 : Fixtures ─────────────────────────────────────────────────
+        self._build_fixtures_panel()
 
-        self.btn_backup = QPushButton("💾  Backup…")
-        self.btn_backup.setStyleSheet(_BTN_SECONDARY)
-        self.btn_backup.setFixedHeight(36)
-        self.btn_backup.setToolTip("Sauvegarde le projet en .zip (Bureau + Google Drive)")
-        self.btn_backup.clicked.connect(self._on_backup)
-        f_lay.addWidget(self.btn_backup)
+    # ------------------------------------------------------------------
 
-        f_lay.addStretch()
+    def _switch_view(self, idx: int):
+        _active = (f"QPushButton {{ background: transparent; color: {ACCENT};"
+                   f" border: none; border-bottom: 2px solid {ACCENT};"
+                   f" border-radius: 0; font-size: 12px; font-weight: bold; padding: 0 14px; }}")
+        _idle   = (f"QPushButton {{ background: transparent; color: {TEXT_DIM};"
+                   f" border: none; border-bottom: 2px solid transparent;"
+                   f" border-radius: 0; font-size: 12px; padding: 0 14px; }}"
+                   f"QPushButton:hover {{ color: {TEXT}; }}")
+        self._btn_nav_lic.setStyleSheet(_active if idx == 0 else _idle)
+        self._btn_nav_fix.setStyleSheet(_active if idx == 1 else _idle)
+        self._content_stack.setCurrentIndex(idx)
+        if idx == 1 and not self._fixtures_loaded:
+            self._load_fixtures()
 
-        self.count_lbl = QLabel("")
-        self.count_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; background: transparent;")
-        f_lay.addWidget(self.count_lbl)
+    def _build_fixtures_panel(self):
+        fix_page = QWidget()
+        fix_lay = QVBoxLayout(fix_page)
+        fix_lay.setContentsMargins(0, 0, 0, 0)
+        fix_lay.setSpacing(0)
 
-        main_lay.addWidget(footer)
+        # Barre outils fixtures
+        fix_toolbar = QFrame()
+        fix_toolbar.setFixedHeight(46)
+        fix_toolbar.setStyleSheet(f"background: {BG_MAIN}; border-bottom: 1px solid #242424;")
+        ft_lay = QHBoxLayout(fix_toolbar)
+        ft_lay.setContentsMargins(16, 0, 16, 0)
+        ft_lay.setSpacing(8)
+
+        self._fix_search = QLineEdit()
+        self._fix_search.setPlaceholderText("Rechercher par nom, fabricant, type…")
+        self._fix_search.setClearButtonEnabled(True)
+        self._fix_search.setFixedHeight(30)
+        self._fix_search.setStyleSheet(f"""
+            QLineEdit {{
+                background: {BG_INPUT}; color: {TEXT};
+                border: 1px solid #3a3a3a; border-radius: 5px;
+                padding: 0 10px; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+        """)
+        self._fix_search.textChanged.connect(self._on_fix_search)
+        ft_lay.addWidget(self._fix_search)
+
+        self._fix_count_lbl = QLabel("")
+        self._fix_count_lbl.setStyleSheet(
+            f"color: {TEXT_DIM}; font-size: 11px; background: transparent; min-width: 90px;"
+        )
+        self._fix_count_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ft_lay.addWidget(self._fix_count_lbl)
+
+        btn_fix_refresh = QPushButton("↻  Actualiser")
+        btn_fix_refresh.setStyleSheet(_BTN_SECONDARY)
+        btn_fix_refresh.setFixedHeight(30)
+        btn_fix_refresh.clicked.connect(self._load_fixtures)
+        ft_lay.addWidget(btn_fix_refresh)
+
+        btn_fix_import = QPushButton("📥  Importer…")
+        btn_fix_import.setStyleSheet(_BTN_PRIMARY)
+        btn_fix_import.setFixedHeight(30)
+        btn_fix_import.setToolTip("Importer des fichiers .xml / .mystrow vers Firestore")
+        btn_fix_import.clicked.connect(self._on_gdtf_upload)
+        ft_lay.addWidget(btn_fix_import)
+
+        fix_lay.addWidget(fix_toolbar)
+
+        # Indicateur de chargement fixtures
+        self._fix_loading = QLabel("Chargement des fixtures…")
+        self._fix_loading.setAlignment(Qt.AlignCenter)
+        self._fix_loading.setStyleSheet(f"color: {TEXT_DIM}; font-size: 13px; padding: 20px;")
+        self._fix_loading.hide()
+        fix_lay.addWidget(self._fix_loading)
+
+        # Tableau fixtures
+        self._fix_table = QTableWidget()
+        self._fix_table.setColumnCount(6)
+        self._fix_table.setHorizontalHeaderLabels(
+            ["Nom", "Fabricant", "Type", "Modes", "Source", "UUID"]
+        )
+        fhdr = self._fix_table.horizontalHeader()
+        fhdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        fhdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        fhdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        fhdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        fhdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        fhdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self._fix_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._fix_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._fix_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._fix_table.setAlternatingRowColors(True)
+        self._fix_table.verticalHeader().setVisible(False)
+        self._fix_table.setShowGrid(False)
+        self._fix_table.selectionModel().selectionChanged.connect(self._on_fix_selection_changed)
+        fix_lay.addWidget(self._fix_table)
+
+        # Barre d'actions fixtures
+        fix_action_bar = QFrame()
+        fix_action_bar.setFixedHeight(48)
+        fix_action_bar.setStyleSheet(f"background: {BG_PANEL}; border-top: 1px solid #2a2a2a;")
+        fa_lay = QHBoxLayout(fix_action_bar)
+        fa_lay.setContentsMargins(16, 0, 16, 0)
+        fa_lay.setSpacing(8)
+
+        fa_lay.addStretch()
+
+        self._btn_del_fix = QPushButton("🗑  Supprimer")
+        self._btn_del_fix.setStyleSheet(f"""
+            QPushButton {{ background:transparent; color:{RED}; border:1px solid #6a2020;
+                          border-radius:4px; font-size:11px; padding: 0 12px; }}
+            QPushButton:hover {{ background:{RED}; color:white; }}
+            QPushButton:disabled {{ color:#444; border-color:#333; }}
+        """)
+        self._btn_del_fix.setFixedHeight(32)
+        self._btn_del_fix.setEnabled(False)
+        self._btn_del_fix.clicked.connect(self._on_delete_fixture)
+        fa_lay.addWidget(self._btn_del_fix)
+
+        fix_lay.addWidget(fix_action_bar)
+        self._content_stack.addWidget(fix_page)
+
+        # State
+        self._fixtures_loaded = False
+        self._all_fixtures: list = []
+        self._filtered_fixtures: list = []
 
     # ------------------------------------------------------------------
 
@@ -955,11 +1816,17 @@ class AdminPanel(QMainWindow):
         self.btn_renew.setEnabled(has_sel)
         self.btn_machines.setEnabled(has_sel)
         self.btn_delete.setEnabled(has_sel)
+        # Boutons Stripe : seulement si le client a un stripe_customer_id
+        client = self._get_selected_client()
+        is_stripe = bool(client and client.get("stripe_customer_id", ""))
+        self.btn_stripe_open.setEnabled(is_stripe)
+        has_sub = bool(client and client.get("stripe_subscription_id", ""))
+        self.btn_cancel_sub.setEnabled(has_sub)
 
     def _get_selected_client(self) -> dict | None:
         row = self.table.currentRow()
-        if 0 <= row < len(self._clients):
-            return self._clients[row]
+        if 0 <= row < len(self._filtered_clients):
+            return self._filtered_clients[row]
         return None
 
     # ------------------------------------------------------------------
@@ -978,28 +1845,66 @@ class AdminPanel(QMainWindow):
     def _on_clients_loaded(self, clients: list):
         clients.sort(key=lambda d: d.get("expiry_utc", 0), reverse=True)
         self._clients = clients
+        self.search_edit.clear()  # réinitialise la recherche à chaque refresh
         self._populate_table(clients)
         self.loading_lbl.hide()
         self.table.show()
         self.btn_refresh.setEnabled(True)
-        self.count_lbl.setText(f"{len(clients)} compte(s)")
 
     def _on_load_error(self, msg: str):
         self.loading_lbl.setText(f"Erreur de chargement : {msg}")
         self.table.show()
         self.btn_refresh.setEnabled(True)
 
+    def _on_search(self, text: str):
+        """Filtre le tableau en temps réel selon le texte saisi."""
+        q = text.strip().lower()
+        if not q:
+            self._populate_table(self._clients)
+            return
+        filtered = []
+        now = datetime.now(timezone.utc).timestamp()
+        _forfait_labels = {"monthly": "mensuel", "annual": "annuel", "lifetime": "à vie"}
+        for c in self._clients:
+            email     = c.get("email", "").lower()
+            plan      = c.get("plan", "").lower()
+            forfait   = _forfait_labels.get(c.get("plan_type", ""), "")
+            source    = "stripe" if c.get("stripe_customer_id") else "manuel"
+            expiry    = c.get("expiry_utc", 0)
+            days_left = int((expiry - now) / 86400) if expiry else -1
+            if days_left > 30:
+                statut = "actif"
+            elif days_left >= 0:
+                statut = f"expire {days_left}j"
+            else:
+                statut = "expiré"
+            haystack = f"{email} {plan} {forfait} {source} {statut}"
+            if q in haystack:
+                filtered.append(c)
+        self._populate_table(filtered)
+
     def _populate_table(self, clients: list):
+        self._filtered_clients = clients
         now = datetime.now(timezone.utc).timestamp()
         self.table.setRowCount(len(clients))
-        for row, c in enumerate(clients):
-            email    = c.get("email", "?")
-            plan     = c.get("plan", "?")
-            expiry   = c.get("expiry_utc", 0)
-            machines = c.get("machines", [])
 
-            exp_str  = _fmt_date(expiry) if expiry else "?"
-            mach_str = f"{len(machines)}/2"
+        _forfait_labels = {
+            "monthly":  "Mensuel",
+            "annual":   "Annuel",
+            "lifetime": "À vie",
+        }
+
+        for row, c in enumerate(clients):
+            email       = c.get("email", "?")
+            plan        = c.get("plan", "?")
+            forfait     = _forfait_labels.get(c.get("plan_type", ""), "—")
+            is_stripe   = bool(c.get("stripe_customer_id", ""))
+            source_str  = "🟣 Stripe" if is_stripe else "✏️ Manuel"
+            expiry      = c.get("expiry_utc", 0)
+            machines    = c.get("machines", [])
+
+            exp_str   = _fmt_date(expiry) if expiry else "?"
+            mach_str  = f"{len(machines)}/2"
             days_left = int((expiry - now) / 86400) if expiry else -1
 
             if days_left > 30:
@@ -1015,19 +1920,92 @@ class AdminPanel(QMainWindow):
             items = [
                 QTableWidgetItem(email),
                 QTableWidgetItem(plan),
+                QTableWidgetItem(forfait),
+                QTableWidgetItem(source_str),
                 QTableWidgetItem(exp_str),
                 QTableWidgetItem(statut_str),
                 QTableWidgetItem(mach_str),
             ]
             for col, item in enumerate(items):
                 item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-                if col == 3:
+                if col == 5:
                     item.setForeground(QColor(statut_color))
+                if col == 3:
+                    item.setForeground(QColor("#635bff" if is_stripe else "#888888"))
                 self.table.setItem(row, col, item)
 
         self.table.resizeRowsToContents()
 
+        # Compteur filtré / total
+        total = len(self._clients)
+        shown = len(clients)
+        if shown == total:
+            self.count_lbl.setText(f"{total} compte(s)")
+        else:
+            self.count_lbl.setText(f"{shown} / {total} compte(s)")
+
     # ------------------------------------------------------------------
+
+    def _on_stripe_open(self):
+        """Ouvre la fiche client dans Stripe Dashboard."""
+        client = self._get_selected_client()
+        if not client:
+            return
+        customer_id = client.get("stripe_customer_id", "")
+        if customer_id:
+            import webbrowser
+            webbrowser.open(f"https://dashboard.stripe.com/customers/{customer_id}")
+
+    def _on_cancel_subscription(self):
+        """Annule l'abonnement Stripe du client sélectionné."""
+        client = self._get_selected_client()
+        if not client:
+            return
+        sub_id = client.get("stripe_subscription_id", "")
+        email  = client.get("email", "?")
+        if not sub_id:
+            QMessageBox.information(self, "Annulation", "Ce client n'a pas d'abonnement Stripe actif.")
+            return
+
+        confirm = QMessageBox.question(
+            self, "Confirmer l'annulation",
+            f"Annuler l'abonnement Stripe de :\n{email}\n\n"
+            "L'abonnement sera résilié en fin de période en cours.\n"
+            "La licence sera révoquée automatiquement par le webhook.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            import base64, urllib.request, urllib.parse, json as _json
+            try:
+                from stripe_config import STRIPE_SECRET_KEY as _sk
+            except ImportError:
+                QMessageBox.critical(self, "Erreur",
+                    "stripe_config.py introuvable.\n"
+                    "Créez ce fichier avec STRIPE_SECRET_KEY = 'rk_live_...'")
+                return
+
+            url  = f"https://api.stripe.com/v1/subscriptions/{sub_id}"
+            tok  = base64.b64encode(f"{_sk}:".encode()).decode()
+            data = urllib.parse.urlencode({"cancel_at_period_end": "true"}).encode()
+            req  = urllib.request.Request(url, data=data, method="POST",
+                                          headers={"Authorization": f"Basic {tok}",
+                                                   "Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = _json.loads(resp.read().decode())
+
+            if result.get("cancel_at_period_end"):
+                QMessageBox.information(self, "Abonnement annulé",
+                    f"L'abonnement de {email} sera résilié en fin de période.\n"
+                    "La licence sera révoquée automatiquement.")
+                self._load_clients()
+            else:
+                QMessageBox.warning(self, "Attention", "Réponse inattendue de Stripe.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur Stripe", str(e))
 
     def _on_new_client(self):
         dlg = CreateClientDialog(self._id_token, self)
@@ -1093,6 +2071,108 @@ class AdminPanel(QMainWindow):
         self.btn_delete.setEnabled(True)
         QMessageBox.critical(self, "Erreur suppression", msg)
 
+    # ── Fixtures panel ─────────────────────────────────────────────────────────
+
+    def _load_fixtures(self):
+        self._fix_loading.show()
+        self._fix_table.hide()
+        self._fixtures_loaded = False
+        _run_async(
+            self, _query_all_fixtures, self._id_token,
+            on_success=self._on_fixtures_loaded,
+            on_error=self._on_fixtures_load_error,
+        )
+
+    def _on_fixtures_loaded(self, fixtures: list):
+        fixtures.sort(key=lambda f: (f.get("manufacturer", ""), f.get("name", "")))
+        self._all_fixtures = fixtures
+        self._fixtures_loaded = True
+        self._fix_search.clear()
+        self._populate_fixtures(fixtures)
+        self._fix_loading.hide()
+        self._fix_table.show()
+
+    def _on_fixtures_load_error(self, msg: str):
+        self._fix_loading.setText(f"Erreur : {msg}")
+        self._fix_table.show()
+
+    def _on_fix_search(self, text: str):
+        q = text.strip().lower()
+        if not q:
+            self._populate_fixtures(self._all_fixtures)
+            return
+        filtered = [
+            f for f in self._all_fixtures
+            if q in f.get("name", "").lower()
+            or q in f.get("manufacturer", "").lower()
+            or q in f.get("fixture_type", "").lower()
+            or q in f.get("source", "").lower()
+        ]
+        self._populate_fixtures(filtered)
+
+    def _populate_fixtures(self, fixtures: list):
+        self._filtered_fixtures = fixtures
+        self._fix_table.setRowCount(0)
+        for fx in fixtures:
+            row = self._fix_table.rowCount()
+            self._fix_table.insertRow(row)
+            modes = fx.get("modes", [])
+            if isinstance(modes, list):
+                modes_str = str(len(modes))
+            else:
+                modes_str = "?"
+            cells = [
+                fx.get("name", ""),
+                fx.get("manufacturer", ""),
+                fx.get("fixture_type", ""),
+                modes_str,
+                fx.get("source", ""),
+                fx.get("uuid", fx.get("_doc_id", "")),
+            ]
+            for col, val in enumerate(cells):
+                item = QTableWidgetItem(str(val))
+                self._fix_table.setItem(row, col, item)
+        total = len(fixtures)
+        self._fix_count_lbl.setText(f"{total} fixture{'s' if total != 1 else ''}")
+        self._btn_del_fix.setEnabled(False)
+
+    def _on_fix_selection_changed(self):
+        self._btn_del_fix.setEnabled(self._fix_table.currentRow() >= 0)
+
+    def _on_delete_fixture(self):
+        row = self._fix_table.currentRow()
+        if row < 0 or row >= len(self._filtered_fixtures):
+            return
+        fx = self._filtered_fixtures[row]
+        name = fx.get("name", "?")
+        doc_id = fx.get("_doc_id", "")
+        if not doc_id:
+            QMessageBox.warning(self, "Erreur", "ID de document introuvable — suppression impossible.")
+            return
+        rep = QMessageBox.question(
+            self, "Supprimer la fixture",
+            f"Supprimer « {name} » de Firestore ?\nCette action est irréversible.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if rep != QMessageBox.Yes:
+            return
+        self._btn_del_fix.setEnabled(False)
+        _run_async(
+            self, _delete_fixture_doc, doc_id, self._id_token,
+            on_success=lambda _: self._on_fixture_deleted(name),
+            on_error=self._on_fixture_delete_error,
+        )
+
+    def _on_fixture_deleted(self, name: str):
+        self._load_fixtures()
+        QMessageBox.information(self, "Fixture supprimée", f"« {name} » a été supprimée de Firestore.")
+
+    def _on_fixture_delete_error(self, msg: str):
+        self._btn_del_fix.setEnabled(True)
+        QMessageBox.critical(self, "Erreur suppression", msg)
+
+    # ── General ────────────────────────────────────────────────────────────────
+
     def _on_restart(self):
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -1103,6 +2183,14 @@ class AdminPanel(QMainWindow):
 
     def _on_release(self):
         dlg = ReleaseDialog(self)
+        dlg.exec()
+
+    def _on_gdtf_enrich(self):
+        dlg = OflSyncDialog(self)
+        dlg.exec()
+
+    def _on_gdtf_upload(self):
+        dlg = GdtfUploadDialog(self)
         dlg.exec()
 
     def _on_backup(self):

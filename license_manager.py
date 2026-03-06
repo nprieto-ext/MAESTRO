@@ -71,12 +71,12 @@ class LicenseResult:
     __slots__ = (
         'state', 'dmx_allowed', 'watermark_required',
         'show_warning', 'days_remaining', 'message',
-        'action_label', 'license_type'
+        'action_label', 'license_type', 'updates_until_utc',
     )
 
     def __init__(self, state, dmx_allowed=False, watermark_required=True,
                  show_warning=False, days_remaining=0, message="",
-                 action_label="", license_type=""):
+                 action_label="", license_type="", updates_until_utc=0.0):
         self.state = state
         self.dmx_allowed = dmx_allowed
         self.watermark_required = watermark_required
@@ -85,6 +85,9 @@ class LicenseResult:
         self.message = message
         self.action_label = action_label
         self.license_type = license_type
+        # 0.0 = pas de limite (abonnements mensuel/annuel, manuel, trial)
+        # > 0  = timestamp jusqu'auquel les mises à jour sont incluses (lifetime)
+        self.updates_until_utc = updates_until_utc
 
     def __repr__(self):
         return f"LicenseResult(state={self.state.value}, dmx={self.dmx_allowed}, days={self.days_remaining})"
@@ -207,38 +210,80 @@ def _run_wmic(command):
         return ""
 
 
+_cached_machine_id: str | None = None
+
+# Fichier cache disque du machine_id (évite de relancer PowerShell/wmic à chaque démarrage)
+_MACHINE_ID_CACHE_FILE = os.path.join(_FINGERPRINT_DIR, ".mid")
+
+
+_MID_CACHE_VERSION = "v2:"  # v1 = GUID+SID (instable), v2 = GUID+USERNAME (stable)
+
+
+def _read_machine_id_disk_cache() -> str | None:
+    try:
+        if os.path.exists(_MACHINE_ID_CACHE_FILE):
+            raw = open(_MACHINE_ID_CACHE_FILE, "r").read().strip()
+            # Accepter uniquement le cache v2 (formule stable)
+            if raw.startswith(_MID_CACHE_VERSION):
+                val = raw[len(_MID_CACHE_VERSION):]
+                if len(val) == 64:
+                    return val
+            # Cache v1 (ancien, SID-dépendant) → ignoré, recalcul forcé
+    except Exception:
+        pass
+    return None
+
+
+def _write_machine_id_disk_cache(mid: str) -> None:
+    try:
+        os.makedirs(_FINGERPRINT_DIR, exist_ok=True)
+        open(_MACHINE_ID_CACHE_FILE, "w").write(_MID_CACHE_VERSION + mid)
+    except Exception:
+        pass
+
+
 def get_machine_id() -> str:
     """
-    Genere un identifiant unique de la machine base sur le hardware.
-    SHA256 de CPU_ID + BIOS_SERIAL + MOBO_SERIAL + DISK_SERIAL + WINDOWS_SID.
+    Genere un identifiant unique de la machine.
+    Windows : MachineGuid (registre) + USERNAME (env). Sans subprocess, 100% stable.
+    Fallback : wmic si le registre echoue.
+    Resultat mis en cache en memoire (session) ET sur disque (restarts).
     """
+    global _cached_machine_id
+    if _cached_machine_id:
+        return _cached_machine_id
+
+    # Cache disque : évite PowerShell/wmic au prochain démarrage
+    cached = _read_machine_id_disk_cache()
+    if cached:
+        _cached_machine_id = cached
+        return cached
+
     components = []
 
     if platform.system() == "Windows":
-        cpu = _run_wmic(["wmic", "cpu", "get", "ProcessorId"])
-        components.append(f"CPU:{cpu}")
-
-        bios = _run_wmic(["wmic", "bios", "get", "SerialNumber"])
-        components.append(f"BIOS:{bios}")
-
-        mobo = _run_wmic(["wmic", "baseboard", "get", "SerialNumber"])
-        components.append(f"MOBO:{mobo}")
-
-        disk = _run_wmic(["wmic", "diskdrive", "get", "SerialNumber"])
-        components.append(f"DISK:{disk}")
-
+        # Source primaire : MachineGuid (registre, instantane, 100% stable)
+        machine_guid = ""
         try:
-            result = subprocess.run(
-                ["wmic", "useraccount", "where",
-                 f"name='{os.environ.get('USERNAME', '')}'", "get", "sid"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=CREATE_NO_WINDOW
-            )
-            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
-            if len(lines) >= 2:
-                components.append(f"SID:{lines[1]}")
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"SOFTWARE\Microsoft\Cryptography")
+            machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            winreg.CloseKey(key)
         except Exception:
             pass
+
+        if machine_guid:
+            components.append(f"GUID:{machine_guid}")
+        else:
+            # Fallback wmic si le registre est inaccessible
+            cpu = _run_wmic(["wmic", "cpu", "get", "ProcessorId"])
+            components.append(f"CPU:{cpu}")
+            bios = _run_wmic(["wmic", "bios", "get", "SerialNumber"])
+            components.append(f"BIOS:{bios}")
+
+        # USERNAME Windows — toujours disponible, pas de subprocess
+        components.append(f"USER:{os.environ.get('USERNAME', os.environ.get('USER', ''))}")
     else:
         try:
             with open("/etc/machine-id", "r") as f:
@@ -247,7 +292,9 @@ def get_machine_id() -> str:
             components.append(f"HOST:{platform.node()}")
 
     raw = "|".join(components)
-    return hashlib.sha256(raw.encode()).hexdigest()
+    _cached_machine_id = hashlib.sha256(raw.encode()).hexdigest()
+    _write_machine_id_disk_cache(_cached_machine_id)
+    return _cached_machine_id
 
 
 # ============================================================
@@ -369,10 +416,12 @@ def check_exe_integrity() -> bool:
             print("Hash exe ne correspond pas - fichier modifie")
             return False
 
+        # Hash OK — la signature est une verification supplementaire (non bloquante)
         if signature and _VERIFY_AVAILABLE:
-            return _verify_signature(expected_hash.encode(), signature)
+            if not _verify_signature(expected_hash.encode(), signature):
+                print("Avertissement: verification signature Ed25519 echouee (hash OK)")
 
-        return exe_hash == expected_hash
+        return True
 
     except Exception as e:
         # En cas d'erreur inattendue (permission, JSON malforme, etc.), ne pas bloquer
@@ -528,6 +577,11 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
     try:
         import firebase_client as fc
 
+        # Test de connectivité rapide (1.5s max) avant d'essayer Firebase
+        if not fc.has_internet():
+            print("Pas de connexion internet — mode hors-ligne immédiat")
+            return _offline_fallback(account)
+
         token_data = fc.refresh_id_token(account["refresh_token"])
         uid = token_data["uid"]
         id_token = token_data["id_token"]
@@ -548,7 +602,11 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         account["cached_expiry_utc"] = doc.get("expiry_utc", now)
         _save_account(machine_id, account)
 
-        return _build_result(doc.get("plan", "trial"), doc.get("expiry_utc", now))
+        return _build_result(
+            doc.get("plan", "trial"),
+            doc.get("expiry_utc", now),
+            updates_until_utc=doc.get("updates_until_utc", 0.0),
+        )
 
     except Exception as e:
         err_msg = str(e)
@@ -560,7 +618,7 @@ def _verify_firebase_account(machine_id: str, account: dict) -> LicenseResult:
         return _offline_fallback(account)
 
 
-def _build_result(plan: str, expiry_utc: float) -> LicenseResult:
+def _build_result(plan: str, expiry_utc: float, updates_until_utc: float = 0.0) -> LicenseResult:
     """Construit un LicenseResult depuis les donnees Firestore."""
     now = datetime.now(timezone.utc).timestamp()
     days_remaining = max(0, int((expiry_utc - now) / 86400))
@@ -568,7 +626,15 @@ def _build_result(plan: str, expiry_utc: float) -> LicenseResult:
     if plan == "license":
         if now >= expiry_utc:
             return _result_license_expired()
-        return _result_license_active(max(1, days_remaining))
+        r = _result_license_active(max(1, days_remaining))
+        return LicenseResult(
+            state=r.state, dmx_allowed=r.dmx_allowed,
+            watermark_required=r.watermark_required,
+            show_warning=r.show_warning, days_remaining=r.days_remaining,
+            message=r.message, action_label=r.action_label,
+            license_type=r.license_type,
+            updates_until_utc=updates_until_utc,
+        )
     else:  # trial
         if now >= expiry_utc:
             return _result_trial_expired()
@@ -577,13 +643,8 @@ def _build_result(plan: str, expiry_utc: float) -> LicenseResult:
 
 def _offline_fallback(account: dict) -> LicenseResult:
     """Retourne un resultat depuis le cache si < 7 jours offline.
-    Les comptes en trial doivent etre en ligne — pas de grace offline."""
+    Valable pour les comptes licence ET essai (grace period identique)."""
     cached_plan = account.get("cached_plan", "trial")
-
-    # Essai = connexion obligatoire (pas de fallback offline)
-    if cached_plan == "trial":
-        print("Trial : connexion Firebase requise")
-        return _result_not_activated()
 
     last_verified = account.get("last_verified_utc", 0)
     now = datetime.now(timezone.utc).timestamp()
@@ -594,7 +655,7 @@ def _offline_fallback(account: dict) -> LicenseResult:
         return _result_not_activated()
 
     cached_expiry = account.get("cached_expiry_utc", 0)
-    print(f"Mode hors-ligne ({days_offline}j) — licence")
+    print(f"Mode hors-ligne ({days_offline}j) — {cached_plan}")
     return _result_offline(cached_plan, cached_expiry, days_offline)
 
 
@@ -725,6 +786,28 @@ def deactivate_machine() -> tuple[bool, str]:
 
     _delete_account()
     return True, "Machine deconnectee avec succes."
+
+
+# ============================================================
+# UTILITAIRES
+# ============================================================
+
+def get_current_id_token() -> str | None:
+    """
+    Retourne un ID token Firebase frais pour l'utilisateur connecté.
+    Retourne None si aucun compte n'est enregistré localement ou en cas d'erreur.
+    """
+    try:
+        import firebase_client as fc
+        machine_id = get_machine_id()
+        account    = _load_account(machine_id)
+        if account is None:
+            return None
+        token_data = fc.refresh_id_token(account["refresh_token"])
+        return token_data.get("id_token")
+    except Exception as e:
+        print(f"[LicenseManager] get_current_id_token erreur: {e}")
+        return None
 
 
 # ============================================================

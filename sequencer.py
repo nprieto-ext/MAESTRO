@@ -793,12 +793,23 @@ class Sequencer(QFrame):
                         item = self.table.item(row_idx, 2)
                         if item:
                             item.setText(fmt_time(duration))
-                        # Nettoyer le player temporaire
+                    # Nettoyer dans tous les cas (durée trouvée ou 0 = fichier non lisible)
+                    if player in self._temp_players:
+                        self._temp_players.remove(player)
+                        player.deleteLater()
+
+                def _cleanup_on_status(status, player=temp_p):
+                    from PySide6.QtMultimedia import QMediaPlayer as QMP
+                    # Libérer si le media est chargé (avec ou sans durée) ou en erreur
+                    if status in (QMP.MediaStatus.LoadedMedia,
+                                  QMP.MediaStatus.InvalidMedia,
+                                  QMP.MediaStatus.NoMedia):
                         if player in self._temp_players:
                             self._temp_players.remove(player)
                             player.deleteLater()
 
                 temp_p.durationChanged.connect(update_duration)
+                temp_p.mediaStatusChanged.connect(_cleanup_on_status)
                 temp_p.setSource(QUrl.fromLocalFile(f))
 
             except Exception as e:

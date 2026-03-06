@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MA xmlns:xml="http://www.w3.org/XML/1998/namespace" major_vers="3" minor_vers="0" stream_vers="0">
+  <Info datetime="2014-04-05T22:30:00" showfile="ma fixture builder"/>
+  <FixtureType index="1" name="Contest - MINICUBE" mode="C05">
+    <InfoItems>
+      <Info>Created using MA FixtureBuilder version v1.1.0.4</Info>
+    </InfoItems>
+    <short_name>MINICUBE</short_name>
+    <manufacturer>_Lookea</manufacturer>
+    <short_manufacturer>_Lookea</short_manufacturer>
+    <Modules index="0">
+      <Module index="0" name="Main Module" class="LED" beamtype="Wash" beam_angle="35" beam_intensity="10000">
+        <Body>
+          <Size x="0.5" y="0.5" z="0.5"/>
+        </Body>
+        <ChannelType index="0" attribute="COLORRGB1" feature="COLORRGB" preset="COLOR" coarse="1">
+          <ChannelFunction index="0" from="0" to="100" physfrom="0" physto="1" min_dmx_24="0" max_dmx_24="16777215" subattribute="COLORRGB1" attribute="COLORRGB1" feature="COLORRGB" preset="COLOR"/>
+        </ChannelType>
+        <ChannelType index="1" attribute="COLORRGB2" feature="COLORRGB" preset="COLOR" coarse="2">
+          <ChannelFunction index="0" from="0" to="100" physfrom="0" physto="1" min_dmx_24="0" max_dmx_24="16777215" subattribute="COLORRGB2" attribute="COLORRGB2" feature="COLORRGB" preset="COLOR"/>
+        </ChannelType>
+        <ChannelType index="2" attribute="COLORRGB3" feature="COLORRGB" preset="COLOR" coarse="3">
+          <ChannelFunction index="0" from="0" to="100" physfrom="0" physto="1" min_dmx_24="0" max_dmx_24="16777215" subattribute="COLORRGB3" attribute="COLORRGB3" feature="COLORRGB" preset="COLOR"/>
+        </ChannelType>
+        <ChannelType index="3" attribute="DIM" feature="DIMMER" preset="DIMMER" coarse="4">
+          <ChannelFunction index="0" from="0" to="100" physfrom="0" physto="1" min_dmx_24="0" max_dmx_24="16777215" subattribute="DIM" attribute="DIM" feature="DIMMER" preset="DIMMER">
+            <ChannelSet index="0" name="0" from_dmx="0" to_dmx="0"/>
+            <ChannelSet index="1" name="25" from_dmx="60" to_dmx="64"/>
+            <ChannelSet index="2" name="50" from_dmx="120" to_dmx="128"/>
+            <ChannelSet index="3" name="75" from_dmx="190" to_dmx="192"/>
+            <ChannelSet index="4" name="100" from_dmx="250" to_dmx="255"/>
+          </ChannelFunction>
+        </ChannelType>
+        <ChannelType index="4" attribute="STROBE_RATIO" feature="SHUTTER" preset="BEAM" coarse="5">
+          <ChannelFunction index="0" from="0" to="100" physfrom="0" physto="1" min_dmx_24="0" max_dmx_24="16777215" subattribute="STROBE_RATIO" attribute="STROBE_RATIO" feature="SHUTTER" preset="BEAM"/>
+        </ChannelType>
+      </Module>
+    </Modules>
+    <Instances index="1">
+      <Instance index="0" module_index="0"/>
+    </Instances>
+    <Wheels index="2"/>
+  </FixtureType>
+</MA>

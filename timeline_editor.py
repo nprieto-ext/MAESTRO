@@ -316,11 +316,11 @@ class LightTimelineEditor(QDialog):
             tracks_layout.addWidget(track)
 
         # Alias de compatibilite pour le code existant
-        self.track_face = self.track_map.get("Face")
-        self.track_douche1 = self.track_map.get("Douche 1")
-        self.track_douche2 = self.track_map.get("Douche 2")
-        self.track_douche3 = self.track_map.get("Douche 3")
-        self.track_contre = self.track_map.get("Contres")
+        self.track_face = self.track_map.get("Groupe A")
+        self.track_douche1 = self.track_map.get("Groupe D")
+        self.track_douche2 = self.track_map.get("Groupe E")
+        self.track_douche3 = self.track_map.get("Groupe F")
+        self.track_contre = self.track_map.get("Groupe C")
 
     def _get_waveform_cache_path(self):
         """Retourne le chemin du fichier cache pour la forme d'onde"""

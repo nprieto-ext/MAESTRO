@@ -28,24 +28,95 @@ import sys
 import os
 import time
 
+# Fix encodage console Windows (cp1252 ne supporte pas les emojis)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # ------------------------------------------------------------------
 # IMPORTS APPLICATION
 # ------------------------------------------------------------------
 
 import socket
+import threading
 
-from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QPushButton
+from PySide6.QtCore import QEventLoop, QTimer, Qt
 from PySide6.QtGui import QIcon
+import webbrowser
+import platform
 
+# Imports légers uniquement — tout ce qui est lourd est différé après le splash
 from core import APP_NAME, VERSION, MIDI_AVAILABLE, resource_path
 from updater import SplashScreen, UpdateChecker
-from main_window import MainWindow
-from license_manager import (
-    verify_license,
-    check_exe_integrity,
-    LicenseState,
-)
+
+# ------------------------------------------------------------------
+# DIALOGUE ERREUR INTEGRITE
+# ------------------------------------------------------------------
+def _show_integrity_error():
+    is_mac = platform.system() == "Darwin"
+    download_url = (
+        "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Installer.dmg"
+        if is_mac else
+        "https://github.com/nprieto-ext/MAESTRO/releases/latest/download/MyStrow_Setup.exe"
+    )
+
+    dlg = QDialog()
+    dlg.setWindowTitle("MyStrow — Erreur d'intégrité")
+    dlg.setFixedWidth(460)
+    dlg.setStyleSheet("background:#1a1a1a; color:#e0e0e0;")
+
+    layout = QVBoxLayout(dlg)
+    layout.setSpacing(16)
+    layout.setContentsMargins(28, 24, 28, 24)
+
+    icon_lbl = QLabel("⚠️")
+    icon_lbl.setAlignment(Qt.AlignCenter)
+    icon_lbl.setStyleSheet("font-size:38px; background:transparent;")
+    layout.addWidget(icon_lbl)
+
+    msg = QLabel(
+        "L'intégrité de l'application n'a pas pu être vérifiée.\n\n"
+        "Le fichier exécutable semble avoir été modifié.\n"
+        "Veuillez réinstaller l'application depuis le site officiel."
+    )
+    msg.setWordWrap(True)
+    msg.setAlignment(Qt.AlignCenter)
+    msg.setStyleSheet("font-size:13px; background:transparent; line-height:1.5;")
+    layout.addWidget(msg)
+
+    layout.addSpacing(4)
+
+    btn_dl = QPushButton("⬇  Télécharger l'installeur")
+    btn_dl.setFixedHeight(40)
+    btn_dl.setStyleSheet("""
+        QPushButton {
+            background: #0078d4; color: white;
+            border: none; border-radius: 6px;
+            font-size: 13px; font-weight: bold;
+        }
+        QPushButton:hover { background: #1a8ee0; }
+        QPushButton:pressed { background: #005fa3; }
+    """)
+    btn_dl.clicked.connect(lambda: webbrowser.open(download_url))
+    layout.addWidget(btn_dl)
+
+    btn_close = QPushButton("Fermer")
+    btn_close.setFixedHeight(34)
+    btn_close.setStyleSheet("""
+        QPushButton {
+            background: #2a2a2a; color: #aaa;
+            border: 1px solid #3a3a3a; border-radius: 6px;
+            font-size: 12px;
+        }
+        QPushButton:hover { background: #333; color: #ddd; }
+    """)
+    btn_close.clicked.connect(dlg.accept)
+    layout.addWidget(btn_close)
+
+    dlg.exec()
+
 
 # ------------------------------------------------------------------
 # MAIN
@@ -68,6 +139,15 @@ def main():
     app.processEvents()
     start_time = time.time()
 
+    # ------------------------------------------------------------------
+    # IMPORTS LOURDS — différés pour que le splash soit visible immédiatement
+    # ------------------------------------------------------------------
+    splash.set_status("Chargement...")
+    app.processEvents()
+
+    from license_manager import verify_license, check_exe_integrity, LicenseState, _result_not_activated
+    from main_window import MainWindow
+
     # Lancer la verification des mises a jour en arriere-plan
     update_checker = UpdateChecker()
     update_checker.start()
@@ -80,83 +160,106 @@ def main():
 
     if not check_exe_integrity():
         splash.close()
-        QMessageBox.critical(None, "MyStrow",
-            "L'integrite de l'application n'a pas pu etre verifiee.\n\n"
-            "Le fichier executable semble avoir ete modifie.\n"
-            "Veuillez retelecharger l'application depuis le site officiel.")
+        _show_integrity_error()
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # DETECTION AKAI APC mini
+    # LICENCE + AKAI + DMX — tous en parallele
     # ------------------------------------------------------------------
-    splash.set_status("Detection AKAI...")
+    splash.set_status("Initialisation...")
     app.processEvents()
 
-    akai_found = False
-    if MIDI_AVAILABLE:
+    _license_box = [None]
+    _akai_box    = [False]
+    _dmx_box     = [False, "Non configuré"]  # [ok, label]
+
+    def _bg_license():
+        _license_box[0] = verify_license()
+
+    def _bg_akai():
+        if not MIDI_AVAILABLE:
+            return
         try:
             import rtmidi as _rt
         except ImportError:
             try:
                 import rtmidi2 as _rt
             except ImportError:
-                _rt = None
-        if _rt:
-            try:
-                _mi = _rt.MidiIn()
-                for name in _mi.get_ports():
-                    if 'APC' in name.upper() or 'MINI' in name.upper():
-                        akai_found = True
-                        break
-                del _mi
-            except Exception:
-                pass
-
-    if akai_found:
-        splash.set_hw_status("akai", "Connecte", True)
-    else:
-        splash.set_hw_status("akai", "Non detecte", False)
-    app.processEvents()
-
-    # ------------------------------------------------------------------
-    # VERIFICATION NODE ART-NET (ping UDP 2.0.0.15)
-    # ------------------------------------------------------------------
-    splash.set_status("Verification Node Art-Net...")
-    app.processEvents()
-
-    node_ok = False
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(0.5)
-        # Envoyer un ArtPoll pour detecter le node
-        art_poll = bytearray(b'Art-Net\x00')
-        art_poll.extend(b'\x00\x20')  # OpCode ArtPoll (0x2000 little-endian)
-        art_poll.extend(b'\x00\x0e')  # Protocol version 14
-        art_poll.extend(b'\x00\x00')  # TalkToMe + Priority
-        sock.sendto(art_poll, ("2.0.0.15", 6454))
+                return
         try:
-            data, addr = sock.recvfrom(1024)
-            if data[:8] == b'Art-Net\x00':
-                node_ok = True
-        except socket.timeout:
+            _mi = _rt.MidiIn()
+            for name in _mi.get_ports():
+                if 'APC' in name.upper() or 'MINI' in name.upper():
+                    _akai_box[0] = True
+                    break
+            del _mi
+        except Exception:
             pass
-        sock.close()
-    except Exception:
-        pass
 
-    if node_ok:
-        splash.set_hw_status("node", "2.0.0.15 - OK", True)
-    else:
-        splash.set_hw_status("node", "2.0.0.15 - Hors ligne", False)
-    app.processEvents()
+    def _bg_dmx():
+        try:
+            import json as _j, os as _o
+            cfg_file = _o.path.expanduser("~/.mystrow_dmx.json")
+            if not _o.path.exists(cfg_file):
+                return
+            with open(cfg_file) as f:
+                cfg = _j.load(f)
+            transport    = cfg.get("transport", "enttec")
+            product_name = cfg.get("product_name", "")
+            if transport == "enttec":
+                com = cfg.get("com_port")
+                if com:
+                    try:
+                        import serial as _s
+                        p = _s.Serial(com, 250000, stopbits=_s.STOPBITS_TWO, timeout=0.5)
+                        p.close()
+                        _dmx_box[0] = True
+                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com}"
+                    except Exception:
+                        _dmx_box[0] = False
+                        _dmx_box[1] = f"{product_name or 'USB DMX'}  —  {com} hors ligne"
+                else:
+                    _dmx_box[1] = f"{product_name or 'USB DMX'}  —  Non configuré"
+            else:
+                ip = cfg.get("target_ip", "")
+                _dmx_box[0] = None  # orange = configuré non vérifié
+                _dmx_box[1] = f"{product_name or 'Art-Net'}  —  {ip}"
+        except Exception:
+            pass
 
-    # ------------------------------------------------------------------
-    # VERIFICATION DE LA LICENCE (une seule fois, resultat cache)
-    # ------------------------------------------------------------------
-    splash.set_status("Verification de la licence...")
-    app.processEvents()
+    t_license = threading.Thread(target=_bg_license, daemon=True)
+    t_akai    = threading.Thread(target=_bg_akai,    daemon=True)
+    t_dmx     = threading.Thread(target=_bg_dmx,     daemon=True)
+    t_license.start(); t_akai.start(); t_dmx.start()
 
-    license_result = verify_license()
+    # Attendre les threads sans bloquer Qt — on process les events pendant l'attente
+    deadline = time.time() + 8
+    akai_shown = dmx_shown = False
+    while time.time() < deadline:
+        app.processEvents()
+
+        if not akai_shown and not t_akai.is_alive():
+            splash.set_hw_status("akai", "Connecte" if _akai_box[0] else "Non detecte", _akai_box[0])
+            app.processEvents()
+            akai_shown = True
+
+        if not dmx_shown and not t_dmx.is_alive():
+            splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
+            app.processEvents()
+            dmx_shown = True
+
+        if not t_license.is_alive() and akai_shown and dmx_shown:
+            break
+
+        time.sleep(0.05)
+
+    # Afficher les resultats manquants si timeout
+    if not akai_shown:
+        splash.set_hw_status("akai", "Non detecte", False)
+    if not dmx_shown:
+        splash.set_hw_status("node", _dmx_box[1], _dmx_box[0])
+
+    license_result = _license_box[0] or _result_not_activated()
     print(f"Licence: {license_result}")
 
     # Afficher le statut licence sur le splash
@@ -182,7 +285,7 @@ def main():
     update_checker.update_available.connect(window.on_update_available)
     window._update_checker = update_checker
 
-    # Garantir un affichage minimum de 3 secondes
+    # Garantir un affichage minimum de 5 secondes
     elapsed = time.time() - start_time
     remaining_ms = max(0, int((5.0 - elapsed) * 1000))
     if remaining_ms > 0:

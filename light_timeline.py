@@ -201,7 +201,9 @@ class LightTrack(QWidget):
         self.clips = []
         self.pixels_per_ms = 0.05
 
-        self.setMinimumHeight(100 if name == "Audio" else 60)
+        self._collapsed = False
+        self._normal_min_height = 100 if name == "Audio" else 60
+        self.setMinimumHeight(self._normal_min_height)
         self.setAcceptDrops(True)
         self.setStyleSheet("""
             QWidget {
@@ -221,8 +223,25 @@ class LightTrack(QWidget):
                 border: 1px solid #333;
             }}
         """)
-        self.label.setFixedWidth(128)
+        self.label.setFixedWidth(104)
         self.label.move(11, 12)
+
+        # Bouton collapse ▼/▶
+        self._collapse_btn = QPushButton("▼", self)
+        self._collapse_btn.setFixedSize(20, 20)
+        self._collapse_btn.move(119, 18)
+        self._collapse_btn.setStyleSheet("""
+            QPushButton {
+                background: #2a2a2a;
+                color: #aaa;
+                border: none;
+                border-radius: 3px;
+                font-size: 9px;
+                padding: 0;
+            }
+            QPushButton:hover { background: #3a3a3a; color: white; }
+        """)
+        self._collapse_btn.clicked.connect(self._toggle_collapse)
 
         # Variables pour interaction souris
         self.dragging_clip = None
@@ -240,6 +259,22 @@ class LightTrack(QWidget):
         self.waveform_data = None
 
         self.setMouseTracking(True)
+
+    def _toggle_collapse(self):
+        self._collapsed = not self._collapsed
+        if self._collapsed:
+            self._collapse_btn.setText("▶")
+            self._collapse_btn.move(145, 3)
+            self.setFixedHeight(26)
+            self.label.hide()
+        else:
+            self._collapse_btn.setText("▼")
+            self._collapse_btn.move(119, 18)
+            self.setMinimumHeight(self._normal_min_height)
+            self.setMaximumHeight(16777215)
+            self.label.show()
+        self.updateGeometry()
+        self.update()
 
     def generate_waveform(self, audio_path, max_samples=5000, progress_callback=None, cancel_check=None):
         """Genere des donnees de forme d'onde a partir d'un fichier audio ou video"""
@@ -1498,6 +1533,16 @@ print(json.dumps(waveform))
         # Separateur haut de piste
         painter.setPen(QPen(QColor("#3a3a3a"), 1))
         painter.drawLine(0, 0, self.width(), 0)
+
+        if self._collapsed:
+            # Afficher juste le nom en mode reduit
+            painter.setPen(QColor("#888"))
+            font = painter.font()
+            font.setBold(True)
+            font.setPixelSize(11)
+            painter.setFont(font)
+            painter.drawText(11, 0, 130, 26, Qt.AlignVCenter, self.name)
+            return
 
         # === FORME D'ONDE ===
         if self.waveform_data:

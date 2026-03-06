@@ -6,6 +6,7 @@ Couvre : Auth (email/password) + Firestore REST API.
 
 import json
 import time
+import socket
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -23,7 +24,19 @@ _FS_BASE = (
     f"/databases/(default)/documents"
 )
 
-_TIMEOUT = 10  # secondes
+_TIMEOUT = 5  # secondes (réduit de 10 à 5)
+
+
+def has_internet(timeout: float = 1.5) -> bool:
+    """Test rapide de connectivité avant d'essayer Firebase (DNS Google)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)  # timeout local uniquement, pas global
+        s.connect(("8.8.8.8", 53))
+        s.close()
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------
@@ -333,3 +346,85 @@ def remove_machine(uid: str, id_token: str, machine_id: str) -> bool:
         return True
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur suppression machine : {_firebase_error(e)}")
+
+
+# ---------------------------------------------------------------
+# Firestore : bibliothèque de fixtures OFL
+# ---------------------------------------------------------------
+
+def fetch_gdtf_fixtures(
+    id_token: str,
+    fixture_type: str = "",
+    page_size: int = 100,
+    cursor_manufacturer: str = None,
+    cursor_name: str = None,
+) -> dict:
+    """
+    Requête la collection gdtf_fixtures (fixtures OFL).
+    Filtre optionnel par fixture_type.
+    Pagination via cursor_manufacturer + cursor_name (valeurs du dernier doc).
+
+    Retourne :
+        {
+          "fixtures": [{"name", "manufacturer", "fixture_type", "modes": [...], ...}],
+          "next_cursor": {"manufacturer": str, "name": str} | None
+        }
+    """
+    url = f"{_FS_BASE}:runQuery"
+
+    filters = []
+    if fixture_type:
+        filters.append({
+            "fieldFilter": {
+                "field": {"fieldPath": "fixture_type"},
+                "op": "EQUAL",
+                "value": {"stringValue": fixture_type},
+            }
+        })
+
+    query: dict = {
+        "from": [{"collectionId": "gdtf_fixtures"}],
+        "orderBy": [
+            {"field": {"fieldPath": "manufacturer"}, "direction": "ASCENDING"},
+            {"field": {"fieldPath": "name"}, "direction": "ASCENDING"},
+        ],
+        "limit": page_size,
+    }
+
+    if len(filters) == 1:
+        query["where"] = filters[0]
+    elif len(filters) > 1:
+        query["where"] = {"compositeFilter": {"op": "AND", "filters": filters}}
+
+    if cursor_manufacturer is not None and cursor_name is not None:
+        query["startAfter"] = {
+            "values": [
+                {"stringValue": cursor_manufacturer},
+                {"stringValue": cursor_name},
+            ]
+        }
+
+    try:
+        resp_list = _post_json(url, {"structuredQuery": query}, id_token)
+    except urllib.error.HTTPError as e:
+        raise Exception(f"Erreur recherche fixtures : {_firebase_error(e)}")
+
+    fixtures = []
+    for entry in resp_list:
+        doc = entry.get("document")
+        if not doc:
+            continue
+        d = _doc_to_dict(doc)
+        if not d.get("name"):
+            continue
+        fixtures.append(d)
+
+    next_cursor = None
+    if len(fixtures) == page_size:
+        last = fixtures[-1]
+        next_cursor = {
+            "manufacturer": last.get("manufacturer", ""),
+            "name": last.get("name", ""),
+        }
+
+    return {"fixtures": fixtures, "next_cursor": next_cursor}

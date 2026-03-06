@@ -31,7 +31,7 @@ MEDIA_EXTENSIONS_FILTER = "Medias (*.mp3 *.wav *.flac *.aac *.ogg *.m4a *.wma *.
 
 # === CONFIGURATION GLOBALE ===
 APP_NAME = "MyStrow"
-VERSION = "3.0.5"
+VERSION = "3.0.6"
 
 # === FIREBASE (cles dans firebase_config.py, non versionne) ===
 try:
@@ -41,22 +41,16 @@ except ImportError:
     FIREBASE_PROJECT_ID = ""
 
 # === MIDI SUPPORT ===
+# Détection via find_spec (sans importer le module — évite le scan MIDI au démarrage)
+import importlib.util as _iutil
 MIDI_AVAILABLE = False
 midi_lib = None
-
-# Essayer rtmidi en premier
-try:
-    import rtmidi
+if _iutil.find_spec("rtmidi") is not None:
     MIDI_AVAILABLE = True
     midi_lib = "rtmidi"
-except ImportError:
-    # Essayer rtmidi2 en alternative
-    try:
-        import rtmidi2 as rtmidi
-        MIDI_AVAILABLE = True
-        midi_lib = "rtmidi2"
-    except ImportError:
-        MIDI_AVAILABLE = False
+elif _iutil.find_spec("rtmidi2") is not None:
+    MIDI_AVAILABLE = True
+    midi_lib = "rtmidi2"
 
 # === MAPPING COULEURS AKAI ===
 AKAI_COLOR_MAP = {

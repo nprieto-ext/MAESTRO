@@ -2,7 +2,7 @@
 Assistant de connexion et configuration du Node DMX
 - Détection rapide au démarrage (ArtPoll 0.5 s sur l'IP cible)
 - Sélection explicite de la carte réseau (jamais automatique)
-- Configuration IPv4 2.0.0.1 automatique ou manuelle
+- Configuration IPv4 192.168.0.1 automatique ou manuelle
 - Guide MA Lighting (grandMA2)
 - Guide Electroconcept : câbles RJ45 + USB, configuration TCP/IP, recherche node
 """
@@ -25,10 +25,11 @@ from PySide6.QtGui import QFont, QDesktopServices, QCursor
 # CONSTANTES
 # ============================================================
 
-TARGET_IP   = "2.0.0.15"
-TARGET_PORT = 6454
+TARGET_IP   = "2.176.12.87"
+TARGET_PORT = 5568
 
-GRANDMA2_URL = "https://www.malighting.com/downloads/products/grandma2/"
+GRANDMA2_URL      = "https://www.malighting.com/downloads/products/grandma2/"
+TUTO_BASCULE_URL  = "https://www.youtube.com/results?search_query=mystrow+bascule+tutoriel"  # URL provisoire — remplacer par la vraie vidéo
 
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 
@@ -42,9 +43,9 @@ _SKIP_ADAPTERS = [
 
 # IPs à scanner pour MA Lighting (scan large)
 MA_SCAN_IPS = [
-    "2.0.0.15", "2.0.0.1", "2.0.0.2",
-    "192.168.1.1", "192.168.1.100", "192.168.0.1",
-    "10.0.0.1", "10.0.0.2",
+    "2.176.12.87", "192.168.0.1", "192.168.0.2", "192.168.0.100",
+    "192.168.1.1", "192.168.1.55", "192.168.1.100",
+    "2.0.0.15", "2.0.0.1",
 ]
 
 # Index des pages
@@ -162,13 +163,13 @@ def _get_ethernet_adapters() -> List[Tuple[str, str]]:
 
 
 def _set_static_ip(adapter_name: str) -> bool:
-    """Configure l'IP statique 2.0.0.1/255.0.0.0 via netsh. Requiert les droits admin."""
+    """Configure l'IP statique 192.168.0.1/255.255.255.0 (sans passerelle) via netsh. Requiert les droits admin."""
     try:
         r = subprocess.run(
             [
                 "netsh", "interface", "ip", "set", "address",
                 f"name={adapter_name}",
-                "static", "2.0.0.1", "255.0.0.0",
+                "static", "2.176.12.1", "255.255.255.0", "none",
             ],
             capture_output=True,
             creationflags=CREATE_NO_WINDOW,
@@ -183,17 +184,16 @@ def _set_static_ip(adapter_name: str) -> bool:
 # ============================================================
 
 class QuickDetector(QThread):
-    """ArtPoll sur TARGET_IP avec timeout court (0.5 s). Pas de scan large."""
+    """Ping sur TARGET_IP avec timeout court (0.5 s)."""
     finished = Signal(bool)
 
     def run(self):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(0.5)
-            s.sendto(_artpoll_packet(), (TARGET_IP, TARGET_PORT))
-            data, _ = s.recvfrom(256)
-            s.close()
-            self.finished.emit(data[:8] == b'Art-Net\x00')
+            r = subprocess.run(
+                ["ping", "-n", "1", "-w", "500", TARGET_IP],
+                capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=2,
+            )
+            self.finished.emit(r.returncode == 0)
         except Exception:
             self.finished.emit(False)
 
@@ -208,7 +208,7 @@ class AdapterScanner(QThread):
 
 class NetworkSetup(QThread):
     """
-    Configure l'IP statique 2.0.0.1/255.0.0.0 sur l'adaptateur choisi.
+    Configure l'IP statique 192.168.0.1/255.255.255.0 (sans passerelle) sur l'adaptateur choisi.
     Émet : ('ok'|'manual', adapter_name)
     """
     done = Signal(str, str)
@@ -226,37 +226,35 @@ class NetworkSetup(QThread):
 
 
 class NodeSearcher(QThread):
-    """ArtPoll sur TARGET_IP avec timeout 2 s, après stabilisation réseau."""
+    """Ping sur TARGET_IP avec timeout 2 s, après stabilisation réseau."""
     finished = Signal(bool)
 
     def run(self):
         time.sleep(0.5)
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(2.0)
-            s.sendto(_artpoll_packet(), (TARGET_IP, TARGET_PORT))
-            data, _ = s.recvfrom(256)
-            s.close()
-            self.finished.emit(data[:8] == b'Art-Net\x00')
+            r = subprocess.run(
+                ["ping", "-n", "2", "-w", "2000", TARGET_IP],
+                capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=5,
+            )
+            self.finished.emit(r.returncode == 0)
         except Exception:
             self.finished.emit(False)
 
 
 class FullScanner(QThread):
-    """Scan ArtPoll broadcast + liste d'IPs connues (MA Lighting)."""
+    """Ping sur liste d'IPs connues (MA Lighting)."""
     finished = Signal(bool, str)   # found, ip
 
     def run(self):
-        pkt = _artpoll_packet()
         for ip in MA_SCAN_IPS:
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(0.6)
-                s.sendto(pkt, (ip, TARGET_PORT))
-                data, addr = s.recvfrom(256)
-                s.close()
-                if data[:8] == b'Art-Net\x00':
-                    self.finished.emit(True, addr[0])
+                r = subprocess.run(
+                    ["ping", "-n", "1", "-w", "600", ip],
+                    capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=2,
+                )
+                if r.returncode == 0:
+                    self.finished.emit(True, ip)
+                    return
                     return
             except Exception:
                 pass
@@ -386,6 +384,7 @@ class NodeConnectionDialog(QDialog):
 
         self._adapter_name: str = ""
         self._net_came_from_method: bool = False
+        self._ma_mode: bool = False   # True quand on vient du flux MA Lighting
 
         # Threads (un seul actif à la fois)
         self._q_detect:     Optional[QuickDetector]  = None
@@ -555,6 +554,17 @@ class NodeConnectionDialog(QDialog):
         note.setStyleSheet("color: #666666;")
         note.setAlignment(Qt.AlignCenter)
         lay.addWidget(note)
+        lay.addSpacing(8)
+        btn_tuto = QPushButton("▶  Tutoriel Bascule  (5 min)")
+        btn_tuto.setStyleSheet(
+            "QPushButton { background: #1a1a1a; color: #ff4444; border: 1px solid #ff4444;"
+            " border-radius: 6px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #2a0000; border-color: #ff6666; color: #ff6666; }"
+        )
+        btn_tuto.setFixedHeight(40)
+        btn_tuto.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_tuto.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(TUTO_BASCULE_URL)))
+        lay.addWidget(btn_tuto)
         lay.addSpacing(4)
         btn_dl = QPushButton("Télécharger grandMA2")
         btn_dl.setStyleSheet(_BTN_PRIMARY)
@@ -567,9 +577,14 @@ class NodeConnectionDialog(QDialog):
         btn_done.setStyleSheet(_BTN_SUCCESS)
         btn_done.setFixedHeight(40)
         btn_done.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_done.clicked.connect(self._start_ma_search)
+        btn_done.clicked.connect(self._ma_done_clicked)
         lay.addWidget(btn_done)
         return w
+
+    def _ma_done_clicked(self):
+        """Clic sur 'J'ai terminé' depuis la page MA Lighting → sélection de carte réseau."""
+        self._ma_mode = True
+        self._start_adapter_scan()
 
     # 4 — Electroconcept : brancher les 2 câbles
     def _pg_ec_cables(self):
@@ -676,7 +691,7 @@ class NodeConnectionDialog(QDialog):
         btn_done.setStyleSheet(_BTN_SUCCESS)
         btn_done.setFixedHeight(36)
         btn_done.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_done.clicked.connect(self._start_node_search)
+        btn_done.clicked.connect(self._start_final_search)
         lay.addWidget(btn_done)
         return w
 
@@ -731,6 +746,16 @@ class NodeConnectionDialog(QDialog):
         btn_retry.setCursor(QCursor(Qt.PointingHandCursor))
         btn_retry.clicked.connect(self._start_ma_search)
         lay.addWidget(btn_retry)
+        btn_diag = QPushButton("🔍  Tester la connexion IP")
+        btn_diag.setFixedHeight(36)
+        btn_diag.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_diag.setStyleSheet(
+            "QPushButton { background: #1a1a1a; color: #aaaaaa; border: 1px solid #333333;"
+            " border-radius: 6px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #00d4ff; color: #00d4ff; }"
+        )
+        btn_diag.clicked.connect(self._run_ma_diag)
+        lay.addWidget(btn_diag)
         return w
 
     # 9 — Sélection de la carte réseau (contenu dynamique)
@@ -840,6 +865,9 @@ class NodeConnectionDialog(QDialog):
                       P_NET_SELECT, P_NET_METHOD}
         self._btn_back.setVisible(page in back_pages)
         title, sub = self._PAGE_HEADERS.get(page, ("Sortie Node DMX", ""))
+        # En mode MA Lighting, tout titre "Electroconcept" devient "MA Lighting"
+        if self._ma_mode and title == "Electroconcept":
+            title = "MA Lighting"
         self._lbl_title.setText(title)
         self._lbl_sub.setText(sub)
 
@@ -848,7 +876,11 @@ class NodeConnectionDialog(QDialog):
         if page in (P_MA, P_EC_CABLES):
             self._go_to(P_CHOOSE)
         elif page == P_NET_SELECT:
-            self._go_to(P_EC_CABLES)
+            if self._ma_mode:
+                self._ma_mode = False
+                self._go_to(P_MA)
+            else:
+                self._go_to(P_EC_CABLES)
         elif page == P_NET_METHOD:
             self._go_to(P_NET_SELECT)
         elif page == P_NET_MANUAL:
@@ -899,6 +931,162 @@ class NodeConnectionDialog(QDialog):
             self._go_to(P_CONNECTED)
         else:
             self._go_to(P_CHOOSE)
+
+    # ──────────────────────────────────────────────────────
+    # MA LIGHTING — DIAGNOSTIC IP
+    # ──────────────────────────────────────────────────────
+
+    def _run_ma_diag(self):
+        """Ouvre un dialog de diagnostic : ping + ArtPoll sur toutes les IPs MA probables."""
+        from PySide6.QtWidgets import QApplication
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnostic IP — MA Lighting")
+        dlg.setFixedSize(460, 400)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setStyleSheet(
+            "QDialog { background: #141414; }"
+            "QLabel  { color: #cccccc; border: none; background: transparent; }"
+        )
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(10)
+
+        title = QLabel("Test de connexion IP — MA Lighting")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #00d4ff;")
+        root.addWidget(title)
+
+        intro = QLabel(
+            "MyStrow teste chaque adresse IP probable de votre\n"
+            "boîtier MA Lighting. Une icône ✓ verte indique une réponse."
+        )
+        intro.setFont(QFont("Segoe UI", 9))
+        intro.setStyleSheet("color: #666666;")
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        # Zone de résultats scrollable
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(
+            "QScrollArea { border: 1px solid #222; border-radius: 4px; background: #0e0e0e; }"
+            "QScrollBar:vertical { background: #1a1a1a; width: 6px; border-radius: 3px; }"
+            "QScrollBar::handle:vertical { background: #333; border-radius: 3px; }"
+        )
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        results_lay = QVBoxLayout(inner)
+        results_lay.setContentsMargins(12, 8, 12, 8)
+        results_lay.setSpacing(4)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
+
+        status_lbl = QLabel("Test en cours…")
+        status_lbl.setFont(QFont("Segoe UI", 9))
+        status_lbl.setStyleSheet("color: #555555;")
+        root.addWidget(status_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(30)
+        btn_close.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_close.setStyleSheet(
+            "QPushButton { background: #2a2a2a; color: #aaa; border: 1px solid #3a3a3a;"
+            " border-radius: 4px; padding: 0 16px; font-size: 10px; }"
+            "QPushButton:hover { background: #333; color: white; }"
+        )
+        btn_close.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_close)
+        root.addLayout(btn_row)
+
+        dlg.show()
+        QApplication.processEvents()
+
+        # ── Tests ────────────────────────────────────────────────────────────
+        def _row(ip):
+            h = QHBoxLayout()
+            h.setSpacing(10)
+            icon = QLabel("…")
+            icon.setFont(QFont("Segoe UI", 13))
+            icon.setFixedWidth(22)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setStyleSheet("color: #555;")
+            h.addWidget(icon)
+            txt = QLabel(ip)
+            txt.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            h.addWidget(txt)
+            detail = QLabel("test en cours…")
+            detail.setFont(QFont("Segoe UI", 9))
+            detail.setStyleSheet("color: #555;")
+            h.addWidget(detail, 1)
+            link_btn = QPushButton("🌐  Interface web")
+            link_btn.setFixedHeight(24)
+            link_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            link_btn.setStyleSheet(
+                "QPushButton { background: #1a2a1a; color: #4CAF50;"
+                " border: 1px solid #4CAF50; border-radius: 4px;"
+                " font-size: 10px; padding: 0 8px; }"
+                "QPushButton:hover { background: #2a3a2a; }"
+            )
+            link_btn.setVisible(False)
+            link_btn.clicked.connect(
+                lambda _, _ip=ip: QDesktopServices.openUrl(QUrl(f"http://{_ip}"))
+            )
+            h.addWidget(link_btn)
+            results_lay.addLayout(h)
+            results_lay.addStretch()
+            return icon, detail, link_btn
+
+        rows = {}
+        for ip in MA_SCAN_IPS:
+            rows[ip] = _row(ip)
+        QApplication.processEvents()
+
+        found_any = False
+        for ip in MA_SCAN_IPS:
+            icon_lbl, detail_lbl, link_btn = rows[ip]
+            status_lbl.setText(f"Test de {ip}…")
+            QApplication.processEvents()
+
+            # 1. Ping ICMP (subprocess)
+            ping_ok = False
+            try:
+                r = subprocess.run(
+                    ["ping", "-n", "1", "-w", "600", ip],
+                    capture_output=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    timeout=2,
+                )
+                ping_ok = r.returncode == 0
+            except Exception:
+                ping_ok = False
+
+            if ping_ok:
+                icon_lbl.setText("⚡")
+                icon_lbl.setStyleSheet("color: #ff9800;")
+                detail_lbl.setText("Répond au ping — configurer en Art-Net")
+                detail_lbl.setStyleSheet("color: #ff9800;")
+                link_btn.setVisible(True)
+                found_any = True
+            else:
+                icon_lbl.setText("✗")
+                icon_lbl.setStyleSheet("color: #555;")
+                detail_lbl.setText("Aucune réponse")
+                detail_lbl.setStyleSheet("color: #444;")
+
+            QApplication.processEvents()
+
+        if found_any:
+            status_lbl.setText("✓  Diagnostic terminé — un ou plusieurs appareils ont répondu.")
+            status_lbl.setStyleSheet("color: #4CAF50;")
+        else:
+            status_lbl.setText("Aucune réponse sur toutes les IPs testées.")
+            status_lbl.setStyleSheet("color: #f44336;")
+
+        dlg.exec()
 
     # ──────────────────────────────────────────────────────
     # MA LIGHTING — SCAN LARGE
@@ -983,19 +1171,26 @@ class NodeConnectionDialog(QDialog):
     # ÉTAPE 3 — SÉLECTION CARTE + VÉRIFICATION IP
     # ──────────────────────────────────────────────────────
 
+    def _start_final_search(self):
+        """Lance la recherche du boîtier selon la marque (MA ou Electroconcept)."""
+        if self._ma_mode:
+            self._start_ma_search()
+        else:
+            self._start_node_search()
+
     def _on_adapter_selected(self, adapter_name: str, current_ip: str):
-        """L'utilisateur a choisi une carte réseau."""
+        """L'utilisateur a choisi une carte réseau (MA Lighting ou Electroconcept)."""
         self._adapter_name = adapter_name
 
         if current_ip.startswith("2."):
-            # IP déjà correcte → aller directement à la recherche du node
+            # IP déjà correcte → recherche directe du boîtier
             self._set_working(
                 "IP déjà configurée correctement",
-                f"Recherche du boîtier DMX sur {TARGET_IP}..."
+                f"Recherche du boîtier sur {TARGET_IP}..."
             )
-            self._start_node_search()
+            self._start_final_search()
         else:
-            # Proposer la configuration
+            # Proposer la configuration IP (même flow MA et EC)
             ip_display = current_ip if current_ip else "non configurée"
             self._net_method_adapter_lbl.setText(
                 f"Carte sélectionnée :  « {adapter_name} »\n"
@@ -1020,7 +1215,7 @@ class NodeConnectionDialog(QDialog):
     def _on_network_done(self, status: str, adapter: str):
         self._adapter_name = adapter
         if status == "ok":
-            self._start_node_search()
+            self._start_final_search()
             return
         self._stop_spinner()
         self._net_came_from_method = True
