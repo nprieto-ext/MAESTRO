@@ -7,6 +7,7 @@ import os
 import json
 import random
 import ctypes
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -348,20 +349,10 @@ class AkaiLayoutEditorDialog(QDialog):
         lbl9.setStyleSheet("color:#888; font-size:8px; font-weight:bold; letter-spacing:0.5px;")
         v.addWidget(lbl9)
 
-        self._fader9_combo = QComboBox()
-        self._fader9_combo.addItems(["Vitesse FX", "Master Général"])
-        self._fader9_combo.setCurrentText(
-            "Master Général" if current_mode == "MASTER" else "Vitesse FX"
-        )
-        self._fader9_combo.setFixedHeight(22)
-        self._fader9_combo.setStyleSheet(
-            "QComboBox { background: #151525; color: #ccc; border: 1px solid #444; "
-            "border-radius: 3px; font-size: 9px; padding: 1px 2px; } "
-            "QComboBox::drop-down { border: none; width: 14px; } "
-            "QComboBox QAbstractItemView { background: #1e1e2a; color: #ccc; "
-            "selection-background-color: #0077bb; font-size: 10px; }"
-        )
-        v.addWidget(self._fader9_combo)
+        lbl_fx = QLabel("Vitesse FX")
+        lbl_fx.setAlignment(Qt.AlignCenter)
+        lbl_fx.setStyleSheet("color:#00aaff; font-size:9px; font-weight:bold;")
+        v.addWidget(lbl_fx)
         return card
 
     # ── Lecture résultat ─────────────────────────────────────────────────────
@@ -378,8 +369,8 @@ class AkaiLayoutEditorDialog(QDialog):
         return slots
 
     def get_last_fader_mode(self):
-        """Retourne 'FX' ou 'MASTER' selon la sélection du fader 9."""
-        return "MASTER" if self._fader9_combo.currentText() == "Master Général" else "FX"
+        """Fader 9 toujours en mode Vitesse FX."""
+        return "FX"
 
 
 class VideoOutputWindow(QWidget):
@@ -509,6 +500,10 @@ class MainWindow(QMainWindow):
 
         # Variables d'etat
         self.active_pads = {}  # {col_idx: QPushButton} - un pad actif par colonne
+        self._mem_rec_mode = False   # mode REC memoire en attente de clic pad
+        self._rec_mem_btn = None     # reference au bouton REC
+        self._tap_times = []         # timestamps des taps pour calcul BPM
+        self._tap_btn = None         # reference au bouton tap tempo
         self.active_dual_pad = None
         self.audio_ai = AudioColorAI()
         self.fader_buttons = []
@@ -759,6 +754,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("📤 Exporter une configuration...", self.export_akai_config)
         file_menu.addSeparator()
         file_menu.addAction("🏠 Charger les mémoires par défaut", self.load_default_presets)
+        file_menu.addAction("⚡ Charger les effets par défaut",   self.load_default_effects)
         file_menu.addSeparator()
         file_menu.addAction("❌ Quitter", self.close)
 
@@ -1113,6 +1109,19 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         title_row.addWidget(title)
         title_row.addStretch()
+        rec_btn = QPushButton("🔴")
+        rec_btn.setFixedSize(26, 26)
+        rec_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+        rec_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; font-size: 13px; } "
+            "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+        )
+        rec_btn.clicked.connect(self._toggle_mem_rec_mode)
+        self._rec_mem_btn = rec_btn
+        title_row.addWidget(rec_btn)
+        title_row.addSpacing(4)
+
         edit_layout_btn = QPushButton("⚙")
         edit_layout_btn.setFixedSize(26, 26)
         edit_layout_btn.setToolTip("Configurer le layout AKAI")
@@ -1209,11 +1218,17 @@ class MainWindow(QMainWindow):
         effect_col.setSpacing(2)
         effect_col.setContentsMargins(0, 0, 0, 0)
 
-        last_effect_btn = EffectButton(8)
-        last_effect_btn.clicked.connect(lambda: self.toggle_effect(8))
-        last_effect_btn.effect_config_selected.connect(self._on_effect_assigned)
-        self.effect_buttons.append(last_effect_btn)
-        effect_col.addWidget(last_effect_btn, alignment=Qt.AlignCenter)
+        tap_btn = QPushButton("TAP")
+        tap_btn.setFixedSize(28, 16)
+        tap_btn.setToolTip("Tap Tempo — tapez plusieurs fois en rythme pour régler la vitesse FX")
+        tap_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #3a3a3a; "
+            "border-radius: 3px; font-size: 8px; font-weight: bold; } "
+            "QPushButton:pressed { background: #333; color: #fff; border-color: #aaa; }"
+        )
+        tap_btn.clicked.connect(self._tap_tempo)
+        self._tap_btn = tap_btn
+        effect_col.addWidget(tap_btn, alignment=Qt.AlignCenter)
 
         # Restaurer les noms d'effets assignés depuis le fichier sauvegardé
         for _i, _btn in enumerate(self.effect_buttons):
@@ -1333,16 +1348,6 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.Accepted:
             return
         self._custom_bank_slots = dlg.get_slots()
-        prev_mode = getattr(self, '_last_fader_mode', 'FX')
-        self._last_fader_mode = dlg.get_last_fader_mode()
-        if hasattr(self, '_lbl_fader8'):
-            self._lbl_fader8.setText("MST" if self._last_fader_mode == "MASTER" else "FX")
-        # Si on repasse en FX, reset le master à 100 % (sinon le dimmer reste bloqué)
-        if self._last_fader_mode == 'FX' and prev_mode == 'MASTER':
-            self.set_master_level(8, 100)
-            if 8 in self.faders:
-                self.faders[8].set_value(100)
-                self.faders[8].update()
         self.active_pads.clear()
         self.active_memory_pads.clear()
         self._rebuild_akai_pads()
@@ -1669,10 +1674,59 @@ class MainWindow(QMainWindow):
                                 int(pattern[i].blue() * brightness)
                             )
 
+    def _toggle_mem_rec_mode(self):
+        """Active/desactive le mode REC memoire."""
+        self._mem_rec_mode = not self._mem_rec_mode
+        if self._rec_mem_btn is None:
+            return
+        if self._mem_rec_mode:
+            self._rec_mem_btn.setStyleSheet(
+                "QPushButton { background: #cc3333; color: white; border: 2px solid #ff6666; "
+                "border-radius: 4px; font-size: 13px; }"
+            )
+            self._rec_mem_btn.setToolTip("REC actif — cliquez sur un pad mémoire pour enregistrer")
+        else:
+            self._rec_mem_btn.setStyleSheet(
+                "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+                "border-radius: 4px; font-size: 13px; } "
+                "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+            )
+            self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+
+    def _show_mem_toast(self, text):
+        """Affiche un message ephemere en bas a gauche de la fenetre."""
+        toast = QLabel(text, self)
+        toast.setStyleSheet(
+            "QLabel { background: #222; color: #00cc66; border: 1px solid #00cc66; "
+            "border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: bold; }"
+        )
+        toast.setWindowFlags(Qt.SubWindow)
+        toast.adjustSize()
+        toast.move(12, self.height() - toast.height() - 16)
+        toast.show()
+        toast.raise_()
+        QTimer.singleShot(2200, toast.deleteLater)
+
     def _activate_memory_pad(self, btn, mem_col, row):
-        """Active un pad memoire - radio GLOBAL sur toutes les colonnes memoire.
-        L'appui sur un pad desactive tous les autres pads actifs (toutes colonnes),
-        puis active le nouveau. Cliquer sur le pad deja actif ne fait rien."""
+        """Active un pad memoire - independant par colonne.
+        Chaque colonne memoire est independante : activer un pad dans la colonne 2
+        ne desactive pas le pad actif dans la colonne 1.
+        Cliquer sur le pad deja actif ne fait rien."""
+
+        # Mode REC : enregistrer l'etat courant sur ce pad
+        if self._mem_rec_mode:
+            self._record_memory(mem_col, row)
+            self._mem_rec_mode = False
+            if self._rec_mem_btn:
+                self._rec_mem_btn.setStyleSheet(
+                    "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+                    "border-radius: 4px; font-size: 13px; } "
+                    "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+                )
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+            self._show_mem_toast("✔ Séquence enregistrée")
+            return
+
         col_akai = self._mem_col_to_fader(mem_col)
 
         # Clic sur le pad deja actif → rien
@@ -1683,19 +1737,19 @@ class MainWindow(QMainWindow):
         if self.memories[mem_col][row] is None:
             return
 
-        # Desactiver TOUS les pads actifs sur toutes les colonnes memoire
-        for fi, mc in self._bank_memory_slots():
-            prev_row = self.active_memory_pads.pop(fi, None)
-            if prev_row is not None:
-                self._clear_memory_from_projectors(mc, prev_row)
-                self._style_memory_pad(mc, prev_row, active=False)
-                self._update_memory_pad_led(mc, prev_row, active=False)
+        # Desactiver le pad precedent DANS CETTE COLONNE SEULEMENT
+        prev_row = self.active_memory_pads.pop(col_akai, None)
+        if prev_row is not None:
+            self._clear_memory_from_projectors(mem_col, prev_row)
+            self._style_memory_pad(mem_col, prev_row, active=False)
+            self._update_memory_pad_led(mem_col, prev_row, active=False)
 
         # Activer le nouveau pad
         self.active_memory_pads[col_akai] = row
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         self._apply_memory_to_projectors(mem_col, row)
+
         self._save_akai_config_auto()
         # Envoi DMX immediat sans attendre le prochain tick
         self.send_dmx_update()
@@ -1713,7 +1767,7 @@ class MainWindow(QMainWindow):
                 p.level = 0
                 p.color = QColor("black")
 
-    def _apply_memory_to_projectors(self, mem_col, row):
+    def _apply_memory_to_projectors(self, mem_col, row, fader_value=None):
         """Applique directement une memoire sur les projecteurs.
         Seuls les projecteurs avec level > 0 dans le snapshot sont modifies,
         ce qui preserves les faders couleur (0-3) independants.
@@ -1721,8 +1775,9 @@ class MainWindow(QMainWindow):
         mem = self.memories[mem_col][row]
         if not mem:
             return
-        col_akai = self._mem_col_to_fader(mem_col)
-        fader_value = self.faders[col_akai].value if col_akai in self.faders else 100
+        if fader_value is None:
+            col_akai = self._mem_col_to_fader(mem_col)
+            fader_value = self.faders[col_akai].value if col_akai in self.faders else 100
         brightness = fader_value / 100.0
         for i, proj_state in enumerate(mem["projectors"]):
             if i >= len(self.projectors):
@@ -1735,9 +1790,9 @@ class MainWindow(QMainWindow):
             p.level = level
             p.base_color = base_color
             p.color = QColor(
-                int(base_color.red() * level / 100.0),
+                int(base_color.red()   * level / 100.0),
                 int(base_color.green() * level / 100.0),
-                int(base_color.blue() * level / 100.0)
+                int(base_color.blue()  * level / 100.0)
             )
 
     def _style_memory_pad(self, mem_col, row, active):
@@ -1912,8 +1967,15 @@ class MainWindow(QMainWindow):
         if slot["type"] == "memory":
             mem_col = slot["mem_col"]
             active_row = self.active_memory_pads.get(index)
+            # Auto-activation pad du haut si aucun pad actif dans cette colonne MEM
+            if active_row is None and value > 0 and self.memories[mem_col][0] is not None:
+                self.active_memory_pads[index] = 0
+                self._style_memory_pad(mem_col, 0, active=True)
+                active_row = 0
+            # Appliquer avec value directement (evite le lag MIDI de fader.value)
             if active_row is not None and self.memories[mem_col][active_row]:
-                self._apply_memory_to_projectors(mem_col, active_row)
+                self._apply_memory_to_projectors(mem_col, active_row, fader_value=value)
+            self.send_dmx_update()
             return
 
         groups = self._slot_groups(slot)
@@ -2039,6 +2101,12 @@ class MainWindow(QMainWindow):
         speed_raw = cfg.get("speed", 50) if cfg else 50
         sf = max(0.05, 1.0 - speed_raw / 100.0 * 0.95)
 
+        if cfg and cfg.get("layers"):
+            import time as _time
+            self.effect_t0 = _time.monotonic()
+            self.effect_timer.start(40)  # 25 fps pour les effets à couches
+            return
+
         if cfg:
             init_intervals = {
                 "Strobe": max(25, int(500 - speed_raw / 100.0 * 475)),
@@ -2129,17 +2197,20 @@ class MainWindow(QMainWindow):
         # Config-driven path (depuis l'éditeur d'effets)
         cfg = self.active_effect_config
         if cfg:
-            self._update_effect_from_config(cfg)
+            if cfg.get("layers"):
+                self._update_effect_from_layers(cfg)
+            else:
+                self._update_effect_from_config(cfg)
             return
 
-        # speed_factor : fader 0 = lent (1.0), fader 127 = rapide (0.05)
-        speed_factor = max(0.05, 1.0 - (self.effect_speed / 127.0 * 0.95))
+        # speed_factor : fader 0 = lent (1.0), fader 100 = rapide (0.05)
+        speed_factor = max(0.05, 1.0 - (self.effect_speed / 100.0 * 0.95))
 
         eff = self.active_effect
 
         if eff == "Strobe":
             # Alternance blanc/noir — intervalle 500 ms (lent) → 25 ms (rapide)
-            interval = max(25, int(500 - (self.effect_speed / 127.0) * 475))
+            interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
                 if p.group == "fumee":
@@ -2150,7 +2221,7 @@ class MainWindow(QMainWindow):
 
         elif eff == "Flash":
             # Alternance couleur/noir — même mapping vitesse que Strobe
-            interval = max(25, int(500 - (self.effect_speed / 127.0) * 475))
+            interval = max(25, int(500 - (self.effect_speed / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             for p in self.projectors:
                 if p.group == "fumee":
@@ -2335,8 +2406,7 @@ class MainWindow(QMainWindow):
     def open_effect_editor(self):
         """Ouvre l'editeur d'effets (menu Edition)"""
         from effect_editor import EffectEditorDialog
-        dlg = EffectEditorDialog(self)
-        dlg.effect_assigned.connect(self._on_effect_assigned)
+        dlg = EffectEditorDialog(clips=[], main_window=self, parent=self)
         dlg.exec()
 
     _EFFECT_ASSIGNMENTS_FILE = Path.home() / ".mystrow_effect_assignments.json"
@@ -2374,16 +2444,117 @@ class MainWindow(QMainWindow):
             # Sync current_effect pour que le menu clic-droit affiche le bon check
             self.effect_buttons[btn_idx].current_effect = name or None
 
+    def _update_effect_from_layers(self, cfg: dict):
+        """Exécute un effet défini par ses couches (format nouvel éditeur)."""
+        import math as _math
+        import time as _time
+
+        layers_dicts = cfg.get("layers", [])
+        if not layers_dicts:
+            return
+
+        t = _time.monotonic() - getattr(self, 'effect_t0', 0)
+        projectors = [p for p in self.projectors if p.group != "fumee"]
+        n = len(projectors)
+        if n == 0:
+            return
+
+        _LETTER_TO_GROUP = {
+            "A": "face", "B": "lat", "C": "contre",
+            "D": "douche1", "E": "douche2", "F": "douche3",
+        }
+
+        def _wave(forme, x):
+            if forme == "Sinus":      return (_math.sin(2 * _math.pi * x) + 1) / 2
+            elif forme == "Flash":    return 1.0 if x < 0.5 else 0.0
+            elif forme == "Triangle": return 1.0 - abs(2 * x - 1)
+            elif forme == "Montée":   return x
+            elif forme == "Descente": return 1.0 - x
+            elif forme == "Fixe":     return 1.0
+            return 0.0
+
+        for i, proj in enumerate(projectors):
+            dim = 0.0; r = 0.0; g = 0.0; b = 0.0
+            has_dim = False; has_rgb_layer = False
+
+            for ld in layers_dicts:
+                preset = ld.get("target_preset", "Tous")
+                groups = ld.get("target_groups", [])
+                if preset == "Pair"   and i % 2 != 0: continue
+                if preset == "Impair" and i % 2 != 1: continue
+                if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
+                if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
+
+                speed     = ld.get("speed", 50)
+                size      = ld.get("size", 100)
+                spread    = ld.get("spread", 0)
+                phase     = ld.get("phase", 0) / 100.0
+                fade      = ld.get("fade", 0) / 100.0
+                direction = ld.get("direction", 1)
+                forme     = ld.get("forme", "Sinus")
+                attr      = ld.get("attribute", "Dimmer")
+
+                freq = 0.3 + speed / 100.0 * 3.5
+                sp   = spread / 100.0
+                if direction == 0:
+                    t_osc = abs(2 * ((freq * t) % 1.0) - 1)
+                    x = (t_osc + i / max(n, 1) * sp + phase) % 1.0
+                elif direction == -1:
+                    x = (freq * t - i / max(n, 1) * sp + phase) % 1.0
+                else:
+                    x = (freq * t + i / max(n, 1) * sp + phase) % 1.0
+
+                raw = _wave(forme, x)
+                if fade > 0:
+                    sin_val = (_math.sin(2 * _math.pi * x) + 1) / 2
+                    raw = raw * (1 - fade) + sin_val * fade
+                scaled = raw * size / 100.0
+
+                if attr in ("Dimmer", "Strobe"):
+                    dim += scaled; has_dim = True
+                elif attr == "R": r += scaled; has_rgb_layer = True
+                elif attr == "V": g += scaled; has_rgb_layer = True
+                elif attr == "B": b += scaled; has_rgb_layer = True
+                elif attr == "RGB":
+                    has_rgb_layer = True
+                    c1 = QColor(ld.get("color1", "#ffffff"))
+                    r += c1.redF() * scaled
+                    g += c1.greenF() * scaled
+                    b += c1.blueF() * scaled
+                elif attr == "Permut":
+                    has_rgb_layer = True
+                    c1 = QColor(ld.get("color1", "#ff0000"))
+                    c2 = QColor(ld.get("color2", "#0000ff"))
+                    r2 = 1.0 - raw
+                    amp = size / 100.0
+                    r += (c1.redF()   * raw + c2.redF()   * r2) * amp
+                    g += (c1.greenF() * raw + c2.greenF() * r2) * amp
+                    b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
+
+            level = min(1.0, dim) if has_dim else 1.0
+            bv    = level * (proj.level / 100.0) if proj.level > 0 else level
+
+            has_color_val = r > 0 or g > 0 or b > 0
+            if has_color_val:
+                cr = min(255, int(r * 255))
+                cg = min(255, int(g * 255))
+                cb = min(255, int(b * 255))
+                proj.color = QColor(int(cr * bv), int(cg * bv), int(cb * bv))
+            elif has_rgb_layer:
+                proj.color = QColor(0, 0, 0)
+            elif has_dim:
+                bc = proj.base_color
+                proj.color = QColor(int(bc.red() * bv), int(bc.green() * bv), int(bc.blue() * bv))
+
     def _update_effect_from_config(self, cfg: dict):
         """Exécute l'algorithme paramétré depuis une config éditeur."""
         import math as _math
 
         etype      = cfg.get("type", "Pulse")
         speed_raw  = cfg.get("speed", 50)
-        # Le fader 9 joue le rôle de multiplicateur en temps réel
-        fader      = self.effect_speed  # 0-127
-        if fader > 0:
-            speed_raw = int(speed_raw * (fader / 127.0))
+        # Fader FX : 0 = très lent (5%), 100 = vitesse configurée (100%)
+        fader = self.effect_speed  # 0-100
+        speed_raw = int(speed_raw * max(0.05, fader / 100.0))
         target     = cfg.get("target", "all")
         color_mode = cfg.get("color_mode", "base")
         custom_hex = cfg.get("custom_color", "#ffffff")
@@ -2538,15 +2709,53 @@ class MainWindow(QMainWindow):
             self.active_effect_config = {}  # one-shot
 
     def _fader8_dispatch(self, index, value):
-        """Dispatcher fader 9 : FX speed ou Master Général selon le mode configuré."""
-        if getattr(self, '_last_fader_mode', 'FX') == 'MASTER':
-            self.set_master_level(index, value)
-        else:
-            self.set_effect_speed(index, value)
+        """Fader 9 : contrôle de la vitesse FX."""
+        self.set_effect_speed(index, value)
 
     def set_effect_speed(self, index, value):
         """Definit la vitesse de l'effet"""
         self.effect_speed = value
+
+    def _tap_tempo(self):
+        """Calcule le BPM à partir des taps et règle le fader vitesse FX."""
+        now = time.monotonic()
+        # Supprimer les taps trop anciens (> 3 secondes sans tap = reset)
+        self._tap_times = [t for t in self._tap_times if now - t < 3.0]
+        self._tap_times.append(now)
+
+        # Feedback visuel rapide sur le bouton
+        if self._tap_btn:
+            self._tap_btn.setStyleSheet(
+                "QPushButton { background: #555; color: #fff; border: 1px solid #aaa; "
+                "border-radius: 3px; font-size: 8px; font-weight: bold; }"
+            )
+            QTimer.singleShot(120, lambda: self._tap_btn.setStyleSheet(
+                "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #3a3a3a; "
+                "border-radius: 3px; font-size: 8px; font-weight: bold; } "
+                "QPushButton:pressed { background: #333; color: #fff; border-color: #aaa; }"
+            ) if self._tap_btn else None)
+
+        # Besoin d'au moins 2 taps pour calculer
+        if len(self._tap_times) < 2:
+            return
+
+        # Moyenne des intervalles sur les 4 derniers taps maximum
+        taps = self._tap_times[-5:]
+        intervals = [taps[i+1] - taps[i] for i in range(len(taps) - 1)]
+        avg_interval_s = sum(intervals) / len(intervals)
+        bpm = 60.0 / avg_interval_s
+
+        # BPM → fader 0-100 (60 BPM = 0, 300 BPM = 100)
+        speed = int(max(0, min(100, (bpm - 60) / (300 - 60) * 100)))
+        self.effect_speed = speed
+        if 8 in self.faders:
+            self.faders[8].set_value(speed)
+
+        # Afficher le BPM détecté dans le label FX
+        if hasattr(self, '_lbl_fader8'):
+            self._lbl_fader8.setText(f"{int(bpm)} BPM")
+            QTimer.singleShot(3000, lambda: self._lbl_fader8.setText("FX")
+                              if hasattr(self, '_lbl_fader8') else None)
 
     def set_master_level(self, index, value):
         """Définit le niveau master général (0-100) et recompute les couleurs de sortie."""
@@ -2780,10 +2989,10 @@ class MainWindow(QMainWindow):
                 self.faders[fader_idx].value = converted_value
                 self.faders[fader_idx].update()
         elif 0 <= fader_idx <= 7:
-            self.set_proj_level(fader_idx, converted_value)
             if fader_idx in self.faders:
                 self.faders[fader_idx].value = converted_value
                 self.faders[fader_idx].update()
+            self.set_proj_level(fader_idx, converted_value)
 
     def on_midi_pad(self, row, col):
         """Reception d'un appui de pad MIDI"""
@@ -2816,7 +3025,7 @@ class MainWindow(QMainWindow):
                 else:
                     # Memory pads individuels
                     mem_col = slot["mem_col"]
-                    if self.memories[mem_col][row] is not None:
+                    if self._mem_rec_mode or self.memories[mem_col][row] is not None:
                         self._activate_memory_pad(pad, mem_col, row)
                         # Update LEDs de toute la colonne
                         for r in range(8):
@@ -3289,7 +3498,7 @@ class MainWindow(QMainWindow):
             "memory_custom_colors": custom_colors_serial,
             "active_memory_pads": active_pads_serial,
             "custom_bank_slots": [dict(s) for s in self._custom_bank_slots],
-            "last_fader_mode": getattr(self, '_last_fader_mode', 'FX'),
+            "last_fader_mode": "FX",
         }
 
     def _apply_akai_config(self, config):
@@ -3333,10 +3542,8 @@ class MainWindow(QMainWindow):
                     c = custom_colors_data[mc][mr]
                     self.memory_custom_colors[mc][mr] = QColor(c) if c else None
 
-        # Mode du fader 9 (FX / MASTER)
-        saved_mode = config.get("last_fader_mode", "FX")
-        if saved_mode in ("FX", "MASTER"):
-            self._last_fader_mode = saved_mode
+        # Fader 9 toujours en mode FX
+        self._last_fader_mode = "FX"
 
         # active_memory_pads non restaure : toujours demarrer sans pad actif
         # (evite le pad du haut "toujours enclenche" au demarrage)
@@ -3377,9 +3584,6 @@ class MainWindow(QMainWindow):
                     for i, lbl in enumerate(self._fader_label_widgets):
                         if i < len(self._fader_map):
                             lbl.setText(self._fader_map[i]["label"])
-            # Mettre à jour le label du fader 9
-            if hasattr(self, '_lbl_fader8'):
-                self._lbl_fader8.setText("MST" if self._last_fader_mode == "MASTER" else "FX")
             # Toujours activer le pad du haut de chaque colonne memoire au demarrage
             self._activate_top_pads_default()
         except Exception as e:
@@ -3437,51 +3641,57 @@ class MainWindow(QMainWindow):
 
     def _build_default_akai_presets(self) -> dict:
         """
-        Construit les presets Groupe B (Contres & LAT) par defaut pour les colonnes 5-8 (mem_col 0-3).
+        Construit les presets par défaut pour les 8 colonnes MEM (mc 0-7).
 
-        Toutes les colonnes : LAT bicouleur symetrique + CONTRE bicouleur symetrique.
-        (LAT gauche=dom / droite=acc ; CONTRE pattern D-A-D | D-A-D symetrique)
+        Chaque LIGNE correspond à une couleur :
+          Row 0 : Blanc   #ffffff
+          Row 1 : Rouge   #ff0000
+          Row 2 : Orange  #ff8800
+          Row 3 : Jaune   #ffdd00
+          Row 4 : Vert    #00ff00
+          Row 5 : Cyan    #00dddd
+          Row 6 : Bleu    #0000ff
+          Row 7 : Magenta #ff00ff
 
-        Les 4 colonnes se distinguent par l'accord de couleur (accent) :
-          Col 5 (mc=0) : Dominant + Harmonique adjacent  (teintes proches, doux)
-          Col 6 (mc=1) : Dominant + Blanc pur            (effet naturel/scenique)
-          Col 7 (mc=2) : Dominant + Complementaire       (contraste fort)
-          Col 8 (mc=3) : Dominant + Split-comp / froid   (creatif)
-
-        8 rangees = 8 couleurs dominantes = couleurs des pads (correspondance directe).
+        Chaque COLONNE correspond à une combinaison de groupes :
+          MEM 1 (mc=0) : Tous les groupes
+          MEM 2 (mc=1) : Face
+          MEM 3 (mc=2) : Contre
+          MEM 4 (mc=3) : LAT
+          MEM 5 (mc=4) : Douches (douche1+2+3)
+          MEM 6 (mc=5) : Face + LAT
+          MEM 7 (mc=6) : Face + Contre
+          MEM 8 (mc=7) : LAT + Contre
         """
 
-        # (dom, [acc_col5, acc_col6, acc_col7, acc_col8])
-        ROW_DATA = [
-            ("#ffffff", ["#aabbff", "#ffe8aa", "#ffdd00", "#ff88cc"]),  # blanc   → bleu lavande / blanc chaud / jaune / rose
-            ("#ff0000", ["#ff8800", "#ffffff", "#00dddd", "#ff00ff"]),  # rouge   → orange / blanc / cyan / magenta
-            ("#ff8800", ["#ffdd00", "#ffffff", "#0000ff", "#ff0000"]),  # orange  → jaune / blanc / bleu / rouge
-            ("#ffdd00", ["#ff8800", "#ffffff", "#8800ff", "#00ff00"]),  # jaune   → orange / blanc / violet / vert
-            ("#00ff00", ["#00dddd", "#ffffff", "#ff00ff", "#0000ff"]),  # vert    → cyan / blanc / magenta / bleu
-            ("#00dddd", ["#0000ff", "#ffffff", "#ff0000", "#8800ff"]),  # cyan    → bleu / blanc / rouge / violet
-            ("#0000ff", ["#8800ff", "#ffffff", "#ff8800", "#00dddd"]),  # bleu    → violet / blanc / orange / cyan
-            ("#ff00ff", ["#ff0000", "#ffffff", "#00ff00", "#0000ff"]),  # magenta → rouge / blanc / vert / bleu
+        ROW_COLORS = [
+            "#ffffff",  # Row 0 : Blanc
+            "#ff0000",  # Row 1 : Rouge
+            "#ff8800",  # Row 2 : Orange
+            "#ffdd00",  # Row 3 : Jaune
+            "#00ff00",  # Row 4 : Vert
+            "#00dddd",  # Row 5 : Cyan
+            "#0000ff",  # Row 6 : Bleu
+            "#ff00ff",  # Row 7 : Magenta
         ]
 
-        def make_snapshot(dom, acc):
-            """Construit le snapshot en parcourant self.projectors dans l'ordre reel.
-            LAT  : alternance gauche=dominant / droite=accent.
-            CONTRE : pattern D-A-D repete symetriquement.
-            Tous les autres groupes (face, douches, public, fumee) sont eteints."""
-            contre_pattern = [dom, acc, dom, dom, acc, dom]
-            lat_idx = 0
-            contre_idx = 0
+        COL_GROUPS = [
+            {"face", "douche1", "douche2", "douche3", "lat", "contre"},  # MEM 1 : Tous
+            {"face"},                                                      # MEM 2 : Face
+            {"contre"},                                                    # MEM 3 : Contre
+            {"lat"},                                                       # MEM 4 : LAT
+            {"douche1", "douche2", "douche3"},                            # MEM 5 : Douches
+            {"face", "lat"},                                               # MEM 6 : Face + LAT
+            {"face", "contre"},                                            # MEM 7 : Face + Contre
+            {"lat", "contre"},                                             # MEM 8 : LAT + Contre
+        ]
+
+        def make_snapshot(color, active_groups):
             snapshot = []
             for fixture in self.projectors:
                 grp = fixture.group
-                if grp == "lat":
-                    color = dom if lat_idx % 2 == 0 else acc
+                if grp in active_groups:
                     snapshot.append({"group": grp, "base_color": color, "level": 100})
-                    lat_idx += 1
-                elif grp == "contre":
-                    color = contre_pattern[contre_idx % len(contre_pattern)]
-                    snapshot.append({"group": grp, "base_color": color, "level": 100})
-                    contre_idx += 1
                 else:
                     snapshot.append({"group": grp, "base_color": "#000000", "level": 0})
             return {"projectors": snapshot}
@@ -3489,12 +3699,10 @@ class MainWindow(QMainWindow):
         memories      = [[None] * 8 for _ in range(8)]
         custom_colors = [[None] * 8 for _ in range(8)]
 
-        for mc in range(4):
-            for row in range(8):
-                dom, accs = ROW_DATA[row]
-                acc = accs[mc]
-                memories[mc][row] = make_snapshot(dom, acc)
-                custom_colors[mc][row] = dom  # couleur du pad = dominant
+        for mc, groups in enumerate(COL_GROUPS):
+            for row, color in enumerate(ROW_COLORS):
+                memories[mc][row]      = make_snapshot(color, groups)
+                custom_colors[mc][row] = color
 
         return {
             "memories": memories,
@@ -3503,14 +3711,14 @@ class MainWindow(QMainWindow):
         }
 
     def load_default_presets(self):
-        """Charge (ou restaure) les configurations par defaut Groupe B (Contres & LAT)."""
+        """Charge (ou restaure) les 8 colonnes MEM par défaut."""
         reply = QMessageBox.question(
             self,
             "Charger les mémoires par défaut",
             "Charger les mémoires par défaut ?\n\n"
-            "Les mémoires 1 à 4 seront remplacées par des presets\n"
-            "harmoniques basés sur les 8 couleurs dominantes.\n\n"
-            "Les colonnes de groupes (A, B, C, D, E & F) ne peuvent pas être modifiées.",
+            "Les 8 colonnes MEM seront remplacées par des presets.\n"
+            "Chaque colonne = un groupe (Tous/Face/Contre/LAT/Douches...)\n"
+            "Chaque ligne = une couleur (Blanc/Rouge/Orange/Jaune/Vert/Cyan/Bleu/Magenta).",
             QMessageBox.Yes | QMessageBox.Cancel
         )
         if reply != QMessageBox.Yes:
@@ -3518,29 +3726,78 @@ class MainWindow(QMainWindow):
 
         presets = self._build_default_akai_presets()
 
-        # Remplacer les 4 colonnes memoire de base
-        for mc in range(4):
+        # Stocker les données pour les 8 colonnes
+        for mc in range(8):
             for mr in range(8):
                 self.memories[mc][mr] = presets["memories"][mc][mr]
                 c = presets["memory_custom_colors"][mc][mr]
                 self.memory_custom_colors[mc][mr] = QColor(c) if c else None
-                col_akai = self._mem_col_to_fader(mc)
-                is_active = self.active_memory_pads.get(col_akai) == mr
-                self._style_memory_pad(mc, mr, active=is_active)
-                self._update_memory_pad_led(mc, mr, active=is_active)
 
-        # Activer la premiere rangee de chaque colonne memoire (comme au demarrage)
+        # Reconstruire l'affichage complet (rafraîchit MEM 5-8 quelle que soit la banque active)
+        if hasattr(self, '_pads_container'):
+            self._rebuild_akai_pads()
         self._activate_top_pads_default()
-
+        # Synchroniser les LEDs physiques AKAI
+        self.activate_default_white_pads()
         self._save_akai_config_auto()
         QMessageBox.information(
-            self, "Memoires chargees",
-            "Memoires 1-4 chargees avec succes !\n\n"
-            "MEM 1 : accord harmonique (teintes proches)\n"
-            "MEM 2 : avec blanc pur (naturel / scenique)\n"
-            "MEM 3 : couleur complementaire (fort contraste)\n"
-            "MEM 4 : split-complementaire (creatif)\n\n"
-            "La premiere rangee de chaque colonne est maintenant active."
+            self, "Mémoires chargées",
+            "8 colonnes MEM chargées :\n\n"
+            "MEM 1 : Tous      MEM 5 : Douches\n"
+            "MEM 2 : Face      MEM 6 : Face + LAT\n"
+            "MEM 3 : Contre    MEM 7 : Face + Contre\n"
+            "MEM 4 : LAT       MEM 8 : LAT + Contre\n\n"
+            "Chaque ligne = une couleur :\n"
+            "Blanc / Rouge / Orange / Jaune / Vert / Cyan / Bleu / Magenta"
+        )
+
+    def load_default_effects(self):
+        """Charge les effets par défaut sur les boutons E1-E9."""
+        reply = QMessageBox.question(
+            self,
+            "Charger les effets par défaut",
+            "Charger les effets par défaut ?\n\n"
+            "Les boutons E1 à E9 seront remplacés par 9 effets variés\n"
+            "couvrant différents registres : strobe, chase, pulse,\n"
+            "couleur, mouvement, spécial...",
+            QMessageBox.Yes | QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        from effect_editor import BUILTIN_EFFECTS
+
+        # 9 effets bien différents les uns des autres
+        DEFAULT_EFFECTS = [
+            "Strobe Classique",  # E1 : stroboscopique pur
+            "Chase Doux",        # E2 : chase fluide avec fade
+            "Pulse Doux",        # E3 : respiration lente
+            "Rainbow",           # E4 : arc-en-ciel décalé
+            "Comète",            # E5 : comète avec trainée
+            "Bascule",           # E6 : bascule pair/impair
+            "Ping Pong",         # E7 : aller-retour bounce
+            "Police",            # E8 : rouge/bleu alternance
+            "Spectre",           # E9 : rainbow large et lent
+        ]
+
+        effects_by_name = {e["name"]: e for e in BUILTIN_EFFECTS}
+        assigned = []
+        for i, name in enumerate(DEFAULT_EFFECTS):
+            eff = effects_by_name.get(name)
+            if not eff:
+                continue
+            cfg = {
+                "name":   name,
+                "type":   eff.get("type", ""),
+                "layers": eff["layers"],
+            }
+            self._on_effect_assigned(i, cfg)
+            assigned.append(f"E{i+1} : {name}")
+
+        self._save_effect_assignments()
+        QMessageBox.information(
+            self, "Effets chargés",
+            "Effets par défaut chargés :\n\n" + "\n".join(assigned)
         )
 
     def export_akai_config(self):
@@ -3865,7 +4122,7 @@ class MainWindow(QMainWindow):
     def toggle_fader_mute_from_midi(self, fader_idx):
         """Toggle le mute d'un fader depuis l'AKAI physique - tous independants"""
         if fader_idx == 8:
-            return
+            return  # Pas de mute pour le fader FX
 
         if 0 <= fader_idx < len(self.fader_buttons):
             btn = self.fader_buttons[fader_idx]

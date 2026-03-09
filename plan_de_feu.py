@@ -328,7 +328,11 @@ class FixtureCanvas(QWidget):
         if htp and id(proj) in htp:
             level, color = htp[id(proj)][:2]
             if level > 0 and not proj.muted:
-                return QColor(color)
+                c = QColor(color)
+                r = int(c.red()   * level)
+                g = int(c.green() * level)
+                b = int(c.blue()  * level)
+                return QColor(r, g, b)
             return QColor("#1a1a1a")
         if proj.muted or proj.level == 0:
             return QColor("#1a1a1a")
@@ -991,7 +995,7 @@ class FixtureCanvas(QWidget):
 class PlanDeFeu(QFrame):
     """Visualisation du plan de feu - canvas 2D libre"""
 
-    def __init__(self, projectors, main_window=None):
+    def __init__(self, projectors, main_window=None, show_toolbar=True):
         super().__init__()
         self.setFocusPolicy(Qt.ClickFocus)
         self.projectors = projectors
@@ -1005,31 +1009,36 @@ class PlanDeFeu(QFrame):
         root.setSpacing(6)
 
         # ── Barre d'outils ──────────────────────────────────────────
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
+        if show_toolbar:
+            toolbar = QHBoxLayout()
+            toolbar.setContentsMargins(0, 0, 0, 0)
 
-        title = QLabel("Lumieres")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        toolbar.addWidget(title)
-        toolbar.addStretch()
+            title = QLabel("Lumieres")
+            title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            toolbar.addWidget(title)
+            toolbar.addStretch()
 
-        self.dmx_toggle_btn = QPushButton("ON")
-        self.dmx_toggle_btn.setCheckable(True)
-        self.dmx_toggle_btn.setChecked(True)
-        self.dmx_toggle_btn.setFixedSize(50, 24)
-        self.dmx_toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: #228b22; color: white; border: none;
-                border-radius: 12px; font-weight: bold; font-size: 10px;
-            }
-            QPushButton:!checked {
-                background: #8b0000;
-            }
-        """)
-        self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
-        toolbar.addWidget(self.dmx_toggle_btn)
+            self.dmx_toggle_btn = QPushButton("ON")
+            self.dmx_toggle_btn.setCheckable(True)
+            self.dmx_toggle_btn.setChecked(True)
+            self.dmx_toggle_btn.setFixedSize(50, 24)
+            self.dmx_toggle_btn.setStyleSheet("""
+                QPushButton {
+                    background: #228b22; color: white; border: none;
+                    border-radius: 12px; font-weight: bold; font-size: 10px;
+                }
+                QPushButton:!checked {
+                    background: #8b0000;
+                }
+            """)
+            self.dmx_toggle_btn.clicked.connect(self._toggle_dmx_output)
+            toolbar.addWidget(self.dmx_toggle_btn)
 
-        root.addLayout(toolbar)
+            root.addLayout(toolbar)
+        else:
+            # Stub pour éviter les AttributeError dans set_dmx_blocked
+            self.dmx_toggle_btn = QPushButton()
+            self.dmx_toggle_btn.setVisible(False)
 
         # ── Canvas ─────────────────────────────────────────────────
         self.canvas = FixtureCanvas(self)

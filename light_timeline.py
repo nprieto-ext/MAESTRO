@@ -52,9 +52,12 @@ class LightClip:
         self.intensity = intensity  # 0-100
         self.parent_track = parent_track
 
-        # Effets
+        # Effets (ancien système)
         self.effect = None
         self.effect_speed = 50
+        # Nouveau système : couches d'effets structurées (list[dict])
+        self.effect_layers    = []
+        self.effect_play_mode = "loop"   # "loop" | "once"
 
         # Fades
         self.fade_in_duration = 0

@@ -1,1960 +1,3013 @@
 """
-Editeur d'effets lumineux — MyStrow
-Dialog de création, configuration et assignation d'effets AKAI.
+Editeur d'effets par couches - EffectEditorDialog
+Layout 2 colonnes : [Presets + Éditeur couches] | [Plan de Feu live]
+
+Modèle :  Canal × Forme × Vitesse × Taille × Décalage × Phase
+  - Décalage (spread) : décalage de phase entre fixtures consécutives (0=ensemble, 100=étalé)
+  - Phase : décalage global de cette couche (pour déphacer R/V/B entre eux, etc.)
 """
-import copy
-import json
 import math
-import random
-from pathlib import Path
+import copy
+import time as _time
+import random as _rnd
 
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QScrollArea, QWidget, QLineEdit, QComboBox, QSlider, QSpinBox,
-    QColorDialog, QFrame, QMessageBox, QSizePolicy, QGridLayout,
-    QMenuBar, QMenu, QFileDialog, QStyle, QApplication,
-    QCheckBox, QDoubleSpinBox,
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QComboBox, QScrollArea, QFrame, QSizePolicy, QSlider,
+    QGridLayout, QSpinBox,
 )
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QLinearGradient, QAction, QKeySequence
+from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QSize, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QConicalGradient, QRadialGradient
 
-EFFECTS_FILE = Path.home() / ".mystrow_effects.json"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 22 EFFETS BUILT-IN
-# ──────────────────────────────────────────────────────────────────────────────
+# ─── Raccourci couche ──────────────────────────────────────────────────────────
+
+def _L(attr, forme, target="Tous", speed=50, size=100, spread=0, phase=0, fade=0, direction=1, color1="#ff0000", color2="#0000ff"):
+    return {"attribute": attr, "forme": forme, "target_preset": target,
+            "speed": speed, "size": size, "spread": spread, "phase": phase,
+            "fade": fade, "direction": direction, "color1": color1, "color2": color2}
+
+
+# ─── Effets prédéfinis ─────────────────────────────────────────────────────────
+
 BUILTIN_EFFECTS = [
     # ── Strobe / Flash ────────────────────────────────────────────────────────
-    {"name": "Strobe Classique",   "type": "Strobe", "category": "Strobe / Flash",
-     "speed": 55, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Strobe Lent",        "type": "Strobe", "category": "Strobe / Flash",
-     "speed": 15, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Strobe Rapide",      "type": "Strobe", "category": "Strobe / Flash",
-     "speed": 90, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Strobe Alternance",  "type": "Strobe", "category": "Strobe / Flash",
-     "speed": 60, "target": "alternate", "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Strobe Pairs",       "type": "Strobe", "category": "Strobe / Flash",
-     "speed": 60, "target": "even",      "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Flash Couleur",      "type": "Flash",  "category": "Strobe / Flash",
-     "speed": 50, "target": "all",       "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
-    {"name": "Flash Blanc",        "type": "Flash",  "category": "Strobe / Flash",
-     "speed": 55, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
+    {"name": "Strobe Classique",  "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", speed=55)]},
+
+    {"name": "Strobe Lent",       "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", speed=15)]},
+
+    {"name": "Strobe Rapide",     "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", speed=90)]},
+
+    {"name": "Strobe Alternance", "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", target="Pair",   speed=60, phase=0),
+                _L("Strobe", "Flash", target="Impair", speed=60, phase=50)]},
+
+    {"name": "Flash Couleur",     "emoji": "◉", "category": "Strobe / Flash", "type": "Flash",
+     "layers": [_L("Dimmer", "Montée", speed=50)]},
+
+    {"name": "Flash Blanc",       "emoji": "◉", "category": "Strobe / Flash", "type": "Flash",
+     "layers": [_L("Dimmer", "Montée", speed=55)]},
+
     # ── Mouvement ─────────────────────────────────────────────────────────────
-    {"name": "Chase Blanc",        "type": "Chase",  "category": "Mouvement",
-     "speed": 50, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Chase Rapide",       "type": "Chase",  "category": "Mouvement",
-     "speed": 96, "target": "lr",        "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Chase Retour",       "type": "Chase",  "category": "Mouvement",
-     "speed": 50, "target": "rl",        "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Comète",             "type": "Comete", "category": "Mouvement",
-     "speed": 50, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
-    {"name": "Étoile Filante",     "type": "Etoile Filante", "category": "Mouvement",
-     "speed": 50, "target": "all",       "color_mode": "white",   "custom_color": "#ffffff", "builtin": True},
+    {"name": "Chase Blanc",       "emoji": "→", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Flash", speed=50, spread=100)]},
+
+    {"name": "Chase Rapide",      "emoji": "→", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Flash", speed=96, spread=100)]},
+
+    {"name": "Chase Retour",      "emoji": "←", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Descente", speed=50, spread=100)]},
+
+    {"name": "Chase Doux",        "emoji": "→", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Triangle", speed=40, spread=100, fade=35)]},
+
+    {"name": "Comète",            "emoji": "☄", "category": "Mouvement", "type": "Comete",
+     "layers": [_L("Dimmer", "Descente", speed=65, size=100, spread=100)]},
+
+    {"name": "Comète Colorée",    "emoji": "☄", "category": "Mouvement", "type": "Comete",
+     "layers": [_L("Dimmer",  "Descente", speed=65, size=100, spread=100),
+                _L("RGB",     "Fixe",     size=100, color1="#00aaff")]},
+
     # ── Ambiance ──────────────────────────────────────────────────────────────
-    {"name": "Pulse Doux",         "type": "Pulse",  "category": "Ambiance",
-     "speed": 30, "target": "all",       "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
-    {"name": "Pulse Rapide",       "type": "Pulse",  "category": "Ambiance",
-     "speed": 92, "target": "all",       "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
-    {"name": "Pulse Décalé",       "type": "Pulse",  "category": "Ambiance",
-     "speed": 40, "target": "alternate", "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
-    {"name": "Vague",              "type": "Wave",   "category": "Ambiance",
-     "speed": 45, "target": "all",       "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
+    {"name": "Pulse Doux",        "emoji": "∿", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Sinus", speed=15)]},
+
+    {"name": "Pulse Rapide",      "emoji": "∿", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Sinus", speed=92)]},
+
+    {"name": "Pulse Décalé",      "emoji": "∿", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Sinus", speed=40, spread=50)]},
+
+    {"name": "Vague",             "emoji": "≈", "category": "Ambiance", "type": "Wave",
+     "layers": [_L("Dimmer", "Sinus", speed=40, spread=100)]},
+
     # ── Couleur ───────────────────────────────────────────────────────────────
-    {"name": "Rainbow",            "type": "Rainbow","category": "Couleur",
-     "speed": 45, "target": "all",       "color_mode": "rainbow", "custom_color": "#ffffff", "builtin": True},
-    {"name": "Rainbow Rapide",     "type": "Rainbow","category": "Couleur",
-     "speed": 85, "target": "all",       "color_mode": "rainbow", "custom_color": "#ffffff", "builtin": True},
-    {"name": "Feu",                "type": "Fire",   "category": "Couleur",
-     "speed": 50, "target": "all",       "color_mode": "fire",    "custom_color": "#ff4400", "builtin": True},
+    {"name": "Rainbow",           "emoji": "◈", "category": "Couleur", "type": "Rainbow",
+     "layers": [_L("R", "Sinus", speed=45, spread=100, phase=0),
+                _L("V", "Sinus", speed=45, spread=100, phase=33),
+                _L("B", "Sinus", speed=45, spread=100, phase=66)]},
+
+    {"name": "Rainbow Rapide",    "emoji": "◈", "category": "Couleur", "type": "Rainbow",
+     "layers": [_L("R", "Sinus", speed=85, spread=100, phase=0),
+                _L("V", "Sinus", speed=85, spread=100, phase=33),
+                _L("B", "Sinus", speed=85, spread=100, phase=66)]},
+
+    {"name": "Feu",               "emoji": "▲", "category": "Couleur", "type": "Fire",
+     "no_color": True,
+     "layers": [_L("R", "Audio", speed=50, size=80),
+                _L("V", "Audio", speed=50, size=20)]},
+
     # ── Spécial ───────────────────────────────────────────────────────────────
-    {"name": "Bascule",            "type": "Bascule","category": "Spécial",
-     "speed": 0,  "target": "all",       "color_mode": "base",    "custom_color": "#ffffff", "builtin": True},
-    {"name": "Flash Custom",       "type": "Flash",  "category": "Spécial",
-     "speed": 55, "target": "all",       "color_mode": "custom",  "custom_color": "#00aaff", "builtin": True},
-    {"name": "Chase Custom",       "type": "Chase",  "category": "Spécial",
-     "speed": 50, "target": "all",       "color_mode": "custom",  "custom_color": "#ff00aa", "builtin": True},
+    {"name": "Bascule",           "emoji": "⇄", "category": "Spécial", "type": "Bascule",
+     "layers": [_L("Dimmer", "Flash", target="Pair",   speed=20, phase=0),
+                _L("Dimmer", "Flash", target="Impair", speed=20, phase=50)]},
+
+    # ── Nouveaux : Strobe / Flash ─────────────────────────────────────────────
+    {"name": "Strobe Couleur",    "emoji": "⚡", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", speed=55),
+                _L("R", "Sinus", speed=55, size=70, phase=0),
+                _L("V", "Sinus", speed=55, size=70, phase=33),
+                _L("B", "Sinus", speed=55, size=70, phase=66)]},
+
+    {"name": "Blinder",           "emoji": "◎", "category": "Strobe / Flash", "type": "Flash",
+     "layers": [_L("Dimmer", "Flash", speed=30, size=100),
+                _L("Strobe", "Flash", speed=30, size=100)]},
+
+    # ── Nouveaux : Mouvement ──────────────────────────────────────────────────
+    {"name": "Ping Pong",         "emoji": "⇔", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Triangle", speed=38, spread=100, direction=0)]},
+
+    {"name": "Escalier",          "emoji": "↗", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Dimmer", "Montée",   speed=55, spread=100, direction=1)]},
+
+    {"name": "Scan",              "emoji": "↕", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("Pan",    "Triangle", speed=22, size=75),
+                _L("Dimmer", "Fixe",     size=90)]},
+
+    # ── Nouveaux : Ambiance ───────────────────────────────────────────────────
+    {"name": "Respiration",       "emoji": "∿", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Sinus", speed=10)]},
+
+    {"name": "Bougie",            "emoji": "✦", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Audio", speed=35, size=65),
+                _L("RGB",    "Fixe",  size=80, color1="#ff6600")]},
+
+    {"name": "Scintillement",     "emoji": "✧", "category": "Ambiance", "type": "Pulse",
+     "layers": [_L("Dimmer", "Audio", speed=88, size=100, spread=100)]},
+
+    # ── Nouveaux : Couleur ────────────────────────────────────────────────────
+    {"name": "Police",            "emoji": "◈", "category": "Couleur", "type": "Bascule",
+     "no_color": True,
+     "layers": [_L("R", "Flash", speed=48, phase=0),
+                _L("B", "Flash", speed=48, phase=50)]},
+
+    {"name": "RGB Chase",         "emoji": "◈", "category": "Couleur", "type": "Chase",
+     "layers": [_L("R", "Flash", speed=50, spread=100, phase=0),
+                _L("V", "Flash", speed=50, spread=100, phase=33),
+                _L("B", "Flash", speed=50, spread=100, phase=66)]},
+
+    {"name": "Disco",             "emoji": "🪩", "category": "Couleur", "type": "Fire",
+     "no_color": True,
+     "layers": [_L("R", "Audio", speed=75, size=100),
+                _L("V", "Audio", speed=75, size=100),
+                _L("B", "Audio", speed=75, size=100)]},
+
+    # ── Couleur custom ──────────────────────────────────────────────────────────
+    {"name": "Violet Pulsé",      "emoji": "🟣", "category": "Couleur", "type": "Pulse",
+     "layers": [_L("RGB", "Sinus", speed=25, size=100, color1="#8800ff")]},
+
+    {"name": "Rose Flash",        "emoji": "🌸", "category": "Couleur", "type": "Strobe",
+     "layers": [_L("RGB", "Flash", speed=40, spread=40, color1="#ff0080")]},
+
+    {"name": "Amber Pulse",       "emoji": "🟡", "category": "Couleur", "type": "Pulse",
+     "layers": [_L("RGB", "Sinus", speed=20, size=100, color1="#ffaa00")]},
+
+    {"name": "Cyan Vague",        "emoji": "🌊", "category": "Couleur", "type": "Wave",
+     "layers": [_L("RGB", "Sinus", speed=30, size=90, spread=60, color1="#00ffee")]},
+
+    {"name": "Orange Chase",      "emoji": "🔶", "category": "Couleur", "type": "Chase",
+     "layers": [_L("RGB", "Flash", speed=38, spread=50, color1="#ff5500")]},
+
+    {"name": "Magenta Chase",     "emoji": "💗", "category": "Couleur", "type": "Chase",
+     "layers": [_L("RGB", "Flash", speed=38, spread=50, color1="#ff00cc")]},
+
+    {"name": "Blanc Strobe",      "emoji": "⬜", "category": "Couleur", "type": "Strobe",
+     "layers": [_L("RGB", "Flash", speed=55, size=100, color1="#ffffff")]},
+
+    {"name": "Nuit Bleue",        "emoji": "🌙", "category": "Couleur", "type": "Pulse",
+     "layers": [_L("RGB", "Sinus", speed=12, size=70, color1="#001aff")]},
+
+    {"name": "Vert Jungle",       "emoji": "🌿", "category": "Couleur", "type": "Pulse",
+     "layers": [_L("RGB", "Sinus", speed=18, size=85, color1="#00cc44")]},
+
+    {"name": "Spectre",           "emoji": "🌈", "category": "Couleur", "type": "Rainbow",
+     "no_color": True,
+     "layers": [_L("R", "Sinus", speed=20, spread=100, phase=0),
+                _L("V", "Sinus", speed=20, spread=100, phase=33),
+                _L("B", "Sinus", speed=20, spread=100, phase=66)]},
+
+    # ── Nouveaux : Spécial ────────────────────────────────────────────────────
+    {"name": "Explosion",         "emoji": "💥", "category": "Spécial", "type": "Flash",
+     "layers": [_L("Dimmer", "Descente", speed=18, size=100),
+                _L("Strobe",  "Flash",   speed=92, size=80)]},
+
+    {"name": "Matrix",            "emoji": "⬛", "category": "Spécial", "type": "Pulse",
+     "layers": [_L("V",      "Audio",   speed=70, size=100, spread=100),
+                _L("Dimmer", "Audio",   speed=70, size=80,  spread=100)]},
+
+    # ── Strobe Couleurs ───────────────────────────────────────────────────────
+    {"name": "Strobe Bleu",      "emoji": "💙", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("RGB", "Flash", speed=55, color1="#0033ff")]},
+
+    {"name": "Strobe Vert",      "emoji": "💚", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("RGB", "Flash", speed=55, color1="#00dd00")]},
+
+    {"name": "Strobe Rouge",     "emoji": "❤️",  "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("RGB", "Flash", speed=55, color1="#ff0000")]},
+
+    {"name": "Strobe Mémoire",   "emoji": "🔦", "category": "Strobe / Flash", "type": "Strobe",
+     "layers": [_L("Strobe", "Flash", speed=55)]},
+
+    # ── Chase Couleurs ────────────────────────────────────────────────────────
+    {"name": "Chase Rouge",  "emoji": "🔴", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#ff0000")]},
+
+    {"name": "Chase Vert",   "emoji": "🟢", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#00dd00")]},
+
+    {"name": "Chase Bleu",   "emoji": "🔵", "category": "Mouvement", "type": "Chase",
+     "layers": [_L("RGB", "Flash", speed=45, spread=80, color1="#0033ff")]},
+
+    # ── Permut ────────────────────────────────────────────────────────────────
+    {"name": "Permut Rouge & Rose",    "emoji": "🌹", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#ff0000", color2="#ff0080")]},
+
+    {"name": "Permut Bleu & Cyan",     "emoji": "🩵", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#0033ff", color2="#00ffff")]},
+
+    {"name": "Permut Vert & Jaune",    "emoji": "💛", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#00dd00", color2="#ffee00")]},
+
+    {"name": "Permut Violet & Blanc",  "emoji": "💜", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#8800ff", color2="#ffffff")]},
+
+    {"name": "Permut Orange & Rouge",  "emoji": "🔶", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#ff6600", color2="#ff0000")]},
+
+    {"name": "Permut Custom",          "emoji": "🎨", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#ff0000", color2="#0000ff")]},
+
+    {"name": "Permut Rose & Blanc",    "emoji": "🌸", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=30, color1="#ff44aa", color2="#ffffff")]},
+
+    {"name": "Permut Rouge & Or",      "emoji": "🌟", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=40, color1="#ff0000", color2="#ffaa00")]},
+
+    {"name": "Permut Cyan & Blanc",    "emoji": "🌊", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=35, color1="#00ffee", color2="#ffffff")]},
+
+    {"name": "Permut Feu",             "emoji": "🔥", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=45, color1="#ff2200", color2="#ff8800")]},
+
+    {"name": "Permut Lent",            "emoji": "🌙", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Sinus", speed=15, color1="#4400ff", color2="#ff0066")]},
+
+    {"name": "Permut Rapide",          "emoji": "⚡", "category": "Permut", "type": "Permut",
+     "layers": [_L("Permut", "Flash", speed=70, color1="#ff0000", color2="#0000ff")]},
+
+    # ── Lyre ──────────────────────────────────────────────────────────────────
+    {"name": "Lyre Sweep",      "emoji": "🌀", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan",  "Sinus", speed=25, size=80)]},
+
+    {"name": "Lyre Circle",     "emoji": "🔵", "category": "Lyre", "type": "Pan",
+     "layers": [_L("Pan",  "Sinus", speed=25, size=70),
+                _L("Tilt", "Sinus", speed=25, size=70, phase=25)]},
+
+    {"name": "Lyre Gobo Spin",  "emoji": "🎯", "category": "Lyre", "type": "Gobo",
+     "layers": [_L("Gobo", "Flash", speed=40, spread=30)]},
+
+    {"name": "Lyre Spot Bounce","emoji": "🎪", "category": "Lyre", "type": "Tilt",
+     "layers": [_L("Tilt", "Sinus", speed=18, size=60, direction=0)]},
 ]
 
-EFFECT_TYPES = ["Strobe", "Flash", "Pulse", "Wave", "Chase",
-                "Comete", "Etoile Filante", "Rainbow", "Fire", "Bascule"]  # legacy
 
-PROJECTOR_GROUPS = ["face", "douche1", "douche2", "douche3", "lat", "contre"]  # legacy
+# ─── Constantes ───────────────────────────────────────────────────────────────
 
-PATTERNS = [
-    ("Tous",               "all"),
-    ("Pairs",              "even"),
-    ("Impairs",            "odd"),
-    ("Alternance",         "alternate"),
-    ("Gauche → Droite",    "lr"),
-    ("Droite → Gauche",    "rl"),
-]  # legacy
+ATTR_ORDER = ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"]
 
-COLOR_MODES = [
-    ("Couleur de base",    "base"),
-    ("Blanc",              "white"),
-    ("Noir",               "black"),
-    ("Arc-en-ciel",        "rainbow"),
-    ("Feu",                "fire"),
-    ("Couleur custom",     "custom"),
-]  # legacy
-
-TYPE_COLORS = {
-    "Strobe": "#ffffff", "Flash": "#ffff44", "Pulse": "#dd44ff",
-    "Wave": "#00ffff",   "Chase": "#e0e0e0", "Comete": "#ff8800",
-    "Etoile Filante": "#aaddff", "Rainbow": "#00ff88",
-    "Fire": "#ff4400",   "Bascule": "#44ccff",
-}  # legacy
-
-# Attributs DMX utilisés par chaque type d'effet  # legacy
-EFFECT_ATTRS = {
-    "Strobe":         [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Carré"},
-                       {"attr": "SHUTTER", "mode": "Absolu", "shape": "Carré"}],
-    "Flash":          [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Impulsion"},
-                       {"attr": "COULEUR", "mode": "Absolu", "shape": "Impulsion"}],
-    "Pulse":          [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Sinus"}],
-    "Wave":           [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Sinus décalé"}],
-    "Chase":          [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Chase"}],
-    "Comete":         [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Impulsion"}],
-    "Etoile Filante": [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Décroissant"}],
-    "Rainbow":        [{"attr": "COULEUR", "mode": "Absolu", "shape": "Arc-en-ciel"}],
-    "Fire":           [{"attr": "COULEUR", "mode": "Absolu", "shape": "Aléatoire"},
-                       {"attr": "DIMMER",  "mode": "Absolu", "shape": "Aléatoire"}],
-    "Bascule":        [{"attr": "DIMMER",  "mode": "Absolu", "shape": "Carré"},
-                       {"attr": "COULEUR", "mode": "Absolu", "shape": "Carré"}],
-}  # legacy
-
-# ── Nouveau modèle Attribut/Forme ─────────────────────────────────────────────
-CHANNEL_TYPES_ORDER = [
-    "Dim", "R", "G", "B", "W", "Strobe", "UV", "Pan", "Tilt", "Zoom",
-    "Iris", "Gobo1", "Gobo2", "Focus", "ColorWheel", "Shutter", "Speed",
-    "Mode", "Smoke", "Fan", "Ambre", "Orange", "PanFine", "TiltFine", "Prism",
-]
-
-SHAPES = [
-    ("Chase",           "chase"),
-    ("Toujours au max", "max"),
-    ("Toujours au min", "min"),
-    ("Phase 1",         "phase1"),
-    ("Phase 2",         "phase2"),
-    ("Phase 3",         "phase3"),
-    ("Sinusoïdale",     "sine"),
-    ("Pause",           "pause"),
-    ("Off",             "off"),
-    ("Son",             "sound"),
-]
-
-GROUP_DISPLAY_FALLBACK = {
-    "face":    "Groupe A",
-    "lat":     "Groupe B",
-    "contre":  "Groupe C",
-    "douche1": "Groupe D",
-    "douche2": "Groupe E",
-    "douche3": "Groupe F",
-    "public":  "Groupe G",
+FIXTURE_ATTRS = {
+    "Trad":        ["Dimmer"],
+    "PAR LED":     ["Dimmer", "R", "V", "B", "Strobe"],
+    "Barre LED":   ["Dimmer", "R", "V", "B"],
+    "Moving Head": ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"],
+    "Lyre":        ["Dimmer", "R", "V", "B", "Pan", "Tilt", "Zoom", "Gobo", "Strobe"],
+    "Strobe":      ["Dimmer", "Strobe"],
+    "Generic":     ["Dimmer"],
 }
 
-_TYPE_TO_ATTR  = {
-    "Strobe": "Strobe", "Flash": "Dim",  "Pulse": "Dim",  "Wave": "Dim",
-    "Chase":  "Dim",    "Comete":"Dim",  "Etoile Filante":"Dim",
-    "Rainbow":"R",      "Fire":  "Dim",  "Bascule":"Dim",
+FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
+
+# Migration des anciens noms (fichiers .tui sauvegardés avant la refonte)
+_FORME_COMPAT = {
+    "Chase": "Flash", "Phase 1": "Montée", "Phase 2": "Descente",
+    "Phase 3": "Triangle", "Sinusoïdale": "Sinus",
+    "Toujours au max": "Fixe", "Toujours au min": "Off",
+    "Son": "Audio", "Pause": "Fixe",
 }
 
-_TYPE_TO_SHAPE = {
-    "Strobe": "chase",  "Flash": "max",    "Pulse": "sine",   "Wave":  "phase2",
-    "Chase":  "chase",  "Comete":"chase",  "Etoile Filante":  "chase",
-    "Rainbow":"phase1", "Fire":  "sound",  "Bascule":"max",
+CIBLES_PRESET = ["Tous"]
+GROUPES       = ["A", "B", "C", "D", "E", "F", "G"]
+
+
+# ─── Styles ───────────────────────────────────────────────────────────────────
+
+_COMBO_STYLE = """
+    QComboBox {
+        background: #232323; color: #ddd;
+        border: 1px solid #333; border-radius: 4px;
+        padding: 4px 8px; font-size: 12px; min-height: 26px;
+    }
+    QComboBox:hover { border-color: #00d4ff; }
+    QComboBox::drop-down { border: none; width: 16px; }
+    QComboBox QAbstractItemView {
+        background: #232323; color: #ddd; border: 1px solid #00d4ff;
+        selection-background-color: #00d4ff;
+        selection-color: #000; outline: none;
+    }
+"""
+
+_DIALOG_STYLE = """
+    QDialog  { background: #0d0d0d; }
+    QWidget  { font-family: 'Segoe UI', Arial, sans-serif; color: #ddd; }
+    QLabel   { border: none; }
+    QFrame   { border: none; }
+""" + _COMBO_STYLE
+
+# ─── Paramètres "magiques" par type d'effet ────────────────────────────────
+
+_MAGIC_PARAMS = {
+    "Strobe":  {"key": "spread", "label": "DÉCALAGE",        "hint": "Ensemble ↔ Alternance"},
+    "Flash":   {"key": "spread", "label": "DÉCALAGE",        "hint": "Ensemble ↔ Alternance"},
+    "Chase":   {"key": "spread", "label": "ÉTALEMENT",       "hint": "Serré ↔ Étalé"},
+    "Pulse":   {"key": "spread", "label": "DÉCALAGE",        "hint": "Ensemble ↔ Vague"},
+    "Wave":    {"key": "spread", "label": "LONGUEUR D'ONDE", "hint": "Court ↔ Long"},
+    "Rainbow": {"key": "spread", "label": "LARGEUR",         "hint": "Étroit ↔ Large"},
+    "Fire":    {"key": "spread", "label": "VARIATION",       "hint": "Synchrone ↔ Aléatoire"},
+    "Bascule": {"key": "phase",  "label": "DÉCALAGE PHASE",  "hint": "0° ↔ 180°"},
+    "Comete":  {"key": "spread", "label": "TRAÎNE",          "hint": "Courte ↔ Longue"},
 }
 
-_TARGET_TO_TYPE = {
-    "all": "all", "even": "even", "odd": "odd",
-    "alternate": "all", "lr": "all", "rl": "all",
-}
+_SLIDER_STYLE = """
+    QSlider::groove:horizontal {
+        background: #1a1a1a; height: 4px; border-radius: 2px;
+    }
+    QSlider::handle:horizontal {
+        background: #00d4ff; width: 14px; height: 14px;
+        margin: -5px 0; border-radius: 7px; border: 2px solid #0d0d0d;
+    }
+    QSlider::sub-page:horizontal {
+        background: #00d4ff; height: 4px; border-radius: 2px;
+    }
+    QSlider::handle:horizontal:disabled { background: #2a2a2a; border-color: #1a1a1a; }
+    QSlider::sub-page:horizontal:disabled { background: #1e1e1e; }
+"""
 
-def _speed_label(speed: int) -> str:
-    if speed < 20: return "Très lent"
-    if speed < 40: return "Lent"
-    if speed < 60: return "Modéré"
-    if speed < 80: return "Rapide"
-    return "Très rapide"
-
-
-# ── Helpers nouveau modèle ─────────────────────────────────────────────────────
-
-def _get_available_attributes(projectors) -> list:
-    """Union des profils DMX du patch courant, dans l'ordre canonique."""
-    attrs = set()
-    for p in projectors:
-        profile = getattr(p, "_dmx_profile", [])
-        attrs.update(profile)
-    if not attrs:
-        try:
-            for p in projectors:
-                ft = getattr(p, "fixture_template", None)
-                if ft and "profile" in ft:
-                    attrs.update(ft["profile"])
-        except Exception:
-            pass
-    if not attrs:
-        attrs = {"Dim", "R", "G", "B", "Strobe"}
-    return [c for c in CHANNEL_TYPES_ORDER if c in attrs]
+_COMBO_STYLE_COMPACT = """
+    QComboBox {
+        background: #151515; color: #aaa;
+        border: 1px solid #252525; border-radius: 4px;
+        padding: 1px 6px; font-size: 10px;
+    }
+    QComboBox:hover { border-color: #00d4ff; }
+    QComboBox::drop-down { border: none; width: 12px; }
+    QComboBox QAbstractItemView {
+        background: #1a1a1a; color: #ccc; border: 1px solid #00d4ff;
+        selection-background-color: #003344; selection-color: #00d4ff;
+        outline: none; font-size: 10px;
+    }
+"""
 
 
-def _get_display_groups(projectors) -> dict:
-    """Retourne {group_key: display_name} pour chaque groupe présent dans le patch."""
-    seen = {}
-    for p in projectors:
-        g = p.group
-        if g not in seen:
-            seen[g] = GROUP_DISPLAY_FALLBACK.get(g, g.capitalize())
-    return seen
+# ─── Modèle de données ────────────────────────────────────────────────────────
 
+class EffectLayer:
+    """Données d'une couche d'effet (sérialisé en dict JSON dans LightClip)."""
 
-def _migrate_layer(layer: dict) -> dict:
-    """Convertit l'ancien format vers le nouveau modèle attribut/forme."""
-    if "attribute" in layer and "shape" in layer:
-        # Déjà nouveau format — compléter les champs manquants
+    def __init__(self):
+        self.attribute     = "Dimmer"
+        self.forme         = "Sinus"
+        self.target_preset = "Tous"
+        self.target_groups = []
+        self.speed     = 50    # vitesse du cycle 0-100
+        self.size      = 100   # amplitude 0-100
+        self.spread    = 0     # décalage de phase entre fixtures 0-100
+        self.phase     = 0     # décalage global de phase (interne, non exposé en UI)
+        self.fade      = 0     # adoucissement de la forme 0=dur 100=doux
+        self.direction = 1     # sens : 1=avant, -1=arrière, 0=bounce
+        self.color1 = "#ff0000"
+        self.color2 = "#0000ff"
+
+    def to_dict(self):
         return {
-            "attribute":     layer.get("attribute", "Dim"),
-            "shape":         layer.get("shape", "sine"),
-            "target_type":   layer.get("target_type", "all"),
-            "target_groups": layer.get("target_groups", []),
-            "speed":         layer.get("speed", 50),
-            "amplitude":     layer.get("amplitude", 100),
-            "val_max":       layer.get("val_max", 100),
-            "val_min":       layer.get("val_min", 0),
-            "muted":         layer.get("muted", False),
+            "attribute":     self.attribute,
+            "forme":         self.forme,
+            "target_preset": self.target_preset,
+            "target_groups": list(self.target_groups),
+            "speed":     self.speed,
+            "size":      self.size,
+            "spread":    self.spread,
+            "phase":     self.phase,
+            "fade":      self.fade,
+            "direction": self.direction,
+            "color1": self.color1,
+            "color2": self.color2,
         }
-    old_type   = layer.get("type", "Pulse")
-    old_target = layer.get("target", "all")
-    use_fixed  = layer.get("use_fixed_groups", False)
-    return {
-        "attribute":     _TYPE_TO_ATTR.get(old_type, "Dim"),
-        "shape":         _TYPE_TO_SHAPE.get(old_type, "sine"),
-        "target_type":   _TARGET_TO_TYPE.get(old_target, "all"),
-        "target_groups": layer.get("fixed_groups", []) if use_fixed else [],
-        "speed":         layer.get("speed", 50),
-        "amplitude":     layer.get("amplitude", 100),
-        "val_max":       100,
-        "val_min":       0,
-        "muted":         layer.get("muted", False),
-    }
 
-_MENU_STYLE = """
-QMenuBar {
-    background: #0a0a0a;
-    color: #ccc;
-    border-bottom: 1px solid #222;
-    padding: 2px 4px;
-    font-size: 12px;
-}
-QMenuBar::item { padding: 5px 12px; background: transparent; border-radius: 3px; }
-QMenuBar::item:selected { background: #1e1e1e; color: #fff; }
-QMenu {
-    background: #1a1a1a;
-    color: #e0e0e0;
-    border: 1px solid #00d4ff55;
-    padding: 4px;
-    font-size: 12px;
-}
-QMenu::item { padding: 7px 28px; border-radius: 3px; }
-QMenu::item:selected { background: #00d4ff; color: #000; }
-QMenu::separator { background: #333; height: 1px; margin: 4px 8px; }
-"""
+    @classmethod
+    def from_dict(cls, d):
+        layer = cls()
+        layer.attribute     = d.get("attribute",     "Dimmer")
+        forme               = d.get("forme",         "Sinus")
+        layer.forme         = _FORME_COMPAT.get(forme, forme)
+        if layer.forme not in FORMES:
+            layer.forme = "Sinus"
+        layer.target_preset = d.get("target_preset", "Tous")
+        layer.target_groups = list(d.get("target_groups", []))
+        layer.speed     = d.get("speed",  50)
+        layer.size      = d.get("size",   d.get("amplitude", 100))
+        layer.spread    = d.get("spread", 0)
+        layer.phase     = d.get("phase",  0)
+        layer.fade      = d.get("fade",   0)
+        layer.direction = d.get("direction", 1)
+        layer.color1 = d.get("color1", "#ff0000")
+        layer.color2 = d.get("color2", "#0000ff")
+        return layer
 
-_STYLE = """
-QDialog, QWidget  { background: #141414; color: #e0e0e0; font-family: 'Segoe UI', Arial; }
-QLabel            { border: none; background: transparent; }
-QLineEdit         { background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
-                    padding: 5px 8px; color: #fff; }
-QLineEdit:focus   { border-color: #00d4ff66; }
-QComboBox         { background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
-                    padding: 5px 8px; color: #e0e0e0; }
-QComboBox::drop-down { border: none; width: 18px; }
-QComboBox QAbstractItemView { background: #1e1e1e; color: #e0e0e0;
-    selection-background-color: #00d4ff; selection-color: #000; border: 1px solid #333; }
-QScrollArea       { border: none; }
-QScrollBar:vertical { background: #111; width: 8px; border-radius: 4px; }
-QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 4px; min-height: 20px; }
-QSlider::groove:horizontal { background: #2a2a2a; height: 5px; border-radius: 2px; }
-QSlider::handle:horizontal { background: #00d4ff; width: 14px; height: 14px;
-                              border-radius: 7px; margin: -5px 0; }
-QSlider::sub-page:horizontal { background: #00d4ff44; border-radius: 2px; }
-QPushButton       { background: #222; border: 1px solid #333; border-radius: 5px;
-                    padding: 5px 14px; color: #ccc; }
-QPushButton:hover { background: #282828; border-color: #00d4ff; color: #fff; }
-QPushButton:disabled { background: #1a1a1a; color: #444; border-color: #222; }
-QFrame[frameShape="4"] { background: #2a2a2a; }
-QSpinBox         { background: #1e1e1e; border: 1px solid #333; border-radius: 4px;
-                   padding: 2px 4px; color: #00d4ff; font-weight: bold; font-size: 11px; }
-QSpinBox::up-button, QSpinBox::down-button { width: 14px; background: #2a2a2a; border: none; }
-QSpinBox:focus   { border-color: #00d4ff66; }
-"""
+    @classmethod
+    def layers_from_builtin(cls, eff: dict) -> list:
+        result = []
+        for ld in eff.get("layers", []):
+            layer = cls()
+            layer.attribute     = ld.get("attribute",     "Dimmer")
+            layer.forme         = ld.get("forme",         "Sinus")
+            layer.target_preset = ld.get("target_preset", "Tous")
+            layer.target_groups = list(ld.get("target_groups", []))
+            layer.speed     = ld.get("speed",  50)
+            layer.size      = ld.get("size",   100)
+            layer.spread    = ld.get("spread", 0)
+            layer.phase     = ld.get("phase",  0)
+            layer.fade      = ld.get("fade",   0)
+            layer.direction = ld.get("direction", 1)
+            layer.color1 = ld.get("color1", "#ff0000")
+            layer.color2 = ld.get("color2", "#0000ff")
+            result.append(layer)
+        return result
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ──────────────────────────────────────────────────────────────────────────────
-def _eff_layers(eff: dict) -> list:
-    """Retourne la liste des couches d'un effet (compat legacy sans 'layers'), migrées."""
-    if "layers" in eff:
-        return [_migrate_layer(l) for l in copy.deepcopy(eff["layers"])]
-    raw = {
-        "type":             eff.get("type", "Pulse"),
-        "speed":            eff.get("speed", 50),
-        "amplitude":        eff.get("amplitude", 100),
-        "phase":            eff.get("phase", 0),
-        "fade":             eff.get("fade", 0),
-        "muted":            eff.get("muted", False),
-        "use_fixed_groups": eff.get("use_fixed_groups", False),
-        "fixed_groups":     eff.get("fixed_groups", []),
-        "target":           eff.get("target", "all"),
-        "color_mode":       eff.get("color_mode", "base"),
-        "custom_color":     eff.get("custom_color", "#ffffff"),
-    }
-    return [_migrate_layer(raw)]
+# ─── Potard rotatif ───────────────────────────────────────────────────────────
 
-
-def _dmx_info_for_type(eff_type: str):
-    """Retourne (canaux_dmx, formes) sous forme de texte pour affichage inline."""
-    attrs = EFFECT_ATTRS.get(eff_type, [])
-    if not attrs:
-        return "—", "—"
-    return (" · ".join(a["attr"] for a in attrs),
-            " · ".join(a["shape"] for a in attrs))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# KNOB WIDGET
-# ──────────────────────────────────────────────────────────────────────────────
-class KnobWidget(QWidget):
-    """Potentiomètre circulaire 42×50px — arc cyan proportionnel à la valeur."""
+class RotaryKnob(QWidget):
+    """Potard rotatif (0–100). Glisser verticalement ou molette."""
 
     valueChanged = Signal(int)
+    _S  = 54
+    _LH = 16
 
-    def __init__(self, label="", min_val=0, max_val=100, default=0, parent=None):
+    def __init__(self, label="", default=50, size=None, parent=None):
         super().__init__(parent)
-        self.setFixedSize(42, 50)
-        self._min   = min_val
-        self._max   = max_val
-        self._val   = max(min_val, min(max_val, default))
-        self._label = label
+        if size is not None:
+            self._S  = size
+            self._LH = max(14, size // 4)
+        self._value  = max(0, min(100, default))
+        self._label  = label
         self._drag_y = None
+        self._drag_v = None
+        self.setFixedSize(self._S, self._S + self._LH)
         self.setCursor(Qt.SizeVerCursor)
-        self.setToolTip(f"{label}: {self._val}")
+        self.setToolTip(f"{label}: {self._value}")
 
-    def value(self) -> int:
-        return self._val
+    @property
+    def value(self):
+        return self._value
 
-    def setValue(self, v: int):
-        v = max(self._min, min(self._max, int(v)))
-        if v != self._val:
-            self._val = v
-            self.setToolTip(f"{self._label}: {self._val}")
-            self.update()
+    def set_value(self, v):
+        v = max(0, min(100, int(v)))
+        if v != self._value:
+            self._value = v
+            self.setToolTip(f"{self._label}: {v}")
             self.valueChanged.emit(v)
+            self.update()
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_y = event.globalPosition().y()
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag_y = e.globalPosition().y()
+            self._drag_v = self._value
 
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, e):
         if self._drag_y is not None:
-            dy = self._drag_y - event.globalPosition().y()
-            self._drag_y = event.globalPosition().y()
-            rng = self._max - self._min
-            delta = int(dy / 80.0 * rng)
-            if delta != 0:
-                self.setValue(self._val + delta)
+            self.set_value(self._drag_v + int(self._drag_y - e.globalPosition().y()))
 
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, _e):
         self._drag_y = None
 
-    def wheelEvent(self, event):
-        delta = 1 if event.angleDelta().y() > 0 else -1
-        self.setValue(self._val + delta)
+    def wheelEvent(self, e):
+        self.set_value(self._value + (1 if e.angleDelta().y() > 0 else -1))
 
-    def paintEvent(self, event):
+    def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        knob_h = h - 14
-        cx, cy = w // 2, knob_h // 2
-        radius = min(cx, cy) - 3
+        S, cx, cy = self._S, self._S // 2, self._S // 2
+        r = S // 2 - 5
 
-        START_ANGLE = 225
-        SPAN = 270
-
-        # Background arc
-        pen = QPen(QColor("#2a2a2a"), 4, Qt.SolidLine, Qt.RoundCap)
-        p.setPen(pen)
-        p.drawArc(
-            int(cx - radius), int(cy - radius),
-            int(radius * 2), int(radius * 2),
-            int(START_ANGLE * 16), int(-SPAN * 16),
-        )
-
-        # Cyan arc proportional to value
-        rng = self._max - self._min
-        ratio = (self._val - self._min) / rng if rng else 0
-        cyan_span = int(SPAN * ratio)
-        if cyan_span > 0:
-            pen2 = QPen(QColor("#00d4ff"), 4, Qt.SolidLine, Qt.RoundCap)
-            p.setPen(pen2)
-            p.drawArc(
-                int(cx - radius), int(cy - radius),
-                int(radius * 2), int(radius * 2),
-                int(START_ANGLE * 16), int(-cyan_span * 16),
-            )
-
-        # Indicator dot
-        dot_angle_deg = START_ANGLE - cyan_span
-        dot_rad = math.radians(dot_angle_deg)
-        dot_x = cx + radius * math.cos(dot_rad)
-        dot_y = cy - radius * math.sin(dot_rad)
         p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(QColor("#00d4ff") if cyan_span > 0 else QColor("#555")))
-        p.drawEllipse(int(dot_x - 3), int(dot_y - 3), 6, 6)
+        p.setBrush(QBrush(QColor("#1c1c1c")))
+        p.drawEllipse(cx - S//2 + 2, cy - S//2 + 2, S - 4, S - 4)
 
-        # Value at centre
-        p.setPen(QPen(QColor("#e0e0e0")))
-        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
-        p.drawText(0, int(cy - radius * 0.4), w, int(radius * 0.9),
-                   Qt.AlignCenter, str(self._val))
+        rect = QRect(cx - r, cy - r, r * 2, r * 2)
+        p.setPen(QPen(QColor("#2e2e2e"), 5, Qt.SolidLine, Qt.RoundCap))
+        p.setBrush(Qt.NoBrush)
+        p.drawArc(rect, 225 * 16, -270 * 16)
 
-        # Label below
+        if self._value > 0:
+            p.setPen(QPen(QColor("#00d4ff"), 5, Qt.SolidLine, Qt.RoundCap))
+            p.drawArc(rect, 225 * 16, int(-270 * 16 * self._value / 100))
+
+        ang = math.radians(225.0 - 270.0 * self._value / 100.0)
+        dr  = r - 1
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#00d4ff")))
+        p.drawEllipse(QPoint(int(cx + dr * math.cos(ang)),
+                             int(cy - dr * math.sin(ang))), 4, 4)
+
+        p.setPen(QPen(QColor("#ffffff")))
+        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        p.drawText(QRect(0, cy - 9, S, 18), Qt.AlignCenter, str(self._value))
+
+        p.setPen(QPen(QColor("#666")))
         p.setFont(QFont("Segoe UI", 7))
-        p.setPen(QPen(QColor("#555")))
-        p.drawText(0, h - 14, w, 14, Qt.AlignCenter, self._label)
+        p.drawText(QRect(0, S + 1, S, self._LH - 1), Qt.AlignCenter, self._label)
         p.end()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# MINI PREVIEW
-# ──────────────────────────────────────────────────────────────────────────────
-class MiniPreviewWidget(QWidget):
-    """8 cercles animés montrant l'effet en temps réel (multi-couches)."""
+# ─── Sélecteur de cible ───────────────────────────────────────────────────────
 
-    N = 8
-    BASE = QColor(200, 100, 30)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(44)
-        self.setMinimumWidth(300)
-        self._layers = []
-        self._layer_states = []
-        self._colors = [QColor("#1a1a1a")] * self.N
-
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(33)
-
-    def set_config(self, cfg: dict):
-        """Compat legacy — wraps single config in a layers list."""
-        self.set_layers(_eff_layers(cfg) if cfg else [])
-
-    def set_layers(self, layers: list):
-        """Charge de nouvelles couches ET réinitialise tous les états (changement d'effet)."""
-        self._layers = layers
-        while len(self._layer_states) < len(layers):
-            self._layer_states.append({"state": 0, "brightness": 0.0, "brightness_dir": 1, "hue": 0, "angle": 0.0})
-        self._layer_states = self._layer_states[:len(layers)]
-        for st in self._layer_states:
-            st["state"] = 0
-            st["brightness"] = 0.0
-            st["brightness_dir"] = 1
-            st["hue"] = 0
-            st["angle"] = 0.0
-
-    def update_layers_config(self, layers: list):
-        """Met à jour les configs des couches SANS réinitialiser les états d'animation (édition live)."""
-        self._layers = layers
-        while len(self._layer_states) < len(layers):
-            self._layer_states.append({"state": 0, "brightness": 0.0, "brightness_dir": 1, "hue": 0, "angle": 0.0})
-        self._layer_states = self._layer_states[:len(layers)]
-
-    def _resolve(self, idx: int, cfg: dict, st: dict) -> QColor:
-        mode   = cfg.get("color_mode", "base")
-        custom = cfg.get("custom_color", "#ffffff")
-        if mode == "white":  return QColor(255, 255, 255)
-        if mode == "black":  return QColor(0, 0, 0)
-        if mode == "custom": return QColor(custom)
-        if mode == "fire":
-            return random.choice([QColor(255, 50, 0), QColor(255, 100, 0),
-                                   QColor(255, 150, 0), QColor(255, 200, 0)])
-        if mode == "rainbow":
-            return QColor.fromHsv((st["hue"] + idx * 30) % 360, 255, 220)
-        return QColor(self.BASE)
-
-    def _active(self, cfg: dict) -> list:
-        target = cfg.get("target", "all")
-        n = self.N
-        if target == "even": return [i for i in range(n) if i % 2 == 0]
-        if target == "odd":  return [i for i in range(n) if i % 2 == 1]
-        if target == "rl":   return list(reversed(range(n)))
-        return list(range(n))
-
-    def _compute_layer(self, cfg: dict, st: dict) -> list:
-        t         = cfg.get("type", "Pulse")
-        speed     = cfg.get("speed", 50)
-        amplitude = cfg.get("amplitude", 100)
-        phase     = cfg.get("phase", 0)
-        fade_v    = cfg.get("fade", 0)
-        target    = cfg.get("target", "all")
-        amp       = amplitude / 100.0
-        ph        = phase / 100.0
-        fd        = fade_v / 100.0
-        n         = self.N
-        colors    = [QColor(0, 0, 0)] * n
-        black     = QColor(0, 0, 0)
-        act       = self._active(cfg)
-        n_act     = len(act) or 1
-
-        if t in ("Strobe", "Flash"):
-            # Phase : décale le déclenchement de chaque projecteur
-            for idx2, i in enumerate(act):
-                offset = int(ph * (idx2 / n_act) * 4)
-                on = (st["state"] + offset) % 2 == 0
-                c  = self._resolve(i, cfg, st)
-                bv = amp
-                colors[i] = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv)) if on else black
-            st["state"] += 1
-
-        elif t == "Pulse":
-            # Angle continu (évite le rebond, permet le phasage inter-projecteur)
-            step = 1 + int(speed / 12)
-            st["angle"] = st.get("angle", 0.0) + step * math.pi / 100.0
-            for idx2, i in enumerate(act):
-                ang_i = st["angle"] + ph * (idx2 / n_act) * 2 * math.pi
-                norm  = (ang_i % (2 * math.pi)) / (2 * math.pi)
-                tri   = 1.0 - abs(2 * norm - 1)          # triangulaire 0→1→0
-                sine  = (1 - math.cos(ang_i)) / 2         # sinusoïde   0→1→0
-                b_base = tri * (1 - fd) + sine * fd        # blend fade
-                b_final = b_base * amp                     # amplitude totale
-                c = self._resolve(i, cfg, st)
-                colors[i] = QColor(int(c.red()*b_final), int(c.green()*b_final), int(c.blue()*b_final))
-
-        elif t == "Wave":
-            for idx2, i in enumerate(act):
-                ph_off = ph * (idx2 / n_act) * 50         # déphasage par projecteur
-                raw    = (st["state"] + idx2 * 15 + ph_off) % 100
-                tri    = abs(50 - raw) / 50.0
-                smooth = (1 - math.cos(raw / 100.0 * 2 * math.pi)) / 2
-                b_base  = tri * (1 - fd) + smooth * fd
-                b_final = b_base * amp
-                c = self._resolve(i, cfg, st)
-                colors[i] = QColor(int(c.red()*b_final), int(c.green()*b_final), int(c.blue()*b_final))
-            st["state"] += 1 + int(speed / 14)
-
-        elif t == "Chase":
-            if act:
-                trail = int(ph * n_act * 0.6)              # longueur de traîne (phase)
-                pos   = st["state"] % n_act
-                for idx2, i in enumerate(act):
-                    c    = self._resolve(i, cfg, st)
-                    dist = (pos - idx2) % n_act
-                    if dist == 0:
-                        brightness = amp
-                    elif trail > 0 and dist <= trail:
-                        t_frac = dist / (trail + 1)
-                        lin    = 1.0 - t_frac
-                        cos_f  = math.cos(t_frac * math.pi / 2)
-                        trail_b = lin * (1 - fd) + cos_f * fd
-                        brightness = trail_b * amp
-                    else:
-                        brightness = 0
-                    colors[i] = QColor(int(c.red()*brightness), int(c.green()*brightness), int(c.blue()*brightness))
-            st["state"] += 1
-
-        elif t == "Comete":
-            TAIL = 3
-            pos = st["state"] % (n + TAIL)
-            for i in range(n):
-                dist = pos - i
-                c = self._resolve(i, cfg, st)
-                if dist == 0:
-                    colors[i] = QColor(255, 255, 255)
-                elif 1 <= dist <= TAIL:
-                    blend = (1.0 - dist / (TAIL + 1)) * 0.88
-                    colors[i] = QColor(
-                        min(255, int(c.red()   + (255 - c.red())   * blend)),
-                        min(255, int(c.green() + (255 - c.green()) * blend)),
-                        min(255, int(c.blue()  + (255 - c.blue())  * blend)),
-                    )
-                else:
-                    colors[i] = QColor(int(c.red() * 0.1), int(c.green() * 0.1), int(c.blue() * 0.1))
-            st["state"] += 1
-
-        elif t == "Etoile Filante":
-            TAIL, total = 5, n + 9
-            pos = st["state"] % total
-            for i in range(n):
-                dist = pos - i
-                c = self._resolve(i, cfg, st)
-                if dist == 0:
-                    colors[i] = QColor(255, 255, 255)
-                elif 1 <= dist <= TAIL:
-                    tt = dist / TAIL
-                    blend = (math.sin((1.0 - tt) * math.pi / 2)) ** 1.5
-                    colors[i] = QColor(
-                        min(255, int(c.red()   + (255 - c.red())   * blend)),
-                        min(255, int(c.green() + (255 - c.green()) * blend)),
-                        min(255, int(c.blue()  + (255 - c.blue())  * blend)),
-                    )
-                else:
-                    colors[i] = QColor(int(c.red() * 0.08), int(c.green() * 0.08), int(c.blue() * 0.08))
-            st["state"] += 1
-
-        elif t == "Rainbow":
-            st["hue"] = (st["hue"] + 3 + int(speed / 30)) % 360
-            for i in range(n):
-                colors[i] = QColor.fromHsv((st["hue"] + i * 40) % 360, 255, 220)
-
-        elif t == "Fire":
-            for i in range(n):
-                colors[i] = self._resolve(i, cfg, st)
-
-        elif t == "Bascule":
-            ph = (st["state"] // 10) % 2
-            for i in range(n):
-                colors[i] = QColor(255, 255, 255) if i % 2 == ph else QColor(200, 100, 30)
-            st["state"] += 1
-
-        return colors
-
-    def _tick(self):
-        if not self._layers:
-            self._colors = [QColor("#111")] * self.N
-            self.update()
-            return
-
-        # MAX blend across all layers
-        final_r = [0] * self.N
-        final_g = [0] * self.N
-        final_b = [0] * self.N
-
-        for li, cfg in enumerate(self._layers):
-            if li >= len(self._layer_states):
-                self._layer_states.append({"state": 0, "brightness": 0.0, "brightness_dir": 1, "hue": 0})
-            if not cfg or not cfg.get("type"):
-                continue
-            if cfg.get("muted"):
-                continue
-            lc = self._compute_layer(cfg, self._layer_states[li])
-            for i, c in enumerate(lc):
-                final_r[i] = max(final_r[i], c.red())
-                final_g[i] = max(final_g[i], c.green())
-                final_b[i] = max(final_b[i], c.blue())
-
-        self._colors = [QColor(r, g, b) for r, g, b in zip(final_r, final_g, final_b)]
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        n = self.N
-        cell = w / n
-        r = min(cell * 0.38, h * 0.44)
-        cy = h // 2
-
-        grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0, QColor("#0d0d0d"))
-        grad.setColorAt(1, QColor("#111"))
-        p.fillRect(self.rect(), grad)
-
-        for i, color in enumerate(self._colors):
-            cx = int(cell * (i + 0.5))
-            if color.red() + color.green() + color.blue() > 60:
-                glow = QColor(color.red(), color.green(), color.blue(), 50)
-                p.setPen(Qt.NoPen)
-                p.setBrush(QBrush(glow))
-                p.drawEllipse(int(cx - r * 1.8), int(cy - r * 1.8), int(r * 3.6), int(r * 3.6))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(color))
-            p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
-            if color.red() + color.green() + color.blue() > 80:
-                hr = max(2, r * 0.28)
-                p.setBrush(QBrush(QColor(255, 255, 255, 100)))
-                p.drawEllipse(int(cx - hr * 0.6), int(cy - r * 0.55), int(hr), int(hr))
-        p.end()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MINI PLAN CANVAS
-# ──────────────────────────────────────────────────────────────────────────────
-_COLOR_ATTRS = {"R", "G", "B", "W", "Ambre", "Orange", "UV"}
-
-class MiniPlanCanvas(QWidget):
-    """Plan de feu miniature (~400×180px) animant l'effet courant en temps réel."""
-
-    def __init__(self, projectors_ref: list, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(120)
-        self.setMinimumWidth(300)
-        self._projectors = projectors_ref
-        self._layers     = []
-        self._states     = []   # un état par couche
-        self._colors     = {}   # {id(proj): QColor}
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(33)
-
-    def set_layers(self, layers: list):
-        """Charge de nouvelles couches ET réinitialise les états."""
-        self._layers = layers
-        self._states = [{"angle": 0.0, "chase_pos": 0, "tick": 0}
-                        for _ in layers]
-        self._colors = {}
-        self.update()
-
-    def update_layers_config(self, layers: list):
-        """Met à jour les couches sans réinitialiser les états (édition live)."""
-        self._layers = layers
-        while len(self._states) < len(layers):
-            self._states.append({"angle": 0.0, "chase_pos": 0, "tick": 0})
-        self._states = self._states[:len(layers)]
-
-    def _compute_shape(self, shape: str, st: dict, proj_idx: int,
-                       n_active: int, speed: int, amplitude: int,
-                       val_min: int, val_max: int) -> float:
-        n = max(n_active, 1)
-        vmin = val_min / 100.0
-        vmax = val_max / 100.0
-        amp  = amplitude / 100.0
-        step = max(0.005, speed / 2000.0)
-
-        if shape == "max":
-            return vmax * amp
-        if shape == "min":
-            return vmin * amp
-        if shape == "off":
-            return 0.0
-        if shape == "sine" or shape == "phase1":
-            v = (1.0 - math.cos(st["angle"])) / 2.0
-            return (vmin + (vmax - vmin) * v) * amp
-        if shape == "phase2":
-            offset = proj_idx * 2 * math.pi / 3
-            v = (1.0 - math.cos(st["angle"] + offset)) / 2.0
-            return (vmin + (vmax - vmin) * v) * amp
-        if shape == "phase3":
-            offset = proj_idx * 2 * math.pi / 6
-            v = (1.0 - math.cos(st["angle"] + offset)) / 2.0
-            return (vmin + (vmax - vmin) * v) * amp
-        if shape == "chase":
-            pos = st["chase_pos"] % n
-            return vmax * amp if proj_idx == pos else 0.0
-        if shape == "pause":
-            return vmin * amp
-        if shape == "sound":
-            return random.uniform(vmin, vmax) * amp
-        return 0.0
-
-    def _tick(self):
-        if not self._projectors or not self._layers:
-            self._colors = {}
-            self.update()
-            return
-
-        # Init accumulators par proj
-        final = {id(p): [0.0] for p in self._projectors}
-
-        for li, layer in enumerate(self._layers):
-            if layer.get("muted"):
-                continue
-            if li >= len(self._states):
-                self._states.append({"angle": 0.0, "chase_pos": 0, "tick": 0})
-            st = self._states[li]
-
-            target_type   = layer.get("target_type", "all")
-            target_groups = set(layer.get("target_groups", []))
-            speed     = layer.get("speed", 50)
-            amplitude = layer.get("amplitude", 100)
-            val_max   = layer.get("val_max", 100)
-            val_min   = layer.get("val_min", 0)
-            shape     = layer.get("shape", "sine")
-
-            # Déterminer les projecteurs actifs
-            active = []
-            for idx, p in enumerate(self._projectors):
-                if target_type == "even" and idx % 2 != 0:
-                    continue
-                if target_type == "odd" and idx % 2 != 1:
-                    continue
-                if target_type == "groups" and p.group not in target_groups:
-                    continue
-                active.append((idx, p))
-
-            n_active = len(active)
-            for order_idx, (glob_idx, p) in enumerate(active):
-                v = self._compute_shape(shape, st, order_idx, n_active,
-                                        speed, amplitude, val_min, val_max)
-                final[id(p)][0] = max(final[id(p)][0], v)
-
-            # Avancer l'état
-            step = max(0.005, speed / 2000.0)
-            st["angle"] += step
-            if st["angle"] > 2 * math.pi:
-                st["angle"] -= 2 * math.pi
-            st["tick"] += 1
-            if n_active > 0:
-                chase_speed = max(1, 8 - speed // 14)
-                if st["tick"] % chase_speed == 0:
-                    st["chase_pos"] = (st["chase_pos"] + 1) % n_active
-
-        # Construire les couleurs
-        self._colors = {}
-        for p in self._projectors:
-            v = final[id(p)][0]
-            iv = int(v * 255)
-            self._colors[id(p)] = QColor(iv, iv, iv)
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-
-        # Fond
-        p.fillRect(self.rect(), QColor("#0a0a0a"))
-
-        projs = self._projectors
-        if not projs:
-            p.setPen(QPen(QColor("#444")))
-            p.setFont(QFont("Segoe UI", 9))
-            p.drawText(self.rect(), Qt.AlignCenter, "Aucun projecteur dans le patch")
-            p.end()
-            return
-
-        # Calculer positions
-        MARGIN = 24
-        usable_w = w - 2 * MARGIN
-        usable_h = h - 2 * MARGIN - 16
-        radius = min(usable_w / max(len(projs), 1) * 0.38, 16, usable_h * 0.38)
-
-        pos_list = []
-        for i, proj in enumerate(projs):
-            cx = getattr(proj, "canvas_x", None)
-            cy = getattr(proj, "canvas_y", None)
-            if cx is not None and cy is not None:
-                px = int(MARGIN + cx * usable_w)
-                py = int(MARGIN + cy * usable_h)
-            else:
-                # Fallback : disposition linéaire
-                px = int(MARGIN + (i + 0.5) / len(projs) * usable_w)
-                py = h // 2 - 8
-            pos_list.append((px, py))
-
-        for i, proj in enumerate(projs):
-            px, py = pos_list[i]
-            color = self._colors.get(id(proj), QColor("#1a1a1a"))
-            brightness = (color.red() + color.green() + color.blue()) / 3
-
-            if brightness > 20:
-                glow = QColor(color.red(), color.green(), color.blue(), 40)
-                p.setPen(Qt.NoPen)
-                p.setBrush(QBrush(glow))
-                p.drawEllipse(int(px - radius * 1.8), int(py - radius * 1.8),
-                              int(radius * 3.6), int(radius * 3.6))
-
-            p.setPen(QPen(QColor("#333"), 1))
-            p.setBrush(QBrush(color))
-            p.drawEllipse(int(px - radius), int(py - radius),
-                          int(radius * 2), int(radius * 2))
-
-            # Label groupe : lettre du groupe (A/B/C/D/E/F)
-            grp = proj.group
-            display = GROUP_DISPLAY_FALLBACK.get(grp, grp.capitalize())
-            short = display[-1] if display else "?"
-            p.setPen(QPen(QColor("#666")))
-            p.setFont(QFont("Segoe UI", 7))
-            p.drawText(int(px - radius), int(py + radius + 2), int(radius * 2), 14,
-                       Qt.AlignCenter, short)
-
-        p.end()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# TARGET WIDGET
-# ──────────────────────────────────────────────────────────────────────────────
-class TargetWidget(QWidget):
-    """Boutons toggle inline : [Tous][Pair][Impair] + boutons groupes."""
+class TargetSelector(QWidget):
+    """Tous / Pair / Impair  +  Groupes A-G (multi-sélection)."""
 
     changed = Signal()
 
-    _BTN_STYLE = (
-        "QPushButton {{ background: {bg}; color: {fg}; border: 1px solid {bd};"
-        " border-radius: 3px; font-size: 10px; padding: 2px 6px; }}"
-        "QPushButton:hover {{ border-color: #00d4ff55; }}"
-    )
-
-    def __init__(self, display_groups: dict, parent=None):
-        """display_groups = {group_key: display_name}"""
+    def __init__(self, layer, parent=None):
         super().__init__(parent)
-        self._display_groups = display_groups
-        self._target_type    = "all"   # "all"|"even"|"odd"|"groups"
-        self._target_groups: set = set()
+        self._layer = layer
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
 
-        hl = QHBoxLayout(self)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(3)
-
-        # "Tous / Pair / Impair" — exclusifs
-        self._btn_all  = QPushButton("Tous")
-        self._btn_even = QPushButton("Pair")
-        self._btn_odd  = QPushButton("Impair")
-        for btn, key in [(self._btn_all, "all"), (self._btn_even, "even"),
-                         (self._btn_odd, "odd")]:
+        row1 = QHBoxLayout()
+        row1.setSpacing(2)
+        self._preset_btns = {}
+        for p in CIBLES_PRESET:
+            btn = QPushButton(p)
             btn.setCheckable(True)
-            btn.setFixedHeight(24)
-            btn.clicked.connect(lambda _, k=key: self._click_global(k))
-            hl.addWidget(btn)
+            btn.setFixedHeight(22)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setStyleSheet(self._btn_style())
+            btn.clicked.connect(lambda _=False, pp=p: self._on_preset(pp))
+            self._preset_btns[p] = btn
+            row1.addWidget(btn)
+        layout.addLayout(row1)
 
-        # Séparateur léger
+        row2 = QHBoxLayout()
+        row2.setSpacing(2)
+        self._group_btns = {}
+        for g in GROUPES:
+            btn = QPushButton(g)
+            btn.setCheckable(True)
+            btn.setFixedSize(24, 22)
+            btn.setStyleSheet(self._btn_style())
+            btn.clicked.connect(lambda _=False, gg=g: self._on_group(gg))
+            self._group_btns[g] = btn
+            row2.addWidget(btn)
+        row2.addStretch()
+        layout.addLayout(row2)
+        self._refresh_ui()
+
+    def _btn_style(self):
+        return """
+            QPushButton {
+                background: #222; color: #888;
+                border: 1px solid #333; border-radius: 3px;
+                font-size: 10px; padding: 0 2px;
+            }
+            QPushButton:checked {
+                background: #00d4ff; color: #000;
+                font-weight: bold; border-color: #00d4ff;
+            }
+            QPushButton:hover:!checked { background: #2e2e2e; }
+        """
+
+    def _on_preset(self, preset):
+        self._layer.target_preset = preset
+        self._layer.target_groups = []
+        self._refresh_ui()
+        self.changed.emit()
+
+    def _on_group(self, group):
+        if group in self._layer.target_groups:
+            self._layer.target_groups.remove(group)
+        else:
+            self._layer.target_groups.append(group)
+        self._layer.target_preset = "" if self._layer.target_groups else "Tous"
+        self._refresh_ui()
+        self.changed.emit()
+
+    def _refresh_ui(self):
+        for preset, btn in self._preset_btns.items():
+            btn.blockSignals(True)
+            btn.setChecked(preset == self._layer.target_preset)
+            btn.blockSignals(False)
+        for g, btn in self._group_btns.items():
+            btn.blockSignals(True)
+            btn.setChecked(g in self._layer.target_groups)
+            btn.blockSignals(False)
+
+
+# ─── Icônes de formes d'onde ──────────────────────────────────────────────────
+
+def _make_shape_icon(forme: str, w: int = 56, h: int = 26):
+    from PySide6.QtGui import QPixmap, QIcon
+    px = QPixmap(w, h)
+    px.fill(QColor("#1e1e1e"))
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing)
+
+    mg = 3
+    pw, ph = w - 2 * mg, h - 2 * mg - 1
+
+    def pt(xn, yn):
+        return QPoint(int(mg + xn * pw), int(mg + (1.0 - max(0.0, min(1.0, yn))) * ph))
+
+    def draw(pts, color="#00d4ff", dash=False):
+        style = Qt.DashLine if dash else Qt.SolidLine
+        p.setPen(QPen(QColor(color), 1.5, style, Qt.RoundCap, Qt.RoundJoin))
+        for i in range(len(pts) - 1):
+            p.drawLine(pts[i], pts[i + 1])
+
+    N = 64
+
+    if forme == "Sinus":
+        pts = [pt(i/N, (1 + math.sin(i/N * 2*math.pi * 2.5)) / 2) for i in range(N+1)]
+        draw(pts)
+
+    elif forme == "Flash":
+        pts = [pt(i/N, 1.0 if (int(i/N * 4) % 2 == 0) else 0.0) for i in range(N+1)]
+        draw(pts)
+
+    elif forme == "Triangle":
+        pts = [pt(i/N, 1.0 - abs(2 * ((i/N * 3) % 1.0) - 1)) for i in range(N+1)]
+        draw(pts)
+
+    elif forme == "Montée":
+        pts = [pt(i/N, (i/N * 3) % 1.0) for i in range(N+1)]
+        draw(pts)
+
+    elif forme == "Descente":
+        pts = [pt(i/N, 1.0 - (i/N * 3) % 1.0) for i in range(N+1)]
+        draw(pts)
+
+    elif forme == "Audio":
+        rng = _rnd.Random(7)
+        y, pts = 0.5, []
+        for i in range(N+1):
+            y = max(0.05, min(0.95, y + rng.uniform(-0.22, 0.22)))
+            pts.append(pt(i/N, y))
+        draw(pts, color="#ff8800")
+
+    elif forme == "Fixe":
+        draw([pt(0, 1.0), pt(1, 1.0)])
+
+    elif forme == "Off":
+        draw([pt(0, 0.0), pt(1, 0.0)], color="#555")
+
+    p.end()
+    return QIcon(px)
+
+
+_SHAPE_ICONS: dict = {}
+
+def _get_shape_icon(forme: str):
+    if forme not in _SHAPE_ICONS:
+        _SHAPE_ICONS[forme] = _make_shape_icon(forme)
+    return _SHAPE_ICONS[forme]
+
+
+# ─── Ligne d'une couche ───────────────────────────────────────────────────────
+
+class EffectLayerRow(QFrame):
+    """Une couche : [⠿] CANAL | FORME | CIBLE | Vitesse Taille Décalage Phase [✕]"""
+
+    delete_requested = Signal(object)
+    changed          = Signal()
+
+    def __init__(self, layer: EffectLayer, fixture_types: list, parent=None):
+        super().__init__(parent)
+        self.layer          = layer
+        self._fixture_types = fixture_types or ["PAR LED"]
+
+        self.setFixedHeight(104)
+        self.setObjectName("EffectLayerRow")
+        self.setStyleSheet("""
+            QFrame#EffectLayerRow {
+                background: #181818;
+                border: 1px solid #272727;
+                border-radius: 8px;
+            }
+            QFrame#EffectLayerRow:hover { border-color: #333; }
+        """)
+
+        main = QHBoxLayout(self)
+        main.setContentsMargins(10, 8, 10, 8)
+        main.setSpacing(10)
+
+        grip = QLabel("⠿")
+        grip.setStyleSheet("color: #2e2e2e; font-size: 18px;")
+        grip.setFixedWidth(14)
+        main.addWidget(grip)
+
+        # 1) Canal
+        col_a = self._col("CANAL")
+        self.attr_combo = QComboBox()
+        self.attr_combo.setFixedWidth(100)
+        self.attr_combo.setStyleSheet(_COMBO_STYLE)
+        self._fill_attrs()
+        self.attr_combo.currentTextChanged.connect(
+            lambda t: (setattr(self.layer, 'attribute', t), self.changed.emit()))
+        col_a.addWidget(self.attr_combo)
+        col_a.addStretch()
+        main.addLayout(col_a)
+        main.addWidget(self._vsep())
+
+        # 2) Forme
+        col_f = self._col("FORME")
+        self.forme_combo = QComboBox()
+        self.forme_combo.setFixedWidth(155)
+        self.forme_combo.setIconSize(QSize(56, 24))
+        self.forme_combo.setStyleSheet(_COMBO_STYLE + """
+            QComboBox { min-height: 30px; padding: 2px 6px; }
+            QComboBox QAbstractItemView::item { min-height: 30px; }
+        """)
+        for f in FORMES:
+            self.forme_combo.addItem(_get_shape_icon(f), f)
+        idx = self.forme_combo.findText(layer.forme)
+        self.forme_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.forme_combo.currentTextChanged.connect(
+            lambda t: (setattr(self.layer, 'forme', t), self.changed.emit()))
+        col_f.addWidget(self.forme_combo)
+        col_f.addStretch()
+        main.addLayout(col_f)
+        main.addWidget(self._vsep())
+
+        # 3) Cible
+        col_c = self._col("CIBLE")
+        self.target_sel = TargetSelector(layer)
+        self.target_sel.changed.connect(self.changed)
+        col_c.addWidget(self.target_sel)
+        col_c.addStretch()
+        main.addLayout(col_c)
+        main.addWidget(self._vsep())
+
+        # 4) Potards : Vitesse / Taille / Décalage / Phase
+        col_k = self._col("PARAMÈTRES")
+        k_row = QHBoxLayout()
+        k_row.setSpacing(8)
+        self.k_speed  = RotaryKnob("Vitesse",  layer.speed)
+        self.k_size   = RotaryKnob("Taille",   layer.size)
+        self.k_spread = RotaryKnob("Décalage", layer.spread)
+        self.k_phase  = RotaryKnob("Phase",    layer.phase)
+        self.k_speed.valueChanged.connect( lambda v: (setattr(layer, 'speed',  v), self.changed.emit()))
+        self.k_size.valueChanged.connect(  lambda v: (setattr(layer, 'size',   v), self.changed.emit()))
+        self.k_spread.valueChanged.connect(lambda v: (setattr(layer, 'spread', v), self.changed.emit()))
+        self.k_phase.valueChanged.connect( lambda v: (setattr(layer, 'phase',  v), self.changed.emit()))
+        for k in (self.k_speed, self.k_size, self.k_spread, self.k_phase):
+            k_row.addWidget(k)
+        col_k.addLayout(k_row)
+        col_k.addStretch()
+        main.addLayout(col_k)
+        main.addStretch()
+
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(22, 22)
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #444;
+                border: 1px solid #333; border-radius: 11px; font-size: 10px;
+            }
+            QPushButton:hover { color: #ff5555; border-color: #ff5555; }
+        """)
+        del_btn.clicked.connect(lambda: self.delete_requested.emit(self))
+        main.addWidget(del_btn, alignment=Qt.AlignTop | Qt.AlignRight)
+
+    def _col(self, title):
+        col = QVBoxLayout()
+        col.setSpacing(4)
+        col.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(title)
+        lbl.setStyleSheet("color: #444; font-size: 8px; font-weight: bold;")
+        col.addWidget(lbl)
+        return col
+
+    def _vsep(self):
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFixedWidth(1)
-        sep.setStyleSheet("background: #2a2a2a; border: none;")
-        hl.addWidget(sep)
+        sep.setStyleSheet("background: #242424;")
+        return sep
 
-        # Boutons groupes (multi-sélection)
-        self._grp_btns: dict = {}
-        for key, display in display_groups.items():
-            letter = display[-1] if display else key[0].upper()
-            btn = QPushButton(letter)
+    def _fill_attrs(self):
+        all_attrs: set = set()
+        for ft in self._fixture_types:
+            all_attrs.update(FIXTURE_ATTRS.get(ft, ["Dimmer"]))
+        ordered = [a for a in ATTR_ORDER if a in all_attrs]
+        extras  = sorted(all_attrs - set(ATTR_ORDER))
+        self.attr_combo.clear()
+        for a in ordered + extras:
+            self.attr_combo.addItem(a)
+        idx = self.attr_combo.findText(self.layer.attribute)
+        self.attr_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+
+# ─── Ligne compacte de couche supplémentaire ───────────────────────────────────
+
+class _CompactLayerRow(QFrame):
+    """Couche supplémentaire complète : [Cible] [Attr] [Forme] [→←↔] [×]"""
+
+    deleted = Signal(object)
+    changed = Signal()
+
+    _ATTRS   = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan", "Tilt", "Gobo", "Permut"]
+    _FORMES  = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe"]
+    _CIBLES  = ["Tous", "A", "B", "C", "D", "E", "F", "G"]
+    _SENS    = [(1, "→"), (-1, "←"), (0, "↔")]
+
+    _SENS_BTN_STYLE = """
+        QPushButton {{
+            background: {bg}; color: {fg};
+            border: 1px solid {bd}; border-radius: 3px;
+            font-size: 10px; font-weight: bold;
+        }}
+        QPushButton:hover {{ background: #1a1a1a; }}
+    """
+
+    def __init__(self, layer: EffectLayer, parent=None):
+        super().__init__(parent)
+        self.layer = layer
+        self.setFixedHeight(38)
+        self.setObjectName("CLR")
+        self.setStyleSheet("""
+            QFrame#CLR {
+                background: #0e0e0e;
+                border: 1px solid #1e1e1e;
+                border-radius: 6px;
+            }
+        """)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 0, 6, 0)
+        lay.setSpacing(5)
+
+        # ── Cible ─────────────────────────────────────────────────────────────
+        self._cible = QComboBox()
+        self._cible.addItems(self._CIBLES)
+        cur_cible = layer.target_preset if layer.target_preset in self._CIBLES else (
+            layer.target_groups[0] if layer.target_groups else "Tous"
+        )
+        self._cible.setCurrentText(cur_cible)
+        self._cible.setFixedSize(58, 22)
+        self._cible.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._cible.currentTextChanged.connect(self._on_cible)
+        lay.addWidget(self._cible)
+
+        # ── Attr ──────────────────────────────────────────────────────────────
+        self._attr = QComboBox()
+        self._attr.addItems(self._ATTRS)
+        self._attr.setCurrentText(layer.attribute)
+        self._attr.setFixedSize(60, 22)
+        self._attr.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._attr.currentTextChanged.connect(self._on_attr)
+        lay.addWidget(self._attr)
+
+        # ── Forme ─────────────────────────────────────────────────────────────
+        self._forme = QComboBox()
+        self._forme.addItems(self._FORMES)
+        t = layer.forme if layer.forme in self._FORMES else "Sinus"
+        self._forme.setCurrentText(t)
+        self._forme.setFixedSize(76, 22)
+        self._forme.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._forme.currentTextChanged.connect(self._on_forme)
+        lay.addWidget(self._forme)
+
+        # ── Sens ──────────────────────────────────────────────────────────────
+        self._sens_btns = {}
+        sens_layout = QHBoxLayout()
+        sens_layout.setSpacing(2)
+        sens_layout.setContentsMargins(0, 0, 0, 0)
+        for val, sym in self._SENS:
+            btn = QPushButton(sym)
+            btn.setFixedSize(22, 22)
             btn.setCheckable(True)
-            btn.setFixedSize(24, 24)
-            btn.setToolTip(display)
-            btn.clicked.connect(lambda _, k=key: self._click_group(k))
-            hl.addWidget(btn)
-            self._grp_btns[key] = btn
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setChecked(val == getattr(layer, 'direction', 1))
+            self._sens_btns[val] = btn
+            btn.clicked.connect(lambda _=False, v=val: self._on_sens(v))
+            sens_layout.addWidget(btn)
+        self._refresh_sens_style()
+        lay.addLayout(sens_layout)
 
-        self._refresh_styles()
+        lay.addStretch()
 
-    def _click_global(self, key: str):
-        self._target_type   = key
-        self._target_groups = set()
-        self._refresh_styles()
-        self.changed.emit()
+        # ── Supprimer ─────────────────────────────────────────────────────────
+        del_btn = QPushButton("×")
+        del_btn.setFixedSize(20, 20)
+        del_btn.setCursor(Qt.PointingHandCursor)
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a0808; color: #5a2222;
+                border: 1px solid #2a1212; border-radius: 4px;
+                font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover { background: #2a1010; color: #ff5555; border-color: #551111; }
+        """)
+        del_btn.clicked.connect(lambda: self.deleted.emit(self))
+        lay.addWidget(del_btn)
 
-    def _click_group(self, key: str):
-        self._target_type = "groups"
-        if key in self._target_groups:
-            self._target_groups.discard(key)
+    def _refresh_sens_style(self):
+        cur = getattr(self.layer, 'direction', 1)
+        for val, btn in self._sens_btns.items():
+            if val == cur:
+                ss = self._SENS_BTN_STYLE.format(bg="#001a2a", fg="#00d4ff", bd="#004466")
+            else:
+                ss = self._SENS_BTN_STYLE.format(bg="#111", fg="#333", bd="#1e1e1e")
+            btn.setStyleSheet(ss)
+
+    def _on_cible(self, v):
+        if v in ("Tous", "Pair", "Impair"):
+            self.layer.target_preset = v
+            self.layer.target_groups = []
         else:
-            self._target_groups.add(key)
-        if not self._target_groups:
-            self._target_type = "all"
-        self._refresh_styles()
+            self.layer.target_preset = ""
+            self.layer.target_groups = [v]
         self.changed.emit()
 
-    def _refresh_styles(self):
-        def _style(active):
-            if active:
-                return self._BTN_STYLE.format(bg="#00d4ff22", fg="#00d4ff",
-                                               bd="#00d4ff66")
-            return self._BTN_STYLE.format(bg="#1a1a1a", fg="#666", bd="#333")
+    def _on_attr(self, v):
+        self.layer.attribute = v
+        self.changed.emit()
 
-        self._btn_all.setChecked(self._target_type == "all")
-        self._btn_even.setChecked(self._target_type == "even")
-        self._btn_odd.setChecked(self._target_type == "odd")
-        self._btn_all.setStyleSheet(_style(self._target_type == "all"))
-        self._btn_even.setStyleSheet(_style(self._target_type == "even"))
-        self._btn_odd.setStyleSheet(_style(self._target_type == "odd"))
+    def _on_forme(self, v):
+        self.layer.forme = v
+        self.changed.emit()
 
-        for key, btn in self._grp_btns.items():
-            active = (self._target_type == "groups"
-                      and key in self._target_groups)
-            btn.setChecked(active)
-            btn.setStyleSheet(_style(active))
-
-    def target_type(self) -> str:
-        return self._target_type
-
-    def target_groups(self) -> list:
-        return list(self._target_groups)
-
-    def set_value(self, target_type: str, target_groups: list):
-        self._target_type   = target_type
-        self._target_groups = set(target_groups)
-        self._refresh_styles()
+    def _on_sens(self, val: int):
+        self.layer.direction = val
+        for v, btn in self._sens_btns.items():
+            btn.blockSignals(True)
+            btn.setChecked(v == val)
+            btn.blockSignals(False)
+        self._refresh_sens_style()
+        self.changed.emit()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PERSISTENCE
-# ──────────────────────────────────────────────────────────────────────────────
-def _load_user_effects() -> list:
-    try:
-        if EFFECTS_FILE.exists():
-            data = json.loads(EFFECTS_FILE.read_text(encoding="utf-8"))
-            for e in data:
-                e["builtin"] = False
-            return data
-    except Exception:
-        pass
-    return []
+# ─── Symboles de formes ───────────────────────────────────────────────────────
 
-def _save_user_effects(effects: list):
-    custom = [e for e in effects if not e.get("builtin", False)]
-    try:
-        EFFECTS_FILE.write_text(json.dumps(custom, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+_FORME_SYMBOLS = {
+    "Sinus":    "∿",
+    "Flash":    "⌇",
+    "Triangle": "△",
+    "Montée":   "↗",
+    "Descente": "↘",
+    "Audio":    "♪",
+    "Fixe":     "━",
+}
+
+# ─── Roue de couleurs ─────────────────────────────────────────────────────────
+
+class ColorWheel(QWidget):
+    """Roue de couleurs compacte (Hue + Saturation). Valeur fixée à 1.0."""
+
+    colorChanged = Signal(QColor)
+
+    def __init__(self, color=None, parent=None):
+        super().__init__(parent)
+        c = color or QColor("#ff0000")
+        h = c.hsvHueF()
+        self._hue = max(0.0, h)
+        self._sat = c.hsvSaturationF()
+        self._dragging = False
+        self._R = 52
+        d = self._R * 2 + 8
+        self.setFixedSize(d, d)
+        self.setCursor(Qt.CrossCursor)
+        self.setToolTip("Cliquer / glisser pour choisir la couleur")
+
+    # ── Accès couleur ─────────────────────────────────────────────────────────
+
+    def color(self) -> QColor:
+        return QColor.fromHsvF(self._hue, self._sat, 1.0)
+
+    def set_color(self, c: QColor):
+        h = c.hsvHueF()
+        self._hue = max(0.0, h)
+        self._sat = c.hsvSaturationF()
+        self.update()
+
+    # ── Conversion position ↔ HS ──────────────────────────────────────────────
+
+    def _cx(self): return self.width() // 2
+    def _cy(self): return self.height() // 2
+
+    def _pos_to_hs(self, x, y):
+        dx = x - self._cx()
+        dy = y - self._cy()
+        dist = math.sqrt(dx * dx + dy * dy)
+        sat = min(1.0, dist / self._R)
+        hue = (math.atan2(-dy, dx) / (2 * math.pi)) % 1.0
+        return hue, sat
+
+    def _hs_to_pos(self):
+        angle = self._hue * 2 * math.pi
+        dist = self._sat * self._R
+        return self._cx() + dist * math.cos(angle), self._cy() - dist * math.sin(angle)
+
+    # ── Souris ────────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._dragging = True
+            self._update_from_pos(e.position().x(), e.position().y())
+
+    def mouseMoveEvent(self, e):
+        if self._dragging:
+            self._update_from_pos(e.position().x(), e.position().y())
+
+    def mouseReleaseEvent(self, _e):
+        self._dragging = False
+
+    def _update_from_pos(self, x, y):
+        h, s = self._pos_to_hs(x, y)
+        self._hue = h
+        self._sat = s
+        self.update()
+        self.colorChanged.emit(self.color())
+
+    # ── Peinture ──────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        cx, cy, r = self._cx(), self._cy(), self._R
+
+        # ── Dégradé conique (teintes) ──────────────────────────────────────
+        cg = QConicalGradient(cx, cy, 0)
+        hue_stops = [
+            (0/6, QColor(255, 0,   0)),
+            (1/6, QColor(255, 255, 0)),
+            (2/6, QColor(0,   255, 0)),
+            (3/6, QColor(0,   255, 255)),
+            (4/6, QColor(0,   0,   255)),
+            (5/6, QColor(255, 0,   255)),
+            (1.0, QColor(255, 0,   0)),
+        ]
+        for pos, col in hue_stops:
+            cg.setColorAt(pos, col)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(cg))
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+
+        # ── Dégradé radial blanc (saturation) ─────────────────────────────
+        rg = QRadialGradient(cx, cy, r)
+        rg.setColorAt(0, QColor(255, 255, 255, 255))
+        rg.setColorAt(1, QColor(255, 255, 255, 0))
+        p.setBrush(QBrush(rg))
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+
+        # ── Bordure ───────────────────────────────────────────────────────
+        p.setPen(QPen(QColor("#1a1a1a"), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+
+        # ── Curseur ───────────────────────────────────────────────────────
+        px, py = self._hs_to_pos()
+        sel = self.color()
+        # Halo sombre si couleur claire
+        lum = 0.2126 * sel.redF() + 0.7152 * sel.greenF() + 0.0722 * sel.blueF()
+        ring_col = QColor("#000000") if lum > 0.5 else QColor("#ffffff")
+        p.setPen(QPen(ring_col, 2))
+        p.setBrush(QBrush(sel))
+        p.drawEllipse(int(px - 6), int(py - 6), 12, 12)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# DIALOG
-# ──────────────────────────────────────────────────────────────────────────────
-class EffectEditorDialog(QDialog):
-    """Editeur d'effets — liste + formulaire + preview live"""
+# ─── Prévisualisation mini fixtures ───────────────────────────────────────────
 
-    effect_assigned = Signal(int, dict)
+class MiniFixturePreview(QWidget):
+    """Barre animée : N colonnes colorées représentant les fixtures en temps réel."""
 
-    CATEGORIES = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur",
-                  "Spécial", "Personnalisés"]
+    def __init__(self, n=8, parent=None):
+        super().__init__(parent)
+        self._n      = max(1, n)
+        self._levels = [0.0] * self._n
+        self._colors = [QColor(255, 255, 255)] * self._n
+        self.setFixedHeight(44)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def __init__(self, main_window):
-        super().__init__(main_window)
-        self._mw         = main_window
-        self._all        = list(BUILTIN_EFFECTS) + _load_user_effects()
-
-        existing_names = {e["name"] for e in self._all}
-        for cfg in getattr(main_window, "_button_effect_configs", {}).values():
-            name = cfg.get("name", "")
-            if name and name not in existing_names:
-                entry = dict(cfg)
-                entry.setdefault("category", "Personnalisés")
-                entry["builtin"] = False
-                self._all.append(entry)
-                existing_names.add(name)
-
-        # Snapshot des assignations au moment de l'ouverture (pour "Charger les défauts")
-        self._initial_assignments = {
-            k: dict(v) for k, v in
-            getattr(main_window, "_button_effect_configs", {}).items()
-        }
-
-        self._sel            = 0
-        self._dirty          = False
-        self._custom_hex     = "#ffffff"
-        self._ign            = False
-        self._undo_stack     = []
-        self._working_layers = []   # couches de l'effet en cours d'édition
-        self._cur_layer      = 0   # index de la couche sélectionnée
-
-        # Nouveau modèle : attributs disponibles et groupes depuis le patch
-        projs = getattr(main_window, "projectors", [])
-        self._available_attrs = _get_available_attributes(projs) or ["Dim"]
-        self._display_groups  = _get_display_groups(projs)
-
-        self.setWindowTitle("Editeur d'effets")
-        self.setWindowFlags(Qt.Window | Qt.WindowMaximizeButtonHint
-                            | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
-        self.setStyleSheet(_STYLE)
-        self._build_ui()
-        self.showMaximized()
-        if self._all:
-            self._select(0)
-
-    # ── UNDO ──────────────────────────────────────────────────────────────────
-
-    def _push_undo(self):
-        self._undo_stack.append(copy.deepcopy(self._all))
-        if len(self._undo_stack) > 20:
-            self._undo_stack.pop(0)
-
-    def _undo(self):
-        if not self._undo_stack:
+    def set_levels(self, levels: list, colors: list):
+        n = min(len(levels), len(colors))
+        if n == 0:
             return
-        self._all = self._undo_stack.pop()
-        _save_user_effects(self._all)
-        self._rebuild_list()
-        new_sel = min(self._sel, len(self._all) - 1)
-        if self._all:
-            self._select(new_sel)
+        self._n      = n
+        self._levels = list(levels[:n])
+        self._colors = list(colors[:n])
+        self.update()
 
-    # ── ASSIGNATION HELPERS ───────────────────────────────────────────────────
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        mg, gap = 3, 2
+        n = self._n
+        bar_w = max(3, (w - 2 * mg - (n - 1) * gap) // n)
+        inner_h = h - 2 * mg
 
-    def _get_assigned_btns(self, eff_name: str) -> list:
-        """Retourne la liste de TOUS les indices de boutons assignés à cet effet."""
-        if not eff_name:
-            return []
-        result = []
-        for i in range(len(self._mw.effect_buttons)):
-            if self._mw._button_effect_configs.get(i, {}).get("name", "") == eff_name:
-                result.append(i)
-        return result
+        for i in range(n):
+            level = max(0.0, min(1.0, self._levels[i] if i < len(self._levels) else 0.0))
+            color = self._colors[i] if i < len(self._colors) else QColor(255, 255, 255)
+            x = mg + i * (bar_w + gap)
 
-    def _get_assigned_btn(self, eff_name: str) -> int:
-        btns = self._get_assigned_btns(eff_name)
-        return btns[0] if btns else -1
+            # Slot de fond
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(18, 18, 18))
+            p.drawRoundedRect(x, mg, bar_w, inner_h, 2, 2)
 
-    # ── UI ────────────────────────────────────────────────────────────────────
+            # Barre colorée
+            bar_h = max(0, int(inner_h * level))
+            if bar_h > 0:
+                c = QColor(color)
+                # Dégradé lumineux : fond sombre, haut coloré
+                grad_y = mg + inner_h - bar_h
+                from PySide6.QtGui import QLinearGradient
+                grad = QLinearGradient(x, grad_y, x, mg + inner_h)
+                grad.setColorAt(0, c)
+                dark = QColor(int(c.red() * 0.25), int(c.green() * 0.25), int(c.blue() * 0.25))
+                grad.setColorAt(1, dark)
+                p.setBrush(QBrush(grad))
+                p.drawRoundedRect(x, grad_y, bar_w, bar_h, 2, 2)
+        p.end()
+
+
+# ─── Fonction d'onde (module-level) ──────────────────────────────────────────
+
+def _layer_wave(forme: str, x: float) -> float:
+    """Valeur 0-1 de la forme pour position x dans le cycle."""
+    if forme == "Sinus":      return (math.sin(2 * math.pi * x) + 1) / 2
+    elif forme == "Flash":    return 1.0 if x < 0.5 else 0.0
+    elif forme == "Triangle": return 1.0 - abs(2 * x - 1)
+    elif forme == "Montée":   return x
+    elif forme == "Descente": return 1.0 - x
+    elif forme == "Fixe":     return 1.0
+    return 0.0
+
+
+# ─── Waveform Canvas ──────────────────────────────────────────────────────────
+
+class WaveformCanvas(QWidget):
+    """Courbe animée (~110×30 px) pour une couche — mise à jour via set_time()."""
+
+    _ATTR_COLORS = {
+        "Dimmer": "#00d4ff", "Strobe": "#cccccc",
+        "R": "#ff4444",      "V": "#44dd44",    "B": "#4488ff",
+        "RGB": "#ffaa44",    "Permut": "#ff44ff",
+        "Pan": "#ffaa00",    "Tilt": "#ff8800",  "Gobo": "#aa44ff",
+    }
+
+    def __init__(self, layer, parent=None):
+        super().__init__(parent)
+        self._layer = layer
+        self._t     = 0.0
+        self.setFixedSize(110, 30)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def set_time(self, t: float):
+        self._t = t
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        mg = 3
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(8, 8, 8))
+        p.drawRoundedRect(0, 0, w, h, 3, 3)
+
+        layer  = self._layer
+        N      = w - 2 * mg
+        freq   = 0.3 + layer.speed / 100.0 * 3.5
+        fade_f = getattr(layer, 'fade', 0) / 100.0
+        attr   = layer.attribute
+
+        if attr == "RGB":
+            col = QColor(getattr(layer, 'color1', '#ffaa44'))
+        elif attr == "Permut":
+            col = QColor(getattr(layer, 'color1', '#ff44ff'))
+        else:
+            col = QColor(self._ATTR_COLORS.get(attr, "#00d4ff"))
+
+        pts = []
+        for xi in range(N):
+            xn = xi / max(N - 1, 1)
+            x  = (freq * self._t + xn * 2) % 1.0
+            if layer.forme == "Audio":
+                rng = _rnd.Random(int(self._t * 12) * 100 + xi)
+                raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
+            else:
+                raw = _layer_wave(layer.forme, x)
+            if fade_f > 0:
+                sin_v = (math.sin(2 * math.pi * x) + 1) / 2
+                raw   = raw * (1 - fade_f) + sin_v * fade_f
+            y = mg + int((1.0 - raw) * (h - 2 * mg))
+            pts.append(QPoint(mg + xi, y))
+
+        if pts:
+            p.setPen(QPen(col, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(Qt.NoBrush)
+            for i in range(len(pts) - 1):
+                p.drawLine(pts[i], pts[i + 1])
+        p.end()
+
+
+# ─── Carte d'une couche ───────────────────────────────────────────────────────
+
+class LayerCard(QFrame):
+    """Couche d'effet : waveform animée + attr/forme/cible + 4 mini-potards + couleurs."""
+
+    deleted = Signal(object)
+    changed = Signal()
+
+    _ATTRS  = ["Dimmer", "R", "V", "B", "RGB", "Strobe", "Pan", "Tilt", "Gobo", "Permut"]
+    _FORMES = ["Sinus", "Flash", "Triangle", "Montée", "Descente", "Audio", "Fixe", "Off"]
+    _CIBLES = ["Tous", "A", "B", "C", "D", "E", "F", "G"]
+    _ATTR_COLORS = WaveformCanvas._ATTR_COLORS
+
+    _PARAM_STYLE = """
+        QLabel { color: #2a2a2a; font-size: 7px; font-weight: bold; letter-spacing: 1px; }
+    """
+
+    def __init__(self, layer, parent=None):
+        super().__init__(parent)
+        self.layer = layer
+        self._build_ui()
+
+    def _accent(self):
+        return self._ATTR_COLORS.get(self.layer.attribute, "#333333")
+
+    def _apply_frame_style(self):
+        a = self._accent()
+        self.setStyleSheet(f"""
+            QFrame#LCard {{
+                background: #111111;
+                border: 1px solid #1c1c1c;
+                border-left: 3px solid {a};
+                border-radius: 7px;
+            }}
+            QFrame#LCard:hover {{ border-color: #252525; border-left-color: {a}; }}
+        """)
 
     def _build_ui(self):
+        self.setObjectName("LCard")
+        self._apply_frame_style()
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 7, 8, 7)
+        outer.setSpacing(5)
+
+        # ── Row 1 : Attr · Forme · Wave · Target · Colors · Del ───────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(5)
+
+        self._attr_cb = QComboBox()
+        self._attr_cb.addItems(self._ATTRS)
+        self._attr_cb.setCurrentText(self.layer.attribute)
+        self._attr_cb.setFixedSize(72, 22)
+        self._attr_cb.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._attr_cb.currentTextChanged.connect(self._on_attr)
+        row1.addWidget(self._attr_cb)
+
+        self._forme_cb = QComboBox()
+        self._forme_cb.addItems(self._FORMES)
+        t = self.layer.forme if self.layer.forme in self._FORMES else "Sinus"
+        self._forme_cb.setCurrentText(t)
+        self._forme_cb.setFixedSize(82, 22)
+        self._forme_cb.setStyleSheet(_COMBO_STYLE_COMPACT)
+        self._forme_cb.currentTextChanged.connect(self._on_forme)
+        row1.addWidget(self._forme_cb)
+
+        self._wave = WaveformCanvas(self.layer)
+        row1.addWidget(self._wave)
+
+        row1.addStretch()
+
+        # Boutons SENS
+        _sens_style = (
+            "QPushButton{{background:{bg};color:{fg};"
+            "border:1px solid {bd};border-radius:3px;"
+            "font-size:10px;font-weight:bold;}}"
+            "QPushButton:hover{{border-color:#444;}}"
+        )
+        self._sens_btns = {}
+        cur_dir = getattr(self.layer, 'direction', 1)
+        for dval, dlabel in [(1, "→"), (-1, "←"), (0, "↔")]:
+            sb = QPushButton(dlabel)
+            sb.setFixedSize(22, 22)
+            sb.setCheckable(True)
+            sb.setChecked(dval == cur_dir)
+            sb.setCursor(Qt.PointingHandCursor)
+            on_ss  = _sens_style.format(bg="#001a2a", fg="#00d4ff", bd="#004466")
+            off_ss = _sens_style.format(bg="#0c0c0c", fg="#444",    bd="#1c1c1c")
+            sb.setStyleSheet(on_ss if dval == cur_dir else off_ss)
+            sb.clicked.connect(lambda _=False, v=dval: self._on_sens(v))
+            self._sens_btns[dval] = sb
+            row1.addWidget(sb)
+
+        self._col1_btn = QPushButton()
+        self._col1_btn.setFixedSize(22, 22)
+        self._col1_btn.setCursor(Qt.PointingHandCursor)
+        self._col1_btn.clicked.connect(self._on_color1)
+        row1.addWidget(self._col1_btn)
+
+        self._col2_btn = QPushButton()
+        self._col2_btn.setFixedSize(22, 22)
+        self._col2_btn.setCursor(Qt.PointingHandCursor)
+        self._col2_btn.clicked.connect(self._on_color2)
+        row1.addWidget(self._col2_btn)
+
+        del_btn = QPushButton("×")
+        del_btn.setFixedSize(20, 20)
+        del_btn.setCursor(Qt.PointingHandCursor)
+        del_btn.setStyleSheet("""
+            QPushButton { background:#0d0606; color:#2e1010; border:1px solid #180c0c;
+                          border-radius:4px; font-size:11px; font-weight:bold; }
+            QPushButton:hover { color:#ff5555; border-color:#551111; background:#1a0808; }
+        """)
+        del_btn.clicked.connect(lambda: self.deleted.emit(self))
+        row1.addWidget(del_btn)
+
+        outer.addLayout(row1)
+
+        # ── Row 2 : 2 sliders VITESSE / AMPLITUDE ────────────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+
+        self._sl_speed, self._vl_speed = self._mk_slider("VIT", self.layer.speed)
+        self._sl_amp,   self._vl_amp   = self._mk_slider("AMP", self.layer.size)
+
+        self._sl_speed.valueChanged.connect(lambda v: (setattr(self.layer, 'speed', v), self._vl_speed.setText(str(v)), self.changed.emit()))
+        self._sl_amp.valueChanged.connect(  lambda v: (setattr(self.layer, 'size',  v), self._vl_amp.setText(str(v)),   self.changed.emit()))
+
+        for container in self._slider_containers:
+            row2.addWidget(container, 1)
+
+        outer.addLayout(row2)
+
+        # ── Row 3 : Cible (pills multi-select) ────────────────────────────────
+        row3 = QHBoxLayout()
+        row3.setSpacing(3)
+
+        _cible_on  = ("QPushButton{background:#001a2a;color:#00d4ff;border:1px solid #004466;"
+                      "border-radius:3px;font-size:9px;font-weight:bold;padding:0 5px;}"
+                      "QPushButton:hover{border-color:#006688;}")
+        _cible_off = ("QPushButton{background:#0c0c0c;color:#444;border:1px solid #1c1c1c;"
+                      "border-radius:3px;font-size:9px;font-weight:bold;padding:0 5px;}"
+                      "QPushButton:hover{border-color:#333;color:#888;}")
+
+        self._cible_btns = {}
+        preset = self.layer.target_preset or "Tous"
+        groups = self.layer.target_groups or []
+
+        for label in ["Tous", "Pair", "Impair"]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(20)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            active = (label == preset and not groups)
+            btn.setChecked(active)
+            btn.setStyleSheet(_cible_on if active else _cible_off)
+            btn.clicked.connect(lambda _=False, v=label: self._on_cible_pill(v, preset=True))
+            self._cible_btns[label] = btn
+            row3.addWidget(btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet("QFrame{background:#222;border:none;}")
+        row3.addWidget(sep)
+
+        for label in ["A", "B", "C", "D", "E", "F"]:
+            btn = QPushButton(label)
+            btn.setFixedSize(22, 20)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            active = (label in groups)
+            btn.setChecked(active)
+            btn.setStyleSheet(_cible_on if active else _cible_off)
+            btn.clicked.connect(lambda _=False, v=label: self._on_cible_pill(v, preset=False))
+            self._cible_btns[label] = btn
+            row3.addWidget(btn)
+
+        row3.addStretch()
+        outer.addLayout(row3)
+
+        self._refresh_color_btns()
+
+    def _mk_slider(self, label: str, val: int):
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        vl = QVBoxLayout(container)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(1)
+
+        top = QHBoxLayout()
+        top.setSpacing(2)
+        lbl = QLabel(label)
+        lbl.setStyleSheet("color: #2a2a2a; font-size: 7px; font-weight: bold; letter-spacing: 1px;")
+        top.addWidget(lbl)
+        top.addStretch()
+        val_lbl = QLabel(str(val))
+        val_lbl.setStyleSheet("color: #444; font-size: 9px; font-weight: bold;")
+        val_lbl.setFixedWidth(24)
+        val_lbl.setAlignment(Qt.AlignRight)
+        top.addWidget(val_lbl)
+        vl.addLayout(top)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(val)
+        slider.setFixedHeight(14)
+        slider.setStyleSheet(_SLIDER_STYLE)
+        vl.addWidget(slider)
+
+        if not hasattr(self, '_slider_containers'):
+            self._slider_containers = []
+        self._slider_containers.append(container)
+
+        return slider, val_lbl
+
+    def set_time(self, t: float):
+        self._wave.set_time(t)
+
+    def _on_attr(self, v: str):
+        self.layer.attribute = v
+        self._apply_frame_style()
+        self._refresh_color_btns()
+        self.changed.emit()
+
+    def _on_forme(self, v: str):
+        self.layer.forme = v
+        self.changed.emit()
+
+    def _on_cible_pill(self, val: str, preset: bool):
+        if preset:
+            self.layer.target_preset = val
+            self.layer.target_groups = []
+        else:
+            self.layer.target_preset = ""
+            groups = list(self.layer.target_groups)
+            if val in groups:
+                groups.remove(val)
+            else:
+                groups.append(val)
+            if not groups:
+                self.layer.target_preset = "Tous"
+            self.layer.target_groups = groups
+        self._refresh_cible_btns()
+        self.changed.emit()
+
+    def _refresh_cible_btns(self):
+        _on  = ("QPushButton{background:#001a2a;color:#00d4ff;border:1px solid #004466;"
+                "border-radius:3px;font-size:9px;font-weight:bold;padding:0 5px;}"
+                "QPushButton:hover{border-color:#006688;}")
+        _off = ("QPushButton{background:#0c0c0c;color:#444;border:1px solid #1c1c1c;"
+                "border-radius:3px;font-size:9px;font-weight:bold;padding:0 5px;}"
+                "QPushButton:hover{border-color:#333;color:#888;}")
+        preset = self.layer.target_preset or "Tous"
+        groups = self.layer.target_groups or []
+        for label, btn in self._cible_btns.items():
+            if label in ("Tous", "Pair", "Impair"):
+                active = (label == preset and not groups)
+            else:
+                active = (label in groups)
+            btn.blockSignals(True)
+            btn.setChecked(active)
+            btn.setStyleSheet(_on if active else _off)
+            btn.blockSignals(False)
+
+    def _on_sens(self, val: int):
+        self.layer.direction = val
+        _on  = ("QPushButton{background:#001a2a;color:#00d4ff;border:1px solid #004466;"
+                "border-radius:3px;font-size:10px;font-weight:bold;}"
+                "QPushButton:hover{border-color:#444;}")
+        _off = ("QPushButton{background:#0c0c0c;color:#444;border:1px solid #1c1c1c;"
+                "border-radius:3px;font-size:10px;font-weight:bold;}"
+                "QPushButton:hover{border-color:#444;}")
+        for v, btn in self._sens_btns.items():
+            btn.blockSignals(True)
+            btn.setChecked(v == val)
+            btn.setStyleSheet(_on if v == val else _off)
+            btn.blockSignals(False)
+        self.changed.emit()
+
+    def _on_color1(self):
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(
+            QColor(getattr(self.layer, 'color1', '#ff0000')), self,
+            "Couleur 1", QColorDialog.DontUseNativeDialog
+        )
+        if c.isValid():
+            self.layer.color1 = c.name()
+            self._refresh_color_btns()
+            self.changed.emit()
+
+    def _on_color2(self):
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(
+            QColor(getattr(self.layer, 'color2', '#0000ff')), self,
+            "Couleur 2", QColorDialog.DontUseNativeDialog
+        )
+        if c.isValid():
+            self.layer.color2 = c.name()
+            self._refresh_color_btns()
+            self.changed.emit()
+
+    def _refresh_color_btns(self):
+        attr = self.layer.attribute
+        has_c1 = attr in ("R", "V", "B", "RGB", "Permut")
+        has_c2 = attr == "Permut"
+        self._col1_btn.setVisible(has_c1)
+        self._col2_btn.setVisible(has_c2)
+        if has_c1:
+            c1 = getattr(self.layer, 'color1', '#ff0000')
+            self._col1_btn.setStyleSheet(
+                f"QPushButton {{ background:{c1}; border:1px solid #333; border-radius:4px; }}"
+                f"QPushButton:hover {{ border-color:#666; }}"
+            )
+            self._col1_btn.setToolTip(f"Couleur : {c1}")
+        if has_c2:
+            c2 = getattr(self.layer, 'color2', '#0000ff')
+            self._col2_btn.setStyleSheet(
+                f"QPushButton {{ background:{c2}; border:1px solid #333; border-radius:4px; }}"
+                f"QPushButton:hover {{ border-color:#666; }}"
+            )
+            self._col2_btn.setToolTip(f"Couleur 2 : {c2}")
+
+
+# ─── Panneau d'édition simplifié (colonne centrale) ───────────────────────────
+
+class SimpleEffectPanel(QWidget):
+    """
+    Panneau central bi-colonnes :
+      Gauche  — LayerCards (couches) + CIBLE + SENS/OPTIONS/GOBO contextuels
+      Droite  — 4 Potards globaux + TAP TEMPO + APERÇU
+    """
+
+    changed = Signal()
+
+    def __init__(self, main_window=None, parent=None):
+        super().__init__(parent)
+        self._layers       = []
+        self._effect       = None
+        self._direction    = 1
+        self._main_window  = main_window
+        self._layer_cards: list = []
+        self._tap_times:   list = []
+
+        self.setStyleSheet("background: #0d0d0d;")
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        outer.addWidget(self._create_menu_bar())
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = QWidget()
+        hdr.setFixedHeight(52)
+        hdr.setStyleSheet("background: #0a0a0a; border-bottom: 1px solid #181818;")
+        hl = QHBoxLayout(hdr)
+        hl.setContentsMargins(20, 0, 20, 0)
+        hl.setSpacing(12)
 
-        _content = QWidget()
-        root = QHBoxLayout(_content)
+        self._eff_emoji = QLabel("✦")
+        self._eff_emoji.setFixedWidth(32)
+        self._eff_emoji.setAlignment(Qt.AlignCenter)
+        self._eff_emoji.setStyleSheet("color: #1e1e1e; font-size: 22px; background: transparent;")
+
+        tc = QVBoxLayout()
+        tc.setSpacing(1)
+        self._eff_title = QLabel("Sélectionnez un effet")
+        self._eff_title.setStyleSheet(
+            "color: #1e1e1e; font-size: 13px; font-weight: bold; background: transparent;"
+        )
+        self._eff_cat = QLabel("")
+        self._eff_cat.setStyleSheet(
+            "color: #1a1a1a; font-size: 8px; letter-spacing: 2px; background: transparent;"
+        )
+        tc.addWidget(self._eff_title)
+        tc.addWidget(self._eff_cat)
+        hl.addWidget(self._eff_emoji)
+        hl.addLayout(tc, 1)
+        outer.addWidget(hdr)
+
+        # ── Corps bi-colonnes ──────────────────────────────────────────────────
+        body = QWidget()
+        body.setStyleSheet("background: #0d0d0d;")
+        bl = QHBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+
+        # ── Colonne gauche (scrollable) : couches + contrôles ─────────────────
+        lw_inner = QWidget()
+        lw_inner.setStyleSheet("background: #0d0d0d;")
+        self._ll = QVBoxLayout(lw_inner)
+        self._ll.setContentsMargins(14, 14, 10, 12)
+        self._ll.setSpacing(0)
+
+        # En-tête COUCHES + bouton +
+        layer_hdr = QHBoxLayout()
+        layer_hdr.setSpacing(6)
+        layer_hdr.addWidget(self._mk_sep("COUCHES"), 1)
+        add_btn = QPushButton("＋")
+        add_btn.setFixedSize(22, 16)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background: #0a1a0a; color: #285028;
+                border: 1px solid #1a3a1a; border-radius: 3px;
+                font-size: 10px; font-weight: bold; padding: 0;
+            }
+            QPushButton:hover { color: #55aa55; border-color: #2a5a2a; background: #0d220d; }
+        """)
+        add_btn.setToolTip("Ajouter une couche")
+        add_btn.clicked.connect(self._on_add_layer)
+        layer_hdr.addWidget(add_btn)
+        self._ll.addLayout(layer_hdr)
+        self._ll.addSpacing(6)
+
+        # Conteneur des LayerCard
+        self._layers_container = QWidget()
+        self._layers_container.setStyleSheet("background: transparent;")
+        self._layers_vl = QVBoxLayout(self._layers_container)
+        self._layers_vl.setContentsMargins(0, 0, 0, 0)
+        self._layers_vl.setSpacing(5)
+        self._ll.addWidget(self._layers_container)
+
+        self._ll.addSpacing(12)
+
+        # SENS (contextuel)
+        self._ll.addSpacing(10)
+        self._build_sens()
+
+        # OPTIONS + GOBO (contextuels)
+        self._ll.addSpacing(10)
+        self._build_context()
+
+        self._ll.addStretch()
+
+        lw_scroll = QScrollArea()
+        lw_scroll.setWidget(lw_inner)
+        lw_scroll.setWidgetResizable(True)
+        lw_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lw_scroll.setStyleSheet("""
+            QScrollArea { background: #0d0d0d; border: none; }
+            QScrollBar:vertical { background: #0d0d0d; width: 4px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #252525; border-radius: 2px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
+        vs = QFrame()
+        vs.setFrameShape(QFrame.VLine)
+        vs.setFixedWidth(1)
+        vs.setStyleSheet("QFrame { border: none; background: #161616; }")
+
+        # ── Colonne droite (scrollable) : potards globaux + tempo + aperçu ────
+        rw_inner = QWidget()
+        rw_inner.setStyleSheet("background: #0d0d0d;")
+        self._rl = QVBoxLayout(rw_inner)
+        self._rl.setContentsMargins(14, 16, 20, 12)
+        self._rl.setSpacing(0)
+        self._build_knobs()
+        self._rl.addSpacing(14)
+        self._build_tap_tempo()
+        self._rl.addSpacing(14)
+        self._build_preview_strip()
+        self._rl.addSpacing(14)
+        self._build_assigner_section()
+        self._rl.addStretch()
+
+        rw_scroll = QScrollArea()
+        rw_scroll.setWidget(rw_inner)
+        rw_scroll.setWidgetResizable(True)
+        rw_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        rw_scroll.setStyleSheet("""
+            QScrollArea { background: #0d0d0d; border: none; }
+            QScrollBar:vertical { background: #0d0d0d; width: 4px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #252525; border-radius: 2px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
+        bl.addWidget(lw_scroll, 3)
+        bl.addWidget(vs)
+        bl.addWidget(rw_scroll, 2)
+        outer.addWidget(body, 1)
+
+        self._set_enabled(False)
+        self._refresh_sens()
+
+    # ── Construction sections ─────────────────────────────────────────────────
+
+    def _build_sens(self):
+        self._sens_section = QWidget()
+        self._sens_section.setStyleSheet("background: transparent;")
+        self._sens_section.setVisible(False)
+        sv = QVBoxLayout(self._sens_section)
+        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setSpacing(6)
+        sv.addWidget(self._mk_sep("SENS"))
+
+        sens_row = QHBoxLayout()
+        sens_row.setSpacing(4)
+        self._sens_btns = {}
+        for direction, label in [(1, "→  Avant"), (-1, "←  Arrière"), (0, "↔  Bounce")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(26)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #0f0f0f; color: #383838;
+                    border: 1px solid #1c1c1c; border-radius: 5px;
+                    font-size: 10px; font-weight: bold;
+                }
+                QPushButton:checked {
+                    background: #0d1e0d; color: #44cc66; border-color: #226622;
+                }
+                QPushButton:hover:!checked { background: #181818; color: #777; border-color: #262626; }
+            """)
+            btn.clicked.connect(lambda _=False, d=direction: self._on_sens(d))
+            self._sens_btns[direction] = btn
+            sens_row.addWidget(btn)
+        sens_row.addStretch()
+        sv.addLayout(sens_row)
+        self._ll.addWidget(self._sens_section)
+
+    _CTX_TYPES_SENS  = {"Chase", "Wave"}
+    _CTX_TYPES_FONDU = {"Chase"}
+    _CTX_TYPES_GOBO  = {"Gobo", "Pan", "Tilt"}
+
+    def _build_context(self):
+        """Section contextuelle : options spécifiques par type d'effet."""
+        self._ctx_section = QWidget()
+        self._ctx_section.setStyleSheet("background: transparent;")
+        self._ctx_section.setVisible(False)
+        cv = QVBoxLayout(self._ctx_section)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(6)
+        cv.addWidget(self._mk_sep("OPTIONS"))
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        _pill = """
+            QPushButton {
+                background: #0f0f0f; color: #383838;
+                border: 1px solid #1c1c1c; border-radius: 5px;
+                font-size: 10px; font-weight: bold; padding: 0 10px;
+            }
+            QPushButton:checked { background: #0d1e0d; color: #44cc66; border-color: #226622; }
+            QPushButton:hover:!checked { background: #181818; color: #777; }
+        """
+        self._fondu_btn = QPushButton("〜  Fondu")
+        self._fondu_btn.setCheckable(True)
+        self._fondu_btn.setFixedHeight(26)
+        self._fondu_btn.setCursor(Qt.PointingHandCursor)
+        self._fondu_btn.setStyleSheet(_pill)
+        self._fondu_btn.setToolTip("Transition douce (Sinus) au lieu de coupure franche (Flash)")
+        self._fondu_btn.clicked.connect(self._on_fondu_toggle)
+        row.addWidget(self._fondu_btn)
+        row.addStretch()
+        cv.addLayout(row)
+        self._ll.addWidget(self._ctx_section)
+
+        # ── Section GOBO (Lyre) ────────────────────────────────────────────────
+        self._gobo_section = QWidget()
+        self._gobo_section.setStyleSheet("background: transparent;")
+        self._gobo_section.setVisible(False)
+        gv = QVBoxLayout(self._gobo_section)
+        gv.setContentsMargins(0, 0, 0, 0)
+        gv.setSpacing(6)
+        gv.addWidget(self._mk_sep("GOBO"))
+
+        gobo_row = QHBoxLayout()
+        gobo_row.setSpacing(8)
+        self._gobo_toggle = QPushButton("⦿  Activer GOBO")
+        self._gobo_toggle.setCheckable(True)
+        self._gobo_toggle.setFixedHeight(26)
+        self._gobo_toggle.setCursor(Qt.PointingHandCursor)
+        self._gobo_toggle.setStyleSheet(_pill)
+        self._gobo_toggle.setToolTip("Ajouter une rotation de gobo à cet effet")
+        self._gobo_toggle.clicked.connect(self._on_gobo_toggle)
+        gobo_row.addWidget(self._gobo_toggle)
+        gobo_row.addStretch()
+        gv.addLayout(gobo_row)
+
+        gobo_knob_row = QHBoxLayout()
+        gobo_knob_row.setSpacing(8)
+        self._knob_gobo = RotaryKnob("GOBO VIT.", default=40, size=52)
+        self._knob_gobo.setEnabled(False)
+        self._knob_gobo.valueChanged.connect(self._on_gobo_speed)
+        gobo_knob_row.addWidget(self._knob_gobo)
+        gobo_knob_row.addStretch()
+        gv.addLayout(gobo_knob_row)
+        self._ll.addWidget(self._gobo_section)
+
+    def _build_knobs(self):
+        self._rl.addWidget(self._mk_sep("AJUSTER TOUT"))
+        self._rl.addSpacing(10)
+
+        knob_w = QWidget()
+        knob_w.setStyleSheet("background: transparent;")
+        kl = QGridLayout(knob_w)
+        kl.setContentsMargins(0, 0, 0, 0)
+        kl.setHorizontalSpacing(18)
+        kl.setVerticalSpacing(12)
+
+        self._knob_speed  = RotaryKnob("VITESSE",   default=50,  size=60)
+        self._knob_amp    = RotaryKnob("AMPLITUDE", default=100, size=60)
+        self._knob_spread = RotaryKnob("DÉCALAGE",  default=0,   size=60)
+
+        kl.addWidget(self._knob_speed,  0, 0, Qt.AlignCenter)
+        kl.addWidget(self._knob_amp,    0, 1, Qt.AlignCenter)
+        kl.addWidget(self._knob_spread, 1, 0, Qt.AlignCenter)
+
+        self._knob_speed.valueChanged.connect(self._on_speed)
+        self._knob_amp.valueChanged.connect(self._on_amp)
+        self._knob_spread.valueChanged.connect(self._on_spread)
+
+        self._rl.addWidget(knob_w, 0, Qt.AlignCenter)
+
+    def _build_tap_tempo(self):
+        self._rl.addWidget(self._mk_sep("TEMPO"))
+        self._rl.addSpacing(8)
+
+        row = QHBoxLayout()
+        row.setSpacing(6)
+
+        self._tap_btn = QPushButton("TAP")
+        self._tap_btn.setFixedSize(48, 32)
+        self._tap_btn.setCursor(Qt.PointingHandCursor)
+        self._tap_btn.setStyleSheet("""
+            QPushButton {
+                background: #0f0f0f; color: #555;
+                border: 1px solid #1c1c1c; border-radius: 6px;
+                font-size: 11px; font-weight: bold;
+            }
+            QPushButton:hover  { background: #181818; color: #00d4ff; border-color: #004455; }
+            QPushButton:pressed { background: #001a2a; color: #00d4ff; border-color: #00d4ff; }
+        """)
+        self._tap_btn.setToolTip("Tapper le rythme pour régler la vitesse")
+        self._tap_btn.clicked.connect(self._on_tap)
+        row.addWidget(self._tap_btn)
+
+        self._bpm_lbl = QLabel("-- BPM")
+        self._bpm_lbl.setFixedWidth(64)
+        self._bpm_lbl.setStyleSheet(
+            "color: #333; font-size: 11px; font-weight: bold; background: transparent;"
+        )
+        row.addWidget(self._bpm_lbl)
+        row.addStretch()
+
+        self._sync_btn = QPushButton("♩ SYNC")
+        self._sync_btn.setFixedHeight(28)
+        self._sync_btn.setCursor(Qt.PointingHandCursor)
+        self._sync_btn.setStyleSheet("""
+            QPushButton {
+                background: #0a0a12; color: #252545;
+                border: 1px solid #14141e; border-radius: 5px;
+                font-size: 9px; font-weight: bold; padding: 0 8px;
+            }
+            QPushButton:hover { background: #0d1020; color: #5555cc; border-color: #222244; }
+        """)
+        self._sync_btn.setToolTip("Synchroniser avec le BPM du séquenceur")
+        self._sync_btn.clicked.connect(self._on_sync_bpm)
+        row.addWidget(self._sync_btn)
+
+        self._rl.addLayout(row)
+
+    def _build_preview_strip(self):
+        self._rl.addWidget(self._mk_sep("APERÇU"))
+        self._rl.addSpacing(6)
+        self._preview_strip = MiniFixturePreview(n=8)
+        self._rl.addWidget(self._preview_strip)
+
+    def _build_assigner_section(self):
+        _sep_style = "color: #282828; font-size: 8px; font-weight: bold; letter-spacing: 2px;"
+
+        self._rl.addWidget(self._mk_sep("ASSIGNER"))
+        self._rl.addSpacing(6)
+
+        self._assign_btns = {}
+        assign_row = QHBoxLayout()
+        assign_row.setSpacing(3)
+        for i in range(9):
+            btn = QPushButton(f"E{i + 1}")
+            btn.setCheckable(True)
+            btn.setFixedSize(26, 22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #0f0f0f; color: #333;
+                    border: 1px solid #1c1c1c; border-radius: 4px;
+                    font-size: 9px; font-weight: bold;
+                }
+                QPushButton:checked { background: #001a2a; color: #00d4ff; border-color: #004466; }
+                QPushButton:hover:!checked { background: #181818; color: #666; border-color: #252525; }
+            """)
+            self._assign_btns[i] = btn
+            assign_row.addWidget(btn)
+        assign_row.addStretch()
+        self._rl.addLayout(assign_row)
+        self._rl.addSpacing(10)
+
+        self._rl.addWidget(self._mk_sep("LECTURE"))
+        self._rl.addSpacing(6)
+
+        _play_style = """
+            QPushButton {
+                background: #101010; color: #444;
+                border: 1px solid #1e1e1e; border-radius: 5px;
+                font-size: 10px; font-weight: bold; padding: 0 8px;
+            }
+            QPushButton:checked { background: #002233; color: #00d4ff; border-color: #004455; }
+            QPushButton:hover:!checked { background: #181818; color: #777; }
+        """
+        play_row = QHBoxLayout()
+        play_row.setSpacing(4)
+        self._btn_loop = QPushButton("↺  Boucle")
+        self._btn_loop.setCheckable(True)
+        self._btn_loop.setFixedHeight(26)
+        self._btn_loop.setCursor(Qt.PointingHandCursor)
+        self._btn_loop.setStyleSheet(_play_style)
+        play_row.addWidget(self._btn_loop)
+
+        self._btn_once = QPushButton("▶  Une fois")
+        self._btn_once.setCheckable(True)
+        self._btn_once.setFixedHeight(26)
+        self._btn_once.setCursor(Qt.PointingHandCursor)
+        self._btn_once.setStyleSheet(_play_style)
+        play_row.addWidget(self._btn_once)
+        play_row.addStretch()
+        self._rl.addLayout(play_row)
+        self._rl.addSpacing(8)
+
+        timer_row = QHBoxLayout()
+        timer_row.setSpacing(6)
+        timer_icon = QLabel("⏱")
+        timer_icon.setStyleSheet("color: #2a2a2a; font-size: 14px;")
+        timer_row.addWidget(timer_icon)
+        self._timer_spin = QSpinBox()
+        self._timer_spin.setRange(0, 3600)
+        self._timer_spin.setValue(0)
+        self._timer_spin.setSuffix("  s")
+        self._timer_spin.setSpecialValueText("—")
+        self._timer_spin.setFixedSize(78, 24)
+        self._timer_spin.setStyleSheet("""
+            QSpinBox {
+                background: #111; color: #555;
+                border: 1px solid #1e1e1e; border-radius: 4px;
+                padding: 1px 4px; font-size: 10px;
+            }
+            QSpinBox:focus { border-color: #00d4ff; color: #aaa; }
+            QSpinBox::up-button, QSpinBox::down-button { width: 14px; }
+        """)
+        timer_row.addWidget(self._timer_spin)
+        timer_lbl = QLabel("Minuteur")
+        timer_lbl.setStyleSheet("color: #282828; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        timer_row.addWidget(timer_lbl)
+        timer_row.addStretch()
+        self._rl.addLayout(timer_row)
+
+    # ── Helpers UI ────────────────────────────────────────────────────────────
+
+    def _mk_sep(self, text: str) -> QWidget:
+        w = QWidget()
+        w.setFixedHeight(12)
+        w.setStyleSheet("background: transparent;")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #222; font-size: 8px; font-weight: bold; letter-spacing: 2px;")
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("QFrame { border: none; background: #161616; }")
+        line.setFixedHeight(1)
+        lay.addWidget(lbl)
+        lay.addWidget(line, 1)
+        return w
+
+    def _mk_pill(self, text: str, fixed_w: int = 0, h: int = 26) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setCheckable(True)
+        btn.setFixedHeight(h)
+        if fixed_w:
+            btn.setFixedWidth(fixed_w)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #0f0f0f; color: #383838;
+                border: 1px solid #1c1c1c; border-radius: 5px;
+                font-size: 10px; font-weight: bold; padding: 0 8px;
+            }
+            QPushButton:checked {
+                background: #003344; color: #00d4ff; border-color: #005566;
+            }
+            QPushButton:hover:!checked { background: #181818; color: #777; border-color: #252525; }
+        """)
+        return btn
+
+    def _set_enabled(self, enabled: bool):
+        for knob in (self._knob_speed, self._knob_amp, self._knob_spread):
+            knob.setEnabled(enabled)
+        for btn in self._sens_btns.values():
+            btn.setEnabled(enabled)
+
+    # ── Interface publique ────────────────────────────────────────────────────
+
+    def set_effect(self, eff: dict, layers: list):
+        self._effect    = eff
+        self._layers    = layers
+        self._direction = layers[0].direction if layers else 1
+
+        emoji = eff.get("emoji",    "") if eff else ""
+        name  = eff.get("name",     "") if eff else ""
+        cat   = eff.get("category", "") if eff else ""
+
+        self._eff_emoji.setText(emoji or "✦")
+        self._eff_emoji.setStyleSheet("color: #bbb; font-size: 22px; background: transparent;")
+        self._eff_title.setText(name)
+        self._eff_title.setStyleSheet(
+            "color: #eee; font-size: 13px; font-weight: bold; background: transparent;"
+        )
+        self._eff_cat.setText(cat.upper())
+        self._eff_cat.setStyleSheet(
+            "color: #3a3a3a; font-size: 8px; letter-spacing: 2px; background: transparent;"
+        )
+
+        self._set_enabled(bool(layers))
+        self._refresh()
+        self._refresh_context()
+        self._rebuild_layer_widgets()
+
+    # ── Rafraîchissement ──────────────────────────────────────────────────────
+
+    def _refresh(self):
+        if not self._layers:
+            return
+        l = self._layers[0]
+
+        for knob, val in [
+            (self._knob_speed,  l.speed),
+            (self._knob_amp,    l.size),
+            (self._knob_spread, l.spread),
+        ]:
+            knob.blockSignals(True)
+            knob.set_value(val)
+            knob.blockSignals(False)
+
+        if hasattr(self, '_bpm_lbl'):
+            bpm = (0.3 + l.speed / 100.0 * 3.5) * 60.0
+            self._bpm_lbl.setText(f"{int(bpm)} BPM")
+            self._bpm_lbl.setStyleSheet(
+                "color: #444; font-size: 11px; font-weight: bold; background: transparent;"
+            )
+
+        self._refresh_sens()
+
+    def _refresh_sens(self):
+        for d, btn in self._sens_btns.items():
+            btn.blockSignals(True)
+            btn.setChecked(d == self._direction)
+            btn.blockSignals(False)
+
+    def _refresh_context(self):
+        eff_type   = self._effect.get("type", "") if self._effect else ""
+        show_sens  = eff_type in self._CTX_TYPES_SENS
+        show_fondu = eff_type in self._CTX_TYPES_FONDU
+        show_gobo  = eff_type in self._CTX_TYPES_GOBO
+        self._sens_section.setVisible(show_sens)
+        self._ctx_section.setVisible(show_fondu)
+        self._gobo_section.setVisible(show_gobo)
+        if show_fondu and self._layers:
+            self._fondu_btn.blockSignals(True)
+            self._fondu_btn.setChecked(self._layers[0].forme == "Sinus")
+            self._fondu_btn.blockSignals(False)
+        if show_gobo:
+            has_gobo = any(l.attribute == "Gobo" for l in self._layers)
+            self._gobo_toggle.blockSignals(True)
+            self._gobo_toggle.setChecked(has_gobo)
+            self._gobo_toggle.blockSignals(False)
+            self._knob_gobo.setEnabled(has_gobo)
+            if has_gobo:
+                gobo_layer = next((l for l in self._layers if l.attribute == "Gobo"), None)
+                if gobo_layer:
+                    self._knob_gobo.blockSignals(True)
+                    self._knob_gobo.set_value(gobo_layer.speed)
+                    self._knob_gobo.blockSignals(False)
+
+    # ── Gestion des couches ────────────────────────────────────────────────────
+
+    def _rebuild_layer_widgets(self):
+        self._layer_cards = []
+        while self._layers_vl.count():
+            item = self._layers_vl.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        for layer in self._layers:
+            card = LayerCard(layer)
+            card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
+            card.changed.connect(self.changed)
+            self._layers_vl.addWidget(card)
+            self._layer_cards.append(card)
+
+    def _on_add_layer(self):
+        new_layer           = EffectLayer()
+        new_layer.attribute = "Dimmer"
+        new_layer.forme     = "Sinus"
+        new_layer.speed     = self._knob_speed.value
+        self._layers.append(new_layer)
+        self._rebuild_layer_widgets()
+        self.changed.emit()
+
+    def _on_delete_layer(self, layer: EffectLayer):
+        if layer in self._layers:
+            self._layers.remove(layer)
+        self._rebuild_layer_widgets()
+        self.changed.emit()
+
+    # ── Tick d'animation ──────────────────────────────────────────────────────
+
+    def tick(self, t: float):
+        """Mettre à jour toutes les waveforms des LayerCard."""
+        for card in self._layer_cards:
+            card.set_time(t)
+
+    def set_preview_levels(self, levels: list, colors: list):
+        if hasattr(self, '_preview_strip'):
+            self._preview_strip.set_levels(levels, colors)
+
+    # ── Événements ────────────────────────────────────────────────────────────
+
+    def _on_speed(self, val: int):
+        for layer in self._layers:
+            layer.speed = val
+        if hasattr(self, '_bpm_lbl'):
+            bpm = (0.3 + val / 100.0 * 3.5) * 60.0
+            self._bpm_lbl.setText(f"{int(bpm)} BPM")
+            self._bpm_lbl.setStyleSheet(
+                "color: #444; font-size: 11px; font-weight: bold; background: transparent;"
+            )
+        self.changed.emit()
+
+    def _on_amp(self, val: int):
+        for layer in self._layers:
+            layer.size = val
+        self.changed.emit()
+
+    def _on_spread(self, val: int):
+        for layer in self._layers:
+            layer.spread = val
+        self.changed.emit()
+
+    def _on_fade(self, val: int):
+        for layer in self._layers:
+            layer.fade = val
+        self.changed.emit()
+
+    def _on_sens(self, direction: int):
+        self._direction = direction
+        for layer in self._layers:
+            layer.direction = direction
+        self._refresh_sens()
+        self.changed.emit()
+
+    def _on_fondu_toggle(self, checked: bool):
+        forme = "Sinus" if checked else "Flash"
+        for layer in self._layers:
+            layer.forme = forme
+        self.changed.emit()
+
+    def _on_gobo_toggle(self, checked: bool):
+        self._knob_gobo.setEnabled(checked)
+        if checked:
+            if not any(l.attribute == "Gobo" for l in self._layers):
+                layer           = EffectLayer()
+                layer.attribute = "Gobo"
+                layer.forme     = "Sinus"
+                layer.speed     = self._knob_gobo.value
+                layer.size      = 100
+                layer.spread    = 0
+                self._layers.append(layer)
+        else:
+            self._layers[:] = [l for l in self._layers if l.attribute != "Gobo"]
+        self._rebuild_layer_widgets()
+        self.changed.emit()
+
+    def _on_gobo_speed(self, val: int):
+        for l in self._layers:
+            if l.attribute == "Gobo":
+                l.speed = val
+        self.changed.emit()
+
+    def _on_tap(self):
+        now = _time.monotonic()
+        if self._tap_times and (now - self._tap_times[-1]) > 2.5:
+            self._tap_times = []
+        self._tap_times.append(now)
+        if len(self._tap_times) > 8:
+            self._tap_times = self._tap_times[-8:]
+        if len(self._tap_times) >= 2:
+            intervals = [self._tap_times[i+1] - self._tap_times[i]
+                         for i in range(len(self._tap_times) - 1)]
+            bpm = 60.0 / (sum(intervals) / len(intervals))
+            self._set_bpm(bpm)
+        else:
+            self._bpm_lbl.setText("...")
+            self._bpm_lbl.setStyleSheet(
+                "color: #00d4ff; font-size: 11px; font-weight: bold; background: transparent;"
+            )
+
+    def _set_bpm(self, bpm: float):
+        bpm   = max(20.0, min(300.0, bpm))
+        freq  = bpm / 60.0
+        speed = int((freq - 0.3) / 3.5 * 100)
+        speed = max(0, min(100, speed))
+        self._bpm_lbl.setText(f"{int(bpm)} BPM")
+        self._bpm_lbl.setStyleSheet(
+            "color: #00d4ff; font-size: 11px; font-weight: bold; background: transparent;"
+        )
+        self._knob_speed.set_value(speed)
+
+    def _on_sync_bpm(self):
+        mw  = self._main_window
+        bpm = None
+        if mw:
+            bpm = getattr(mw, 'bpm', None) or getattr(mw, '_bpm', None)
+            if bpm is None:
+                for attr in ('sequencer', '_sequencer', 'seq'):
+                    seq = getattr(mw, attr, None)
+                    if seq:
+                        bpm = getattr(seq, 'bpm', None) or getattr(seq, '_bpm', None)
+                        if bpm:
+                            break
+        if bpm:
+            self._set_bpm(float(bpm))
+
+
+# ─── Dialog principal ──────────────────────────────────────────────────────────
+
+_EFFECT_CATEGORIES = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Permut", "Lyre"]
+
+import json as _json
+import pathlib as _pathlib
+
+_CUSTOM_EFFECTS_FILE = _pathlib.Path.home() / ".mystrow_custom_effects.json"
+
+
+def _load_custom_effects() -> list:
+    try:
+        if _CUSTOM_EFFECTS_FILE.exists():
+            data = _json.loads(_CUSTOM_EFFECTS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_custom_effects(effects: list):
+    try:
+        _CUSTOM_EFFECTS_FILE.write_text(
+            _json.dumps(effects, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+class EffectEditorDialog(QDialog):
+    """
+    Editeur d'effets — 3 colonnes :
+      [Bibliothèque effets] | [Barre presets + Éditeur couches] | [Plan de Feu live]
+    """
+
+    def __init__(self, clips, main_window, parent=None):
+        super().__init__(parent)
+        self._clips       = clips or []
+        self._main_window = main_window
+        self._layers: list = []
+        self._rows:   list = []
+
+        if self._clips:
+            for item in getattr(self._clips[0], 'effect_layers', []):
+                if isinstance(item, dict):
+                    self._layers.append(EffectLayer.from_dict(item))
+                elif isinstance(item, EffectLayer):
+                    self._layers.append(copy.deepcopy(item))
+
+        self._fixture_types = list({
+            getattr(pr, 'fixture_type', 'PAR LED')
+            for pr in getattr(main_window, 'projectors', [])
+        }) or ["PAR LED"]
+
+        self._play_mode      = getattr(self._clips[0], 'effect_play_mode', 'loop') if self._clips else 'loop'
+        self._preview_t0     = 0.0
+        self._selected_card  = None
+        self._custom_effects = _load_custom_effects()
+
+        self.setWindowTitle("Editeur d'effets")
+        self.setMinimumSize(1160, 620)
+        self.setStyleSheet(_DIALOG_STYLE)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.timeout.connect(self._preview_tick)
+        self.finished.connect(lambda _: self._stop_preview())
+
+        self._build_ui()
+        self._rebuild_rows()
+
+    # ── Construction ──────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── PANNEAU GAUCHE ────────────────────────────────────────────────────
-        left = QWidget()
-        left.setFixedWidth(250)
-        left.setStyleSheet("QWidget { background: #0e0e0e; border-right: 1px solid #222; }")
-        lv = QVBoxLayout(left)
+        root.addWidget(self._mk_header())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        # Colonne 1 : bibliothèque (240px fixe)
+        body.addWidget(self._mk_library_panel())
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.VLine)
+        sep1.setFixedWidth(1)
+        sep1.setStyleSheet("background: #1e1e1e;")
+        body.addWidget(sep1)
+
+        # Colonne 2 : éditeur simplifié (stretch)
+        body.addWidget(self._mk_simple_panel(), 1)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setFixedWidth(1)
+        sep2.setStyleSheet("background: #1e1e1e;")
+        body.addWidget(sep2)
+
+        # Colonne 3 : plan de feu
+        body.addWidget(self._mk_plan_panel())
+
+        root.addLayout(body, 1)
+        root.addWidget(self._mk_footer())
+
+    # ── Colonne 1 : bibliothèque ──────────────────────────────────────────────
+
+    def _mk_library_panel(self):
+        panel = QWidget()
+        panel.setFixedWidth(260)
+        panel.setStyleSheet("background: #0a0a0a;")
+
+        lv = QVBoxLayout(panel)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(0)
 
-        lhdr = QWidget()
-        lhdr.setFixedHeight(52)
-        lhdr.setStyleSheet("background: #0a0a0a; border-bottom: 1px solid #222;")
-        lhh = QHBoxLayout(lhdr)
-        lhh.setContentsMargins(14, 0, 10, 0)
+        hdr = QWidget()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet("background: #080808; border-bottom: 1px solid #161616;")
+        hh = QHBoxLayout(hdr)
+        hh.setContentsMargins(14, 0, 10, 0)
         ttl = QLabel("Effets")
-        ttl.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        lhh.addWidget(ttl)
-        lhh.addStretch()
-        btn_new = QPushButton("+ Nouveau")
-        btn_new.setFixedHeight(28)
-        btn_new.setStyleSheet(
-            "QPushButton { background: #00d4ff1a; color: #00d4ff; border: 1px solid #00d4ff44;"
-            " border-radius: 4px; padding: 2px 10px; font-size: 11px; }"
-            "QPushButton:hover { background: #00d4ff33; }")
-        btn_new.clicked.connect(self._new_effect)
-        lhh.addWidget(btn_new)
-        lv.addWidget(lhdr)
+        ttl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        ttl.setStyleSheet("color: #ddd;")
+        hh.addWidget(ttl)
+        hh.addStretch()
+        save_btn = QPushButton("＋ Ajouter un effet")
+        save_btn.setFixedHeight(26)
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setToolTip("Sauvegarder l'effet actuel dans Mes Effets")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background: #0a1a0a; color: #285028;
+                border: 1px solid #1a3a1a; border-radius: 5px;
+                font-size: 10px; font-weight: bold; padding: 0 8px;
+            }
+            QPushButton:hover { background: #0d220d; color: #55aa55; border-color: #2a5a2a; }
+        """)
+        save_btn.clicked.connect(self._save_current_as_custom)
+        hh.addWidget(save_btn)
+        lv.addWidget(hdr)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: #0e0e0e; }")
+        scroll.setStyleSheet("""
+            QScrollArea { background: #0a0a0a; border: none; }
+            QScrollBar:vertical { background: #080808; width: 5px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #222; border-radius: 2px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+
         self._list_w = QWidget()
-        self._list_w.setStyleSheet("background: #0e0e0e;")
+        self._list_w.setStyleSheet("background: #0a0a0a;")
         self._list_vl = QVBoxLayout(self._list_w)
-        self._list_vl.setContentsMargins(4, 6, 4, 6)
+        self._list_vl.setContentsMargins(8, 8, 8, 8)
         self._list_vl.setSpacing(0)
         self._list_vl.addStretch()
         scroll.setWidget(self._list_w)
-        lv.addWidget(scroll)
-        root.addWidget(left)
+        lv.addWidget(scroll, 1)
 
-        # ── PANNEAU DROIT ─────────────────────────────────────────────────────
-        right = QWidget()
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(0)
+        self._rebuild_library()
+        return panel
 
-        rhdr = QWidget()
-        rhdr.setFixedHeight(52)
-        rhdr.setStyleSheet("background: #0a0a0a; border-bottom: 1px solid #222;")
-        rhh = QHBoxLayout(rhdr)
-        rhh.setContentsMargins(24, 0, 16, 0)
-        self._title_lbl = QLabel("Sélectionnez un effet")
-        self._title_lbl.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self._title_lbl.setStyleSheet("color: #00d4ff; border-radius: 4px;")
-        self._title_lbl.setCursor(Qt.IBeamCursor)
-        self._title_lbl.setToolTip("Cliquer pour renommer")
-        self._title_lbl.mousePressEvent = lambda e: self._focus_rename()
-        rhh.addWidget(self._title_lbl)
-        rhh.addStretch()
-
-        self._btn_save = QPushButton("Sauvegarder")
-        self._btn_save.setFixedHeight(32)
-        self._btn_save.setEnabled(False)
-        self._btn_save.setStyleSheet(
-            "QPushButton { background: #00d4ff; color: #000; border: none; border-radius: 5px;"
-            " font-weight: bold; padding: 4px 20px; }"
-            "QPushButton:hover { background: #33ddff; }"
-            "QPushButton:disabled { background: #1a1a1a; color: #444; border: 1px solid #333; }")
-        self._btn_save.clicked.connect(self._save_current)
-        rhh.addWidget(self._btn_save)
-
-        self._btn_del = QPushButton("Supprimer")
-        self._btn_del.setFixedHeight(32)
-        self._btn_del.setVisible(False)
-        self._btn_del.setStyleSheet(
-            "QPushButton { background: #c0392b1a; color: #e74c3c; border: 1px solid #c0392b55;"
-            " border-radius: 5px; padding: 4px 14px; }"
-            "QPushButton:hover { background: #c0392b33; }")
-        self._btn_del.clicked.connect(self._delete_current)
-        rhh.addWidget(self._btn_del)
-
-        btn_close = QPushButton("Fermer")
-        btn_close.setFixedHeight(32)
-        btn_close.setStyleSheet(
-            "QPushButton { background: #2a2a2a; color: #888; border: 1px solid #3a3a3a;"
-            " border-radius: 5px; padding: 4px 14px; }"
-            "QPushButton:hover { background: #333; color: #fff; border-color: #666; }")
-        btn_close.clicked.connect(self.close)
-        rhh.addWidget(btn_close)
-        rv.addWidget(rhdr)
-
-        # ── Scroll area pour le panneau droit ─────────────────────────────────
-        body_scroll = QScrollArea()
-        body_scroll.setWidgetResizable(True)
-        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        body_scroll.setStyleSheet("QScrollArea { border: none; background: #141414; }")
-        body_w = QWidget()
-        body_v = QVBoxLayout(body_w)
-        body_v.setContentsMargins(24, 20, 24, 20)
-        body_v.setSpacing(14)
-
-        # ── Ligne haute : Nom + Preview | Assignation ─────────────────────────
-        top_row = QHBoxLayout()
-        top_row.setSpacing(14)
-
-        # Colonne gauche : nom + preview
-        left_col = QVBoxLayout()
-        left_col.setSpacing(10)
-
-        name_row = QHBoxLayout()
-        name_row.setSpacing(10)
-        _name_lbl = QLabel("Nom de l'effet")
-        _name_lbl.setStyleSheet("color: #555; font-size: 11px; min-width: 90px;")
-        name_row.addWidget(_name_lbl)
-        self._name_edit = QLineEdit()
-        self._name_edit.setFixedHeight(32)
-        self._name_edit.textChanged.connect(self._form_changed)
-        name_row.addWidget(self._name_edit, 1)
-        left_col.addLayout(name_row)
-
-        prev_frame = QFrame()
-        prev_frame.setStyleSheet(
-            "QFrame { background: #0a0a0a; border: 1px solid #222; border-radius: 8px; }")
-        prev_fl = QVBoxLayout(prev_frame)
-        prev_fl.setContentsMargins(8, 8, 8, 8)
-        projs = getattr(self._mw, "projectors", [])
-        self._preview = MiniPlanCanvas(projs)
-        prev_fl.addWidget(self._preview)
-        left_col.addWidget(prev_frame)
-
-        top_row.addLayout(left_col, 1)
-
-        # Colonne droite : assignation
-        assign = QFrame()
-        assign.setStyleSheet(
-            "QFrame { background: #111; border: 1px solid #222; border-radius: 8px; }")
-        av = QVBoxLayout(assign)
-        av.setContentsMargins(16, 12, 16, 12)
-        av.setSpacing(8)
-        albl = QLabel("Assigner à un bouton AKAI")
-        albl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        albl.setStyleSheet("color: #ccc;")
-        av.addWidget(albl)
-        arow = QHBoxLayout()
-        arow.setSpacing(5)
-        self._assign_btns = []
-        for i in range(9):
-            ab = QPushButton(f"B{i+1}")
-            ab.setFixedSize(46, 32)
-            ab.setToolTip(f"Assigner à bouton {i+1}")
-            ab.clicked.connect(lambda _, idx=i: self._assign_to_btn(idx))
-            arow.addWidget(ab)
-            self._assign_btns.append(ab)
-        arow.addStretch()
-        av.addLayout(arow)
-
-        # Mode de déclenchement
-        trig_lbl = QLabel("Mode de déclenchement")
-        trig_lbl.setStyleSheet("color: #888; font-size: 10px;")
-        av.addWidget(trig_lbl)
-        trig_row = QHBoxLayout()
-        trig_row.setSpacing(6)
-        _trig_defs = [
-            ("toggle", "↕ Toggle",  "Appuyer = active / re-appuyer = désactive"),
-            ("flash",  "⚡ Flash",   "Maintenir enfoncé = actif, relâcher = stop"),
-            ("timer",  "⏳ Timer",   "Active l'effet pendant une durée puis s'arrête"),
-        ]
-        self._trig_cbs = {}
-        _cb_style = (
-            "QCheckBox { color: #aaa; font-size: 10px; spacing: 4px; }"
-            "QCheckBox:checked { color: #00d4ff; }"
-            "QCheckBox::indicator { width: 14px; height: 14px; border-radius: 2px; }"
-            "QCheckBox::indicator:unchecked { border: 1px solid #444; background: #1a1a1a; }"
-            "QCheckBox::indicator:checked { border: 1px solid #00d4ff; background: #00d4ff33; }")
-        for mode, label, tip in _trig_defs:
-            cb = QCheckBox(label)
-            cb.setChecked(mode == "toggle")
-            cb.setToolTip(tip)
-            cb.setStyleSheet(_cb_style)
-            self._trig_cbs[mode] = cb
-            trig_row.addWidget(cb)
-
-        def _trig_exclusive(checked, chosen_mode):
-            if not checked:
-                return
-            for m, c in self._trig_cbs.items():
-                if m != chosen_mode:
-                    c.blockSignals(True)
-                    c.setChecked(False)
-                    c.blockSignals(False)
-        for _mode in list(self._trig_cbs.keys()):
-            self._trig_cbs[_mode].toggled.connect(
-                lambda checked, m=_mode: _trig_exclusive(checked, m))
-
-        self._trig_dur_spin = QDoubleSpinBox()
-        self._trig_dur_spin.setRange(0.1, 60.0)
-        self._trig_dur_spin.setSingleStep(0.5)
-        self._trig_dur_spin.setValue(2.0)
-        self._trig_dur_spin.setSuffix(" s")
-        self._trig_dur_spin.setFixedWidth(72)
-        self._trig_dur_spin.setToolTip("Durée du timer (en secondes)")
-        self._trig_dur_spin.setStyleSheet(
-            "QDoubleSpinBox { background: #1a1a1a; color: #00d4ff; border: 1px solid #333;"
-            " border-radius: 3px; padding: 2px 4px; font-size: 10px; }"
-            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button"
-            " { width: 14px; background: #222; border: none; }")
-        self._trig_dur_spin.setVisible(False)
-        trig_row.addWidget(self._trig_dur_spin)
-        trig_row.addStretch()
-        av.addLayout(trig_row)
-        self._trig_cbs["timer"].toggled.connect(self._trig_dur_spin.setVisible)
-        av.addStretch()
-
-        top_row.addWidget(assign, 1)
-        body_v.addLayout(top_row)
-
-        # ── Couches ───────────────────────────────────────────────────────────
-        layers_frame = QFrame()
-        layers_frame.setStyleSheet(
-            "QFrame { background: #111; border: 1px solid #222; border-radius: 8px; }")
-        layers_v = QVBoxLayout(layers_frame)
-        layers_v.setContentsMargins(0, 0, 0, 0)
-        layers_v.setSpacing(0)
-
-        # En-tête couches avec bouton + Ajouter
-        layers_hdr = QWidget()
-        layers_hdr.setFixedHeight(36)
-        layers_hdr.setStyleSheet(
-            "QWidget { background: #0e0e0e; border-radius: 8px 8px 0 0;"
-            " border-bottom: 1px solid #222; }")
-        layers_hh = QHBoxLayout(layers_hdr)
-        layers_hh.setContentsMargins(14, 0, 10, 0)
-        _lhdr_lbl = QLabel("COUCHES")
-        _lhdr_lbl.setStyleSheet(
-            "color: #444; font-size: 9px; font-weight: bold; letter-spacing: 1px; border: none;")
-        layers_hh.addWidget(_lhdr_lbl)
-        layers_hh.addStretch()
-        self._btn_add_layer = QPushButton("+ Ajouter une couche")
-        self._btn_add_layer.setFixedHeight(24)
-        self._btn_add_layer.setStyleSheet(
-            "QPushButton { background: #00d4ff1a; color: #00d4ff; border: 1px solid #00d4ff44;"
-            " border-radius: 4px; padding: 0 10px; font-size: 11px; }"
-            "QPushButton:hover { background: #00d4ff33; }")
-        self._btn_add_layer.clicked.connect(self._add_layer)
-        layers_hh.addWidget(self._btn_add_layer)
-        layers_v.addWidget(layers_hdr)
-
-        self._layers_list_w = QWidget()
-        self._layers_list_w.setStyleSheet("background: transparent;")
-        self._layers_chips_row = QVBoxLayout(self._layers_list_w)
-        self._layers_chips_row.setContentsMargins(0, 0, 0, 0)
-        self._layers_chips_row.setSpacing(0)
-        layers_v.addWidget(self._layers_list_w)
-        body_v.addWidget(layers_frame)
-
-        body_v.addStretch()
-        body_scroll.setWidget(body_w)
-        rv.addWidget(body_scroll, 1)
-        root.addWidget(right, 1)
-
-        outer.addWidget(_content, 1)
-        self._rebuild_list()
-
-    # ── MENU ──────────────────────────────────────────────────────────────────
-
-    def _create_menu_bar(self) -> QMenuBar:
-        bar = QMenuBar()
-        bar.setStyleSheet(_MENU_STYLE)
-
-        edit_menu = bar.addMenu("Edition")
-        undo_act = QAction("Annuler\tCtrl+Z", self)
-        undo_act.setShortcut(QKeySequence("Ctrl+Z"))
-        undo_act.triggered.connect(self._undo)
-        edit_menu.addAction(undo_act)
-        edit_menu.addSeparator()
-        reset_act = QAction("Charger les effets par défaut...", self)
-        reset_act.triggered.connect(self._reset_to_defaults)
-        edit_menu.addAction(reset_act)
-        edit_menu.addSeparator()
-        import_act = QAction("Importer un effet...", self)
-        import_act.triggered.connect(self._import_effect)
-        edit_menu.addAction(import_act)
-        export_act = QAction("Exporter l'effet sélectionné...", self)
-        export_act.triggered.connect(self._export_effect)
-        edit_menu.addAction(export_act)
-
-        return bar
-
-    # ── LISTE ─────────────────────────────────────────────────────────────────
-
-    def _rebuild_list(self):
+    def _rebuild_library(self):
         while self._list_vl.count() > 1:
             item = self._list_vl.takeAt(0)
-            if item.widget():
-                w = item.widget()
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
+            if item and item.widget():
+                item.widget().setParent(None)
 
-        for cat in self.CATEGORIES:
-            if cat == "Personnalisés":
-                cat_items = [(i, e) for i, e in enumerate(self._all) if not e.get("builtin", False)]
-            else:
-                cat_items = [(i, e) for i, e in enumerate(self._all) if e.get("category") == cat]
-            if not cat_items:
-                continue
+        card_w = (260 - 16 - 8) // 2  # (panel_width - h_margins - gap) / 2
 
-            ch = QLabel(f"  {cat.upper()}")
-            ch.setFixedHeight(24)
+        def _insert_category(label, items, deletable=False):
+            if not items:
+                return
+            ch = QLabel(label.upper())
+            ch.setFixedHeight(20)
             ch.setStyleSheet(
-                "color: #444; font-size: 9px; font-weight: bold; letter-spacing: 1px;"
-                " background: transparent; padding-left: 4px;")
+                "color: #2a2a2a; font-size: 8px; font-weight: bold; "
+                "letter-spacing: 1.5px; background: transparent; padding-left: 2px;"
+            )
             self._list_vl.insertWidget(self._list_vl.count() - 1, ch)
+            for idx in range(0, len(items), 2):
+                pair = items[idx:idx + 2]
+                row_w = QWidget()
+                row_w.setStyleSheet("background: transparent;")
+                row_h = QHBoxLayout(row_w)
+                row_h.setContentsMargins(0, 0, 0, 0)
+                row_h.setSpacing(6)
+                for eff in pair:
+                    row_h.addWidget(self._mk_card(eff, card_w, deletable=deletable))
+                if len(pair) == 1:
+                    row_h.addStretch()
+                row_w.setFixedHeight(58)
+                self._list_vl.insertWidget(self._list_vl.count() - 1, row_w)
+            spc = QWidget()
+            spc.setFixedHeight(6)
+            spc.setStyleSheet("background: transparent;")
+            self._list_vl.insertWidget(self._list_vl.count() - 1, spc)
 
-            for i, e in cat_items:
-                self._list_vl.insertWidget(self._list_vl.count() - 1, self._make_card(e, i))
+        # Effets intégrés
+        for cat in _EFFECT_CATEGORIES:
+            _insert_category(cat, [e for e in BUILTIN_EFFECTS if e.get("category") == cat])
 
-    def _make_card(self, eff: dict, idx: int) -> QWidget:
-        sel     = idx == self._sel
-        tc      = TYPE_COLORS.get(eff.get("type", ""), "#888")
-        name    = eff.get("name", "Sans nom")
-        btn_nos = self._get_assigned_btns(name)
-        assigned = bool(btn_nos)
-        layers  = eff.get("layers", [])
+        # Effets custom
+        if self._custom_effects:
+            _insert_category("Mes Effets", self._custom_effects, deletable=True)
 
-        if sel:
-            bg, bdl, txt_color = "#1e2e32", tc, "#ffffff"
-        else:
-            bg, bdl, txt_color = "transparent", "#2a2a2a", "#999"
+    def _mk_card(self, eff: dict, width: int = 116, deletable: bool = False) -> QWidget:
+        name = eff.get("name", "")
+        sel  = (name == self._selected_card)
 
         card = QWidget()
-        card.setFixedHeight(36)
+        card.setFixedSize(width, 54)
         card.setCursor(Qt.PointingHandCursor)
-        card.setProperty("eff_idx", idx)
-        card.setStyleSheet(
-            f"QWidget {{ background: {bg}; border: none; border-left: 3px solid {bdl}; }}"
-            f"QWidget:hover {{ background: #1a2428; border-left: 3px solid {tc}; }}")
+        card.setObjectName("ECard")
+        sel_bg    = "#0d1e1a"
+        sel_bdr   = "#00d4ff"
+        hover_bg  = "#141414"
+        card.setStyleSheet(f"""
+            QWidget#ECard {{
+                background: {sel_bg if sel else "#111"};
+                border: 1px solid {sel_bdr if sel else "#1a1a1a"};
+                border-radius: 7px;
+            }}
+            QWidget#ECard:hover {{ background: {hover_bg}; border-color: #282828; }}
+        """)
 
-        hl = QHBoxLayout(card)
-        hl.setContentsMargins(10, 0, 8, 0)
-        hl.setSpacing(4)
+        vl = QVBoxLayout(card)
+        vl.setContentsMargins(4, 5, 4, 4)
+        vl.setSpacing(2)
+
+        # Rangée haute : emoji + bouton × si custom
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(0)
+
+        emoji_lbl = QLabel(eff.get("emoji", ""))
+        emoji_lbl.setAlignment(Qt.AlignCenter)
+        emoji_lbl.setStyleSheet(
+            "color: #00d4ff; font-size: 15px;" if sel else "color: #666; font-size: 15px;"
+        )
+        top_row.addWidget(emoji_lbl, 1)
+
+        if deletable:
+            del_btn = QPushButton("×")
+            del_btn.setFixedSize(14, 14)
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent; color: #3a1010;
+                    border: none; font-size: 10px; font-weight: bold;
+                }
+                QPushButton:hover { color: #ff5555; }
+            """)
+            del_btn.clicked.connect(lambda _=False, e=eff: self._delete_custom_effect(e))
+            top_row.addWidget(del_btn)
+
+        vl.addLayout(top_row)
+
+        # AKAI badge if assigned
+        akai = self._get_assigned_btn_label(name)
 
         name_lbl = QLabel(name)
+        name_lbl.setAlignment(Qt.AlignCenter)
+        name_lbl.setWordWrap(True)
         name_lbl.setStyleSheet(
-            f"color: {txt_color}; font-size: 11px; background: transparent; border: none;")
-        hl.addWidget(name_lbl)
+            "color: #00d4ff; font-size: 8px; font-weight: bold; background: transparent;" if sel
+            else "color: #555; font-size: 8px; background: transparent;"
+        )
+        vl.addWidget(name_lbl, 1)
 
-        if len(layers) > 1:
-            lyr_lbl = QLabel(f"[{len(layers)}]")
-            lyr_lbl.setStyleSheet("color: #444; font-size: 9px; background: transparent; border: none;")
-            hl.addWidget(lyr_lbl)
+        if akai:
+            badge_row = QHBoxLayout()
+            badge_row.setContentsMargins(2, 0, 2, 0)
+            badge = QLabel(akai)
+            badge.setFixedHeight(12)
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setStyleSheet(
+                "background: #003344; color: #00d4ff; border: 1px solid #005566; "
+                "border-radius: 2px; font-size: 7px; font-weight: bold;"
+            )
+            badge_row.addWidget(badge)
+            vl.addLayout(badge_row)
 
-        hl.addStretch()
-
-        # Badges cyan : max 3 affichés, puis "+" si surplus
-        for bn in btn_nos[:3]:
-            badge_lbl = QLabel(f"B{bn + 1}")
-            badge_lbl.setFixedSize(22, 16)
-            badge_lbl.setAlignment(Qt.AlignCenter)
-            badge_lbl.setStyleSheet(
-                "background: #00d4ff; color: #000; border-radius: 3px;"
-                " font-size: 9px; font-weight: bold; border: none;")
-            hl.addWidget(badge_lbl)
-        if len(btn_nos) > 3:
-            more_lbl = QLabel(f"+{len(btn_nos) - 3}")
-            more_lbl.setFixedSize(20, 16)
-            more_lbl.setAlignment(Qt.AlignCenter)
-            more_lbl.setToolTip(", ".join(f"B{bn + 1}" for bn in btn_nos[3:]))
-            more_lbl.setStyleSheet(
-                "background: #005566; color: #00d4ff; border-radius: 3px;"
-                " font-size: 9px; font-weight: bold; border: none;")
-            hl.addWidget(more_lbl)
-
-        # Clic → sélectionne ; re-clic sur sélectionné → désélectionne
-        card.mousePressEvent = lambda e, i=idx: self._deselect() if i == self._sel else self._select(i)
+        card.mousePressEvent = lambda _e, e=eff: self._apply_preset(e)
         return card
 
-    # ── COUCHES ───────────────────────────────────────────────────────────────
+    def _get_assigned_btn_label(self, name: str) -> str:
+        cfg_map = getattr(self._main_window, '_button_effect_configs', {})
+        for idx, cfg in cfg_map.items():
+            if isinstance(cfg, dict) and cfg.get("name") == name:
+                return f"E{int(idx) + 1}"
+        return ""
 
-    def _rebuild_layers_chips(self):
-        """Reconstruit les blocs inline de chaque couche."""
-        while self._layers_chips_row.count():
-            item = self._layers_chips_row.takeAt(0)
-            if item.widget():
-                w = item.widget()
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
-        for i, layer in enumerate(self._working_layers):
-            self._layers_chips_row.addWidget(self._make_layer_block(i, layer))
+    def _save_current_as_custom(self):
+        """Sauvegarde l'effet actuellement chargé dans Mes Effets."""
+        from PySide6.QtWidgets import QInputDialog
+        existing_names = {e.get("name", "") for e in self._custom_effects}
 
-    def _make_layer_block(self, idx: int, layer: dict) -> QWidget:
-        """Crée un bloc DAW ligne unique (64px) pour une couche — nouveau modèle attribut/forme."""
-        muted = layer.get("muted", False)
-        blk = QFrame()
-        blk.setFixedHeight(64)
-        blk.setStyleSheet(
-            "QFrame { background: " + ("#090909" if muted else "#0e0e0e") + ";"
-            " border: none; border-bottom: 1px solid #1a1a1a; border-radius: 0; }")
+        if not self._layers:
+            # Aucun effet chargé : créer un effet vierge avec une couche par défaut
+            base = "Mon Effet"
+            i = 2
+            while base in existing_names:
+                base = f"Mon Effet {i}"; i += 1
+            name, ok = QInputDialog.getText(
+                self, "Nouvel effet", "Nom de l'effet :", text=base
+            )
+            if not ok or not name.strip():
+                return
+            name = name.strip()
+            default_layer = _L("Dimmer", "Sinus", speed=50, size=100, spread=0)
+            custom = {
+                "name":     name,
+                "emoji":    "★",
+                "category": "Mes Effets",
+                "type":     "Custom",
+                "layers":   [default_layer],
+            }
+            self._custom_effects.append(custom)
+            _save_custom_effects(self._custom_effects)
+            self._selected_card = name
+            self._rebuild_library()
+            self._apply_preset(custom)
+            return
 
-        hl = QHBoxLayout(blk)
-        hl.setContentsMargins(6, 4, 6, 4)
-        hl.setSpacing(6)
-
-        # ── Mute button ──
-        mute_btn = QPushButton("◉" if not muted else "◌")
-        mute_btn.setCheckable(True)
-        mute_btn.setChecked(not muted)
-        mute_btn.setFixedSize(26, 26)
-        mute_btn.setToolTip("Activer/Désactiver cette couche")
-        mute_btn.setStyleSheet(
-            "QPushButton { background: #00d4ff22; color: #00d4ff; border: 1px solid #00d4ff44;"
-            " border-radius: 4px; font-size: 12px; padding: 0; }"
-            "QPushButton:checked { background: #00d4ff44; color: #00d4ff; }"
-            "QPushButton:!checked { background: #1a1a1a; color: #333; border-color: #222; }")
-        hl.addWidget(mute_btn)
-
-        # ── Séparateur ──
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFixedWidth(1)
-        sep.setStyleSheet("background: #252525; border: none;")
-        hl.addWidget(sep)
-
-        # ── Attribut ──
-        attr_cb = QComboBox()
-        attr_cb.setFixedHeight(28)
-        attr_cb.setFixedWidth(110)
-        for a in self._available_attrs:
-            attr_cb.addItem(a, a)
-        cur_attr = layer.get("attribute", "Dim")
-        ai = next((j for j, a in enumerate(self._available_attrs) if a == cur_attr), 0)
-        attr_cb.setCurrentIndex(ai)
-        hl.addWidget(attr_cb)
-
-        # ── Forme ──
-        shape_cb = QComboBox()
-        shape_cb.setFixedHeight(28)
-        shape_cb.setFixedWidth(130)
-        for label, _ in SHAPES:
-            shape_cb.addItem(label)
-        cur_shape = layer.get("shape", "sine")
-        si = next((j for j, (_, v) in enumerate(SHAPES) if v == cur_shape), 0)
-        shape_cb.setCurrentIndex(si)
-        hl.addWidget(shape_cb)
-
-        # ── Cible (TargetWidget) ──
-        target_w = TargetWidget(self._display_groups)
-        target_w.set_value(
-            layer.get("target_type", "all"),
-            layer.get("target_groups", []),
+        # Effet chargé : proposer de le sauvegarder sous un nom
+        base = self._selected_card or "Mon Effet"
+        i = 2
+        candidate = base
+        while candidate in existing_names:
+            candidate = f"{base} {i}"; i += 1
+        name, ok = QInputDialog.getText(
+            self, "Sauvegarder l'effet", "Nom de l'effet :", text=candidate
         )
-        hl.addWidget(target_w)
-
-        # ── 4 Knobs ──
-        spd_knob = KnobWidget("Vit", 0, 100, layer.get("speed",     50))
-        amp_knob = KnobWidget("Amp", 0, 100, layer.get("amplitude", 100))
-        max_knob = KnobWidget("Max", 0, 100, layer.get("val_max",   100))
-        min_knob = KnobWidget("Min", 0, 100, layer.get("val_min",     0))
-        hl.addWidget(spd_knob)
-        hl.addWidget(amp_knob)
-        hl.addWidget(max_knob)
-        hl.addWidget(min_knob)
-
-        hl.addStretch()
-
-        # ── Delete button ──
-        if len(self._working_layers) > 1:
-            rm = QPushButton()
-            rm.setIcon(QApplication.style().standardIcon(QStyle.SP_TrashIcon))
-            rm.setFixedSize(26, 26)
-            rm.setToolTip("Supprimer cette couche")
-            rm.setStyleSheet(
-                "QPushButton { background: #2a0808; border: 1px solid #6a1515;"
-                " border-radius: 4px; }"
-                "QPushButton:hover { background: #aa2222; border-color: #ff4444; }")
-            rm.clicked.connect(lambda _, i=idx: self._remove_layer(i))
-            hl.addWidget(rm)
-
-        # Store refs
-        blk._attr_cb   = attr_cb
-        blk._shape_cb  = shape_cb
-        blk._target_w  = target_w
-        blk._spd_knob  = spd_knob
-        blk._amp_knob  = amp_knob
-        blk._max_knob  = max_knob
-        blk._min_knob  = min_knob
-        blk._mute_btn  = mute_btn
-
-        # Mute → update block background
-        def _on_mute_toggled(checked, b=blk, i=idx):
-            b.setStyleSheet(
-                "QFrame { background: " + ("#0e0e0e" if checked else "#090909") + ";"
-                " border: none; border-bottom: 1px solid #1a1a1a; border-radius: 0; }")
-            b._mute_btn.setText("◉" if checked else "◌")
-            self._on_layer_changed(i, b)
-        mute_btn.toggled.connect(_on_mute_toggled)
-
-        # Connect changes → save
-        attr_cb.currentIndexChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-        shape_cb.currentIndexChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-        target_w.changed.connect(lambda i=idx, b=blk: self._on_layer_changed(i, b))
-        spd_knob.valueChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-        amp_knob.valueChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-        max_knob.valueChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-        min_knob.valueChanged.connect(lambda _, i=idx, b=blk: self._on_layer_changed(i, b))
-
-        return blk
-
-    def _on_layer_changed(self, idx: int, blk):
-        """Sauvegarde le bloc inline dans _working_layers et met à jour le preview."""
-        if idx >= len(self._working_layers):
+        if not ok or not name.strip():
             return
-        ai = blk._attr_cb.currentIndex()
-        si = blk._shape_cb.currentIndex()
-        self._working_layers[idx] = {
-            "attribute":     blk._attr_cb.currentData() or (
-                self._available_attrs[ai] if ai >= 0 else "Dim"),
-            "shape":         SHAPES[si][1] if si >= 0 else "sine",
-            "target_type":   blk._target_w.target_type(),
-            "target_groups": blk._target_w.target_groups(),
-            "speed":         blk._spd_knob.value(),
-            "amplitude":     blk._amp_knob.value(),
-            "val_max":       blk._max_knob.value(),
-            "val_min":       blk._min_knob.value(),
-            "muted":         not blk._mute_btn.isChecked(),
+        name = name.strip()
+        custom = {
+            "name":     name,
+            "emoji":    "★",
+            "category": "Mes Effets",
+            "type":     self._selected_card or "Custom",
+            "layers":   [l.to_dict() for l in self._layers],
         }
-        self._preview.update_layers_config(copy.deepcopy(self._working_layers))
-        self._dirty = True
-        self._btn_save.setEnabled(True)
+        self._custom_effects.append(custom)
+        _save_custom_effects(self._custom_effects)
+        self._selected_card = name
+        self._rebuild_library()
 
-    def _add_layer(self):
-        new_layer = {
-            "attribute":     "Dim",
-            "shape":         "sine",
-            "target_type":   "all",
-            "target_groups": [],
-            "speed":         50,
-            "amplitude":     100,
-            "val_max":       100,
-            "val_min":       0,
-            "muted":         False,
-        }
-        self._working_layers.append(new_layer)
-        self._rebuild_layers_chips()
-        self._dirty = True
-        self._btn_save.setEnabled(True)
-        self._preview.set_layers(copy.deepcopy(self._working_layers))
+    def _delete_custom_effect(self, eff: dict):
+        name = eff.get("name", "")
+        self._custom_effects = [e for e in self._custom_effects if e.get("name") != name]
+        _save_custom_effects(self._custom_effects)
+        if self._selected_card == name:
+            self._selected_card = None
+        self._rebuild_library()
 
-    def _remove_layer(self, layer_idx: int):
-        if len(self._working_layers) <= 1:
-            return
-        self._working_layers.pop(layer_idx)
-        self._rebuild_layers_chips()
-        self._dirty = True
-        self._btn_save.setEnabled(True)
-        self._preview.set_layers(copy.deepcopy(self._working_layers))
+    # ── Barre de presets ──────────────────────────────────────────────────────
 
-    # ── SELECTION / FORM ──────────────────────────────────────────────────────
+    def _mk_presets_bar(self):
+        bar = QWidget()
+        bar.setStyleSheet("background: #0a0a0a; border-bottom: 1px solid #1c1c1c;")
+        bar.setFixedHeight(48)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(14, 8, 14, 8)
+        h.setSpacing(6)
 
-    def _select(self, idx: int):
-        if idx < 0 or idx >= len(self._all):
-            return
-        self._sel = idx
-        eff = self._all[idx]
-        self._ign = True
+        lbl = QLabel("Presets :")
+        lbl.setStyleSheet("color: #444; font-size: 10px; margin-right: 4px;")
+        h.addWidget(lbl)
 
-        self._title_lbl.setText(eff.get("name", ""))
-        self._name_edit.setText(eff.get("name", ""))
-        is_builtin = eff.get("builtin", False)
-        self._name_edit.setEnabled(not is_builtin)
-        self._title_lbl.setToolTip(
-            "Effet intégré — nom non modifiable" if is_builtin else "Cliquer pour renommer"
-        )
-        self._title_lbl.setCursor(Qt.ArrowCursor if is_builtin else Qt.IBeamCursor)
+        for eff in BUILTIN_EFFECTS:
+            btn = QPushButton(f"{eff.get('emoji', '+')}  {eff['name']}")
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #161616; color: #aaa;
+                    border: 1px solid #282828; border-radius: 5px;
+                    font-size: 10px; padding: 0 10px;
+                }
+                QPushButton:hover { background: #1e1e1e; border-color: #00d4ff; color: #fff; }
+                QPushButton:pressed { background: #002233; border-color: #00d4ff; }
+            """)
+            btn.clicked.connect(lambda _=False, e=eff: self._apply_preset(e))
+            h.addWidget(btn)
 
-        # Charger les couches
-        self._working_layers = _eff_layers(eff)
-        self._rebuild_layers_chips()
+        h.addStretch()
+        return bar
 
-        self._btn_save.setEnabled(False)
-        self._btn_del.setVisible(not is_builtin)
-        self._dirty = False
+    # ── Colonne 2 : panneau simplifié ─────────────────────────────────────────
 
-        self._preview.set_layers(copy.deepcopy(self._working_layers))
-        self._refresh_assign_btns()
+    def _mk_simple_panel(self) -> QWidget:
+        self._simple_panel = SimpleEffectPanel(main_window=self._main_window)
+        self._simple_panel.changed.connect(self._ensure_preview_running)
 
-        # Charger le trigger_mode depuis le premier bouton assigné à cet effet
-        eff_name = eff.get("name", "")
-        trig_mode = "toggle"
-        trig_dur  = 2000
-        for i in range(9):
-            cfg_i = self._mw._button_effect_configs.get(i, {})
-            if cfg_i.get("name") == eff_name:
-                trig_mode = cfg_i.get("trigger_mode", "toggle")
-                trig_dur  = cfg_i.get("trigger_duration", 2000)
-                break
-        for mode, cb in self._trig_cbs.items():
-            cb.blockSignals(True)
-            cb.setChecked(mode == trig_mode)
-            cb.blockSignals(False)
-        self._trig_dur_spin.blockSignals(True)
-        self._trig_dur_spin.setValue(trig_dur / 1000.0)
-        self._trig_dur_spin.blockSignals(False)
-        self._trig_dur_spin.setVisible(trig_mode == "timer")
+        # Aliases vers les widgets créés dans SimpleEffectPanel._build_assigner_section
+        self._btn_loop    = self._simple_panel._btn_loop
+        self._btn_once    = self._simple_panel._btn_once
+        self._assign_btns = self._simple_panel._assign_btns
+        self._timer_spin  = self._simple_panel._timer_spin
 
-        self._ign = False
-        self._rebuild_list()
+        # Connexions
+        self._btn_loop.clicked.connect(lambda: self._set_play_mode("loop"))
+        self._btn_once.clicked.connect(lambda: self._set_play_mode("once"))
+        for _i, _btn in self._assign_btns.items():
+            _btn.clicked.connect(lambda _=False, idx=_i: self._on_assign(idx))
 
-    def _form_changed(self):
-        if self._ign:
-            return
-        self._dirty = True
-        self._btn_save.setEnabled(True)
+        # Restore existing layers if the clip already had an effect
+        if self._layers:
+            self._simple_panel._layers = self._layers
+            self._simple_panel._set_enabled(True)
+            self._simple_panel._refresh()
 
-    def _form_cfg(self) -> dict:
-        layers = copy.deepcopy(self._working_layers)
-        first  = layers[0] if layers else {}
-        # Trigger mode
-        trig_mode = "toggle"
-        for mode, cb in self._trig_cbs.items():
-            if cb.isChecked():
-                trig_mode = mode
-                break
-        trig_dur = int(self._trig_dur_spin.value() * 1000)
-        return {
-            "name":             self._name_edit.text().strip() or "Sans nom",
-            "attribute":        first.get("attribute", "Dim"),
-            "shape":            first.get("shape", "sine"),
-            "target_type":      first.get("target_type", "all"),
-            "target_groups":    first.get("target_groups", []),
-            "speed":            first.get("speed", 50),
-            "amplitude":        first.get("amplitude", 100),
-            "val_max":          first.get("val_max", 100),
-            "val_min":          first.get("val_min", 0),
-            "layers":           layers,
-            "builtin":          self._all[self._sel].get("builtin", False) if self._all else False,
-            "category":         self._all[self._sel].get("category", "Personnalisés") if self._all else "Personnalisés",
-            "trigger_mode":     trig_mode,
-            "trigger_duration": trig_dur,
-        }
+        self._refresh_mode_btns()
+        return self._simple_panel
 
-    # ── CRUD ──────────────────────────────────────────────────────────────────
+    # ── Colonne 3 : plan de feu + contrôles ──────────────────────────────────
 
-    def _new_effect(self):
-        self._push_undo()
-        default_layer = {
-            "attribute": "Dim", "shape": "sine",
-            "target_type": "all", "target_groups": [],
-            "speed": 50, "amplitude": 100, "val_max": 100, "val_min": 0,
-            "muted": False,
-        }
-        new = {
-            "name": "Nouvel effet", "attribute": "Dim", "shape": "sine",
-            "category": "Personnalisés", "speed": 50,
-            "builtin": False, "layers": [dict(default_layer)],
-        }
-        self._all.append(new)
-        _save_user_effects(self._all)
-        self._rebuild_list()
-        self._select(len(self._all) - 1)
-        self._btn_save.setEnabled(True)
-        self._name_edit.setFocus()
-        self._name_edit.selectAll()
+    def _mk_plan_panel(self):
+        panel = QWidget()
+        panel.setFixedWidth(280)
+        panel.setStyleSheet("background: #0a0a0a;")
 
-    def _save_current(self):
-        if self._sel < 0 or self._sel >= len(self._all):
-            return
-        cfg = self._form_cfg()
-        name = cfg["name"]
-        if not name or name == "Sans nom":
-            QMessageBox.warning(self, "Nom requis", "Donnez un nom à l'effet.")
-            return
-        self._push_undo()
-        if cfg.get("builtin"):
-            cfg = dict(cfg)
-            cfg["builtin"] = False
-            cfg["category"] = "Personnalisés"
-            self._all.append(cfg)
-            new_idx = len(self._all) - 1
-        else:
-            cfg["builtin"] = False
-            self._all[self._sel] = cfg
-            new_idx = self._sel
-        _save_user_effects(self._all)
-        self._dirty = False
-        self._rebuild_list()
-        self._select(new_idx)
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(0, 0, 0, 0)
+        pv.setSpacing(0)
 
-    def _delete_current(self):
-        if self._sel < 0 or self._sel >= len(self._all):
-            return
-        eff = self._all[self._sel]
-        if eff.get("builtin", False):
-            return
-        if QMessageBox.question(
-            self, "Supprimer",
-            f"Supprimer l'effet « {eff.get('name', '')} » ?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        ) != QMessageBox.Yes:
-            return
-        self._push_undo()
-        self._all.pop(self._sel)
-        _save_user_effects(self._all)
-        new_sel = min(self._sel, len(self._all) - 1)
-        self._rebuild_list()
-        if self._all:
-            self._select(new_sel)
-
-    # ── MENU ACTIONS ──────────────────────────────────────────────────────────
-
-    def _reset_to_defaults(self):
-        result = QMessageBox.warning(
-            self, "Charger les effets par défaut",
-            "Cette action va remplacer tous vos effets personnalisés\n"
-            "par les effets par défaut.\n\nVos effets personnalisés seront supprimés. Continuer ?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if result != QMessageBox.Yes:
-            return
-        self._push_undo()
-        self._all = [dict(e) for e in BUILTIN_EFFECTS]
-        _save_user_effects(self._all)
-        self._rebuild_list()
-        self._select(0)
-
-        # Restaurer les assignations bouton→effet telles qu'elles étaient à l'ouverture,
-        # uniquement pour les effets qui existent dans les défauts
-        default_names = {e["name"] for e in self._all}
-        for btn_idx, cfg in self._initial_assignments.items():
-            if cfg.get("name", "") in default_names:
-                self.effect_assigned.emit(btn_idx, cfg)
-            else:
-                # L'effet n'existe plus dans les défauts → on vide le bouton
-                self.effect_assigned.emit(btn_idx, {})
-        self._refresh_assign_btns()
-        self._rebuild_list()
-
-    def _import_effect(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Importer un effet", "",
-            "Effet MyStrow (*.mse);;JSON (*.json);;Tous les fichiers (*)"
-        )
-        if not path:
-            return
         try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            effects = data if isinstance(data, list) else [data]
-            existing_names = [e.get("name") for e in self._all]
-            imported = 0
-            for eff in effects:
-                if "name" not in eff or ("type" not in eff and "layers" not in eff):
-                    continue
-                eff = dict(eff)
-                eff["builtin"] = False
-                eff.setdefault("category", "Personnalisés")
-                base = eff["name"]
-                n = 2
-                while eff["name"] in existing_names:
-                    eff["name"] = f"{base} ({n})"
-                    n += 1
-                existing_names.append(eff["name"])
-                self._all.append(eff)
-                imported += 1
-            if imported:
-                self._push_undo()
-                _save_user_effects(self._all)
-                self._rebuild_list()
-                self._select(len(self._all) - 1)
-                QMessageBox.information(self, "Import", f"{imported} effet(s) importé(s).")
-            else:
-                QMessageBox.warning(self, "Import", "Aucun effet valide trouvé dans le fichier.")
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur d'import", f"Impossible de lire le fichier :\n{e}")
+            from plan_de_feu import PlanDeFeu
+            projectors = getattr(self._main_window, 'projectors', [])
+            self._plan_widget = PlanDeFeu(projectors, self._main_window, show_toolbar=False)
+            pv.addWidget(self._plan_widget, 1)
+        except Exception:
+            self._plan_widget = None
+            fallback = QLabel("Plan de feu\nnon disponible")
+            fallback.setAlignment(Qt.AlignCenter)
+            fallback.setStyleSheet("color: #444; font-size: 11px;")
+            pv.addWidget(fallback, 1)
 
-    def _export_effect(self):
-        if self._sel < 0 or self._sel >= len(self._all):
-            return
-        eff  = dict(self._all[self._sel])
-        name = eff.get("name", "effet")
-        safe = "".join(c for c in name if c.isalnum() or c in " _-").strip()
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter l'effet", f"{safe}.mse",
-            "Effet MyStrow (*.mse);;JSON (*.json)"
-        )
-        if not path:
-            return
-        try:
-            Path(path).write_text(json.dumps(eff, indent=2, ensure_ascii=False), encoding="utf-8")
-            QMessageBox.information(self, "Export", f"Effet exporté :\n{path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur d'export", f"Impossible d'écrire le fichier :\n{e}")
+        return panel
 
-    # ── ASSIGNATION ───────────────────────────────────────────────────────────
-
-    def _assign_to_btn(self, btn_idx: int):
-        eff_name = (self._all[self._sel].get("name", "")
-                    if self._all and self._sel >= 0 else "")
-        current = self._mw._button_effect_configs.get(btn_idx, {}).get("name", "")
-        if current and current == eff_name:
-            # Déjà assigné à ce bouton → désassigner
-            self.effect_assigned.emit(btn_idx, {})
-        else:
-            cfg = self._form_cfg()
-            cfg["name"] = self._name_edit.text().strip() or cfg.get("name", "Effet")
-            self.effect_assigned.emit(btn_idx, cfg)
-        self._refresh_assign_btns()
-        self._rebuild_list()
-
-    def _focus_rename(self):
-        """Focalise le champ nom pour renommer au clic sur le titre."""
-        if not self._name_edit.isEnabled():
-            self._title_lbl.setToolTip("Effet intégré — nom non modifiable")
-            return
-        self._name_edit.setFocus()
-        self._name_edit.selectAll()
-
-    def _deselect(self):
-        """Désélectionne l'effet courant (re-clic sur la carte active)."""
-        self._sel = -1
-        self._dirty = False
-        self._refresh_assign_btns()
-        self._rebuild_list()
+    def _mk_ctrl_sep(self, text: str) -> QWidget:
+        w = QWidget()
+        w.setFixedHeight(14)
+        w.setStyleSheet("background: transparent;")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color: #282828; font-size: 8px; font-weight: bold; letter-spacing: 2px;")
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("QFrame { border: none; background: #161616; }")
+        line.setFixedHeight(1)
+        lay.addWidget(lbl)
+        lay.addWidget(line, 1)
+        return w
 
     def _refresh_assign_btns(self):
-        eff_name = (self._all[self._sel].get("name", "")
-                    if self._all and self._sel >= 0 else "")
-        for i, ab in enumerate(self._assign_btns):
-            cfg_name = self._mw._button_effect_configs.get(i, {}).get("name", "")
-            is_this = bool(cfg_name) and cfg_name == eff_name
-            has_any = bool(cfg_name)
+        if not self._main_window:
+            return
+        cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
+        cur_name = self._selected_card or ""
+        for i, btn in self._assign_btns.items():
+            cfg   = cfg_map.get(i, {})
+            is_me = isinstance(cfg, dict) and cfg.get("name") == cur_name and bool(cur_name)
+            btn.blockSignals(True)
+            btn.setChecked(is_me)
+            btn.blockSignals(False)
 
-            # Texte : "B{n}" + indication si autre effet assigné
-            ab.setText(f"B{i+1}")
-            if is_this:
-                # Cet effet est assigné à ce bouton → bleu vif
-                ab.setToolTip(f"✓ '{cfg_name}' assigné ici\nCliquer pour retirer")
-                ab.setStyleSheet(
-                    "QPushButton { background: #00d4ff; color: #000; border: none;"
-                    " border-radius: 5px; font-size: 11px; font-weight: bold; }"
-                    "QPushButton:hover { background: #33ddff; }")
-            elif has_any:
-                # Un autre effet est assigné → orange + tooltip
-                ab.setToolTip(f"Assigné : {cfg_name}\nCliquer pour remplacer par '{eff_name}'")
-                ab.setStyleSheet(
-                    "QPushButton { background: #1e1a0e; color: #cc8833; border: 1px solid #443311;"
-                    " border-radius: 5px; font-size: 10px; font-weight: bold; }"
-                    "QPushButton:hover { border-color: #00d4ff; color: #ffcc55; }")
+    def _on_assign(self, btn_idx: int):
+        if not self._main_window or not self._selected_card:
+            self._assign_btns[btn_idx].setChecked(False)
+            return
+        cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
+        cur_name = self._selected_card
+        already  = isinstance(cfg_map.get(btn_idx), dict) and \
+                   cfg_map.get(btn_idx, {}).get("name") == cur_name
+        if already:
+            if hasattr(self._main_window, '_on_effect_assigned'):
+                self._main_window._on_effect_assigned(btn_idx, None)
+        else:
+            eff_dict = next(
+                (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == cur_name),
+                None
+            )
+            cfg = {
+                "name":   cur_name,
+                "type":   eff_dict.get("type", "") if eff_dict else "",
+                "layers": [l.to_dict() for l in self._layers],
+            }
+            if hasattr(self._main_window, '_on_effect_assigned'):
+                self._main_window._on_effect_assigned(btn_idx, cfg)
+        self._refresh_assign_btns()
+
+    # ── Header / Footer ───────────────────────────────────────────────────────
+
+    def _mk_header(self):
+        w = QWidget()
+        w.setFixedHeight(46)
+        w.setStyleSheet("background: #141414; border-bottom: 1px solid #1e1e1e;")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(16, 0, 14, 0)
+        title = QLabel("Editeur d'effets")
+        title.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
+        lay.addWidget(title)
+        if self._clips:
+            n   = len(self._clips)
+            sub = QLabel(f"— {n} bloc{'s' if n > 1 else ''} sélectionné{'s' if n > 1 else ''}")
+            sub.setStyleSheet("color: #444; font-size: 11px; margin-left: 8px;")
+            lay.addWidget(sub)
+        lay.addStretch()
+        return w
+
+    def _mk_footer(self):
+        w = QWidget()
+        w.setFixedHeight(52)
+        w.setStyleSheet("background: #141414; border-top: 1px solid #1e1e1e;")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(16, 8, 16, 8)
+        lay.addStretch()
+
+        cancel = QPushButton("Annuler")
+        cancel.setFixedSize(96, 34)
+        cancel.setStyleSheet("""
+            QPushButton {
+                background: #1e1e1e; color: #aaa;
+                border: 1px solid #2e2e2e; border-radius: 6px; font-size: 12px;
+            }
+            QPushButton:hover { background: #2a2a2a; }
+        """)
+        cancel.clicked.connect(self.reject)
+        lay.addWidget(cancel)
+
+        ok = QPushButton("Sauvegarder")
+        ok.setFixedSize(116, 34)
+        ok.setStyleSheet("""
+            QPushButton {
+                background: #00d4ff; color: #000; border: none;
+                border-radius: 6px; font-size: 12px; font-weight: bold;
+            }
+            QPushButton:hover { background: #00bce0; }
+        """)
+        ok.clicked.connect(self._apply)
+        lay.addWidget(ok)
+        return w
+
+    # ── Gestion des couches ───────────────────────────────────────────────────
+
+    def _rebuild_rows(self):
+        pass  # Layer rows replaced by SimpleEffectPanel
+
+    def _apply_preset(self, eff: dict):
+        """Remplace les couches par le preset et met à jour le panneau central."""
+        self._selected_card = eff.get("name", "")
+        self._layers.clear()
+        self._layers.extend(EffectLayer.layers_from_builtin(eff))
+        self._simple_panel.set_effect(eff, self._layers)
+        self._rebuild_library()
+        self._refresh_assign_btns()
+        self._start_preview()
+
+    # ── Prévisualisation live ─────────────────────────────────────────────────
+
+    def _start_preview(self):
+        self._preview_t0 = _time.monotonic()
+        if not self._preview_timer.isActive():
+            self._preview_timer.start(40)   # ~25 fps
+
+    def _ensure_preview_running(self):
+        if not self._preview_timer.isActive() and self._layers:
+            if not self._preview_t0:
+                self._preview_t0 = _time.monotonic()
+            self._preview_timer.start(40)
+
+    def _stop_preview(self):
+        self._preview_timer.stop()
+        plan = getattr(self, '_plan_widget', None)
+        if plan is not None:
+            try:
+                plan.set_htp_overrides(None)
+            except Exception:
+                pass
+
+    def _preview_tick(self):
+        plan = getattr(self, '_plan_widget', None)
+        if not self._layers:
+            self._stop_preview()
+            return
+        t = _time.monotonic() - self._preview_t0
+        try:
+            overrides = self._compute_preview(t)
+            if plan is not None:
+                plan.set_htp_overrides(overrides)
+            # Alimenter la mini strip
+            projectors = getattr(self._main_window, 'projectors', [])
+            if projectors and overrides:
+                levels = []
+                colors = []
+                for proj in projectors[:16]:
+                    lv, col = overrides.get(id(proj), (0.0, QColor(255, 255, 255)))
+                    levels.append(lv)
+                    colors.append(col)
+                self._simple_panel.set_preview_levels(levels, colors)
+            self._simple_panel.tick(t)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _wave(forme: str, x: float) -> float:
+        """Valeur 0-1 de la forme pour une position x (0-1) dans le cycle."""
+        if forme == "Sinus":
+            return (math.sin(2 * math.pi * x) + 1) / 2
+        elif forme == "Flash":
+            return 1.0 if x < 0.5 else 0.0
+        elif forme == "Triangle":
+            return 1.0 - abs(2 * x - 1)
+        elif forme == "Montée":
+            return x
+        elif forme == "Descente":
+            return 1.0 - x
+        elif forme == "Fixe":
+            return 1.0
+        elif forme == "Off":
+            return 0.0
+        return 0.0  # Audio géré séparément
+
+    def _compute_preview(self, t: float) -> dict:
+        """Calcule {id(proj): (level, QColor)} depuis self._layers."""
+        projectors = getattr(self._main_window, 'projectors', [])
+        if not projectors or not self._layers:
+            return {}
+
+        n      = len(projectors)
+        result = {}
+
+        for i, proj in enumerate(projectors):
+            dim = 0.0; r = 0.0; g = 0.0; b = 0.0
+            has_dim = False
+            has_rgb_layer = False
+
+            _LETTER_TO_GROUP = {
+                "A": "face", "B": "lat", "C": "contre",
+                "D": "douche1", "E": "douche2", "F": "douche3",
+            }
+            for layer in self._layers:
+                preset = layer.target_preset
+                if preset == "Pair"   and i % 2 != 0: continue
+                if preset == "Impair" and i % 2 != 1: continue
+                if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
+
+                freq      = 0.3 + layer.speed / 100.0 * 3.5
+                spread    = layer.spread / 100.0
+                phase     = layer.phase  / 100.0
+                direction = getattr(layer, 'direction', 1)
+                if direction == 0:   # bounce
+                    t_osc = abs(2 * ((freq * t) % 1.0) - 1)
+                    x = (t_osc + i / max(n, 1) * spread + phase) % 1.0
+                elif direction == -1:  # arrière
+                    x = (freq * t - i / max(n, 1) * spread + phase) % 1.0
+                else:                  # avant (défaut)
+                    x = (freq * t + i / max(n, 1) * spread + phase) % 1.0
+
+                if layer.forme == "Audio":
+                    rng = _rnd.Random(int(t * 15) * 100 + i)
+                    raw = max(0.0, min(1.0, 0.5 + rng.uniform(-0.4, 0.4)))
+                else:
+                    raw = self._wave(layer.forme, x)
+
+                # FADE : adoucit la forme vers un sinus (0=dur, 100=doux)
+                fade_f = getattr(layer, 'fade', 0) / 100.0
+                if fade_f > 0:
+                    sin_val = (math.sin(2 * math.pi * x) + 1) / 2
+                    raw = raw * (1.0 - fade_f) + sin_val * fade_f
+
+                scaled = raw * layer.size / 100.0
+
+                attr = layer.attribute
+                if attr in ("Dimmer", "Strobe"):
+                    dim += scaled; has_dim = True
+                elif attr == "R": r += scaled; has_rgb_layer = True
+                elif attr == "V": g += scaled; has_rgb_layer = True
+                elif attr == "B": b += scaled; has_rgb_layer = True
+                elif attr == "RGB":
+                    has_rgb_layer = True
+                    c1 = QColor(getattr(layer, 'color1', '#ffffff'))
+                    r += c1.redF()   * scaled
+                    g += c1.greenF() * scaled
+                    b += c1.blueF()  * scaled
+                elif attr == "Permut":
+                    # raw = 0..1 (forme). Color1 ↔ Color2 selon raw.
+                    # Pour Flash: raw=1 → c1, raw=0 → c2. Pour Sinus: blend doux.
+                    has_rgb_layer = True
+                    c1 = QColor(getattr(layer, 'color1', '#ff0000'))
+                    c2 = QColor(getattr(layer, 'color2', '#0000ff'))
+                    amp = layer.size / 100.0
+                    r2 = 1.0 - raw  # fraction dans c2
+                    r += (c1.redF()   * raw + c2.redF()   * r2) * amp
+                    g += (c1.greenF() * raw + c2.greenF() * r2) * amp
+                    b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
+                # Pan / Tilt / Gobo ignorés pour la prévisualisation couleur
+
+            level = min(1.0, dim) if has_dim else 1.0
+            has_color = r > 0 or g > 0 or b > 0
+            if has_color:
+                color = QColor(min(255, int(r * 255)),
+                               min(255, int(g * 255)),
+                               min(255, int(b * 255)))
+                if not has_dim:
+                    level = min(1.0, max(r, g, b))
+            elif has_rgb_layer:
+                # Couche couleur présente mais en phase off → noir (pas blanc)
+                color = QColor(0, 0, 0)
+                if not has_dim:
+                    level = 0.0
             else:
-                ab.setToolTip(f"Assigner '{eff_name}' à B{i+1}")
-                ab.setStyleSheet(
-                    "QPushButton { background: #1a1a1a; color: #555; border: 1px solid #2a2a2a;"
-                    " border-radius: 5px; font-size: 10px; }"
-                    "QPushButton:hover { border-color: #00d4ff; color: #fff; }")
+                color = QColor(255, 255, 255)
+
+            result[id(proj)] = (level, color)
+
+        return result
+
+    # ── Mode de lecture ───────────────────────────────────────────────────────
+
+    def _set_play_mode(self, mode: str):
+        self._play_mode = mode
+        self._refresh_mode_btns()
+
+    def _refresh_mode_btns(self):
+        _on  = "background:#00d4ff;color:#000;border-color:#00d4ff;"
+        _off = "background:#1a1a1a;color:#666;border-color:#2a2a2a;"
+        _s   = "QPushButton{{{inner}border-radius:4px;font-size:10px;font-weight:bold;padding:0 8px;}}"
+        self._btn_loop.setStyleSheet(_s.format(inner=_on if self._play_mode == "loop" else _off))
+        self._btn_once.setStyleSheet(_s.format(inner=_on if self._play_mode == "once" else _off))
+
+    # ── Application ───────────────────────────────────────────────────────────
+
+    def _apply(self):
+        data = [layer.to_dict() for layer in self._layers]
+        for clip in self._clips:
+            clip.effect_layers    = data
+            clip.effect_play_mode = self._play_mode
+        self.accept()

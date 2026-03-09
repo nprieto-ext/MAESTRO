@@ -17,6 +17,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from light_timeline import LightTrack, LightClip, ColorPalette
 from core import media_icon
+from effect_editor import EffectEditorDialog
 
 
 class _AnalysisCancelled(Exception):
@@ -594,6 +595,10 @@ class LightTimelineEditor(QDialog):
         speed_action = effect_menu.addAction("🎚 Vitesse de l'effet (sélection)...")
         speed_action.triggered.connect(self.edit_effect_speed_selection)
 
+        effect_menu.addSeparator()
+        fx_editor_action = effect_menu.addAction("✦ Editeur d'effets...")
+        fx_editor_action.triggered.connect(self.open_effect_editor)
+
         return menubar
 
     def _create_header(self):
@@ -1088,6 +1093,8 @@ class LightTimelineEditor(QDialog):
                     clip.fade_out_duration = clip_data.get('fade_out', 0)
                     clip.effect = clip_data.get('effect')
                     clip.effect_speed = clip_data.get('effect_speed', 50)
+                    clip.effect_layers    = clip_data.get('effect_layers', [])
+                    clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
 
                     if clip_data.get('color2'):
                         clip.color2 = QColor(clip_data['color2'])
@@ -1120,7 +1127,9 @@ class LightTimelineEditor(QDialog):
                     'fade_in': getattr(clip, 'fade_in_duration', 0),
                     'fade_out': getattr(clip, 'fade_out_duration', 0),
                     'effect': getattr(clip, 'effect', None),
-                    'effect_speed': getattr(clip, 'effect_speed', 50)
+                    'effect_speed': getattr(clip, 'effect_speed', 50),
+                    'effect_layers': getattr(clip, 'effect_layers', []),
+                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                 }
 
                 if hasattr(clip, 'color2') and clip.color2:
@@ -1493,6 +1502,8 @@ class LightTimelineEditor(QDialog):
                     'fade_out': clip.fade_out_duration,
                     'effect': clip.effect,
                     'effect_speed': clip.effect_speed,
+                    'effect_layers': getattr(clip, 'effect_layers', []),
+                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                 })
         # Stocker les offsets relatifs au premier clip
         if min_start is not None:
@@ -1530,6 +1541,8 @@ class LightTimelineEditor(QDialog):
             clip.fade_out_duration = item.get('fade_out', 0)
             clip.effect = item.get('effect')
             clip.effect_speed = item.get('effect_speed', 50)
+            clip.effect_layers    = item.get('effect_layers', [])
+            clip.effect_play_mode = item.get('effect_play_mode', 'loop')
             track.selected_clips.append(clip)
             count += 1
 
@@ -1554,6 +1567,8 @@ class LightTimelineEditor(QDialog):
                     'fade_out': clip.fade_out_duration,
                     'effect': clip.effect,
                     'effect_speed': clip.effect_speed,
+                    'effect_layers': getattr(clip, 'effect_layers', []),
+                    'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                 }
                 state.append(clip_data)
 
@@ -1591,6 +1606,8 @@ class LightTimelineEditor(QDialog):
                 clip.fade_out_duration = clip_data.get('fade_out', 0)
                 clip.effect = clip_data.get('effect')
                 clip.effect_speed = clip_data.get('effect_speed', 50)
+                clip.effect_layers    = clip_data.get('effect_layers', [])
+                clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
 
         for track in self.tracks:
             track.update()
@@ -1889,6 +1906,23 @@ class LightTimelineEditor(QDialog):
         if dialog.exec() == QDialog.Accepted:
             for clip in selected:
                 clip.effect_speed = slider.value()
+            for track in self.tracks:
+                track.update()
+            self.save_state()
+
+    def open_effect_editor(self):
+        """Ouvre l'editeur d'effets par couches sur les clips selectionnes"""
+        selected = []
+        for track in self.tracks:
+            selected.extend(track.selected_clips)
+
+        if not selected:
+            QMessageBox.warning(self, "Aucune selection",
+                "Selectionnez un ou plusieurs blocs d'abord.")
+            return
+
+        dlg = EffectEditorDialog(selected, self.main_window, parent=self)
+        if dlg.exec() == EffectEditorDialog.Accepted:
             for track in self.tracks:
                 track.update()
             self.save_state()

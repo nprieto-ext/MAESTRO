@@ -235,12 +235,20 @@ class MIDIHandler(QObject):
                     if self.owner_window:
                         self.owner_window.toggle_fader_mute_from_midi(fader_idx)
 
-                # Bouton 9 (note 122 - BLACKOUT)
+                # Bouton au-dessus fader 9 (note 122 - TAP TEMPO)
                 elif note == 122:
                     if self.debug_mode:
-                        print(f"   ✅ Bouton BLACKOUT (note {note}) détecté")
+                        print(f"   ✅ Bouton TAP TEMPO (note {note}) détecté")
                     if self.owner_window:
-                        self.owner_window.toggle_blackout_from_midi()
+                        self.owner_window._tap_tempo()
+                    # Flash LED bref pour feedback visuel
+                    if self.midi_out:
+                        try:
+                            self.midi_out.send_message([0x90, 122, 3])
+                            QTimer.singleShot(150, lambda: self.midi_out.send_message([0x90, 122, 0])
+                                              if self.midi_out else None)
+                        except Exception:
+                            pass
 
                 # Pads de la grille 8x8: Notes 0-63
                 elif 0 <= note <= 63:
