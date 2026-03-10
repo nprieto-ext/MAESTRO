@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from PySide6.QtWidgets import (
     QPushButton, QWidget, QMenu, QWidgetAction, QLabel, QHBoxLayout,
-    QDoubleSpinBox,
+    QDoubleSpinBox, QLineEdit,
 )
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygon
 
 
@@ -157,6 +157,38 @@ class EffectButton(QPushButton):
             QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
         """)
 
+        # ── Barre de recherche ────────────────────────────────────────────────
+        search_container = QWidget()
+        search_container.setStyleSheet("background: transparent;")
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(6, 4, 6, 4)
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setStyleSheet("""
+            QLineEdit {
+                background: #111;
+                color: #e0e0e0;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #00d4ff; }
+        """)
+        # Empêcher les touches directionnelles de fermer le menu
+        def _search_key(event):
+            if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter):
+                event.accept()
+                return
+            QLineEdit.keyPressEvent(search_input, event)
+        search_input.keyPressEvent = _search_key
+        search_layout.addWidget(search_input)
+        search_wa = QWidgetAction(menu)
+        search_wa.setDefaultWidget(search_container)
+        menu.addAction(search_wa)
+        menu.addSeparator()
+
         # Si current_effect est un nom de type legacy ("Strobe", "Chase"...) sans match
         # exact dans la liste, on fait un fallback par type pour trouver le premier match
         cur = self.current_effect
@@ -168,7 +200,6 @@ class EffectButton(QPushButton):
                 return True
             # Fallback : current_effect est un type legacy ("Strobe", "Flash"...)
             if not name_is_full_match and cur and eff.get("type") == cur:
-                # Ne cocher que le premier de ce type
                 first_of_type = next(
                     (e for e in all_effects if e.get("type") == cur), None
                 )
@@ -180,33 +211,60 @@ class EffectButton(QPushButton):
         act_none.setCheckable(True)
         act_none.setChecked(not cur)
         act_none.triggered.connect(lambda: self._select_editor_effect(None))
-        menu.addSeparator()
+        sep_top = menu.addSeparator()
 
-        # Grouper par catégorie
-        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés"]
+        # Grouper par catégorie et garder les références pour le filtrage
+        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+        # cat_groups : [(hdr_act, sep_act_before, [(eff_act, eff_name), ...])]
+        cat_groups = []
         for cat in CATS:
             cat_effs = [e for e in all_effects if e.get("category") == cat]
             if not cat_effs:
                 continue
             hdr = menu.addAction(f"  {cat.upper()}")
             hdr.setEnabled(False)
+            eff_actions = []
             for eff in cat_effs:
                 name = eff.get("name", "")
                 act = menu.addAction(f"  {name}")
                 act.setCheckable(True)
                 act.setChecked(_is_checked(eff))
                 act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
+                eff_actions.append((act, name))
+            cat_groups.append((hdr, eff_actions))
 
         # Effets sans catégorie connue
         other = [e for e in all_effects if e.get("category", "") not in CATS]
         if other:
-            menu.addSeparator()
+            sep_other = menu.addSeparator()
+            other_actions = []
             for eff in other:
                 name = eff.get("name", "")
                 act = menu.addAction(f"  {name}")
                 act.setCheckable(True)
                 act.setChecked(_is_checked(eff))
                 act.triggered.connect(lambda checked=False, e=dict(eff): self._select_editor_effect(e))
+                other_actions.append((act, name))
+            cat_groups.append((sep_other, other_actions))
+
+        # ── Filtrage dynamique ────────────────────────────────────────────────
+        def _apply_filter(text):
+            q = text.strip().lower()
+            # "Aucun" visible seulement sans filtre
+            act_none.setVisible(not q)
+            sep_top.setVisible(not q)
+            for hdr_act, eff_acts in cat_groups:
+                any_visible = False
+                for act, name in eff_acts:
+                    visible = not q or q in name.lower()
+                    act.setVisible(visible)
+                    if visible:
+                        any_visible = True
+                hdr_act.setVisible(any_visible)
+
+        search_input.textChanged.connect(_apply_filter)
+        # Focus automatique sur la barre de recherche à l'ouverture
+        QTimer.singleShot(0, search_input.setFocus)
 
         # ── Sous-menu Mode de déclenchement ──────────────────────────────────
         menu.addSeparator()

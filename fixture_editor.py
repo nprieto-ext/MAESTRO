@@ -251,11 +251,11 @@ class ChannelRowWidget(QWidget):
 _SUB_ROLE = Qt.UserRole + 2   # sous-texte type · canaux
 
 class _FixtureItemDelegate(QStyledItemDelegate):
-    """Affiche 2 lignes : nom (blanc) + type·canaux (gris)."""
+    """Affiche une ligne simple : nom coloré selon sélection."""
     def sizeHint(self, option, index):
         if not index.data(Qt.UserRole):  # headers
             return QSize(option.rect.width(), 22)
-        return QSize(option.rect.width(), 46)
+        return QSize(option.rect.width(), 28)
 
     def paint(self, painter, option, index):
         if not index.data(Qt.UserRole):  # section header — rendu standard
@@ -278,21 +278,12 @@ class _FixtureItemDelegate(QStyledItemDelegate):
         else:
             fg = index.data(Qt.ForegroundRole)
             name_color = fg.color() if fg else QColor("#aaa")
-        f_name = painter.font()
-        f_name.setPointSize(11)
+        f_name = option.font
         f_name.setBold(is_selected)
         painter.setFont(f_name)
         painter.setPen(name_color)
-        painter.drawText(QRect(x + 10, y + 4, w - 14, 20), Qt.AlignVCenter | Qt.AlignLeft,
+        painter.drawText(QRect(x + 10, y, w - 14, h), Qt.AlignVCenter | Qt.AlignLeft,
                          index.data(Qt.DisplayRole) or "")
-        sub = index.data(_SUB_ROLE) or ""
-        if sub:
-            f_sub = painter.font()
-            f_sub.setPointSize(9)
-            f_sub.setBold(False)
-            painter.setFont(f_sub)
-            painter.setPen(QColor("#00d4ff88") if is_selected else QColor("#444"))
-            painter.drawText(QRect(x + 10, y + 26, w - 14, 16), Qt.AlignVCenter | Qt.AlignLeft, sub)
         painter.restore()
 
 
@@ -411,6 +402,36 @@ class FixtureEditorDialog(QDialog):
         self._create_menu_bar(menubar)
         outer.addWidget(menubar)
 
+        # ── Barre de recherche + bouton Nouvelle fixture ─────────────────────
+        top_bar = QWidget()
+        top_bar.setFixedHeight(52)
+        top_bar.setStyleSheet("QWidget{background:#0d0d0d;border-bottom:1px solid #1a1a1a;}")
+        tb_layout = QHBoxLayout(top_bar)
+        tb_layout.setContentsMargins(12, 8, 12, 8)
+        tb_layout.setSpacing(10)
+
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("🔍  Rechercher fabricant ou fixture...")
+        self._search_edit.setFixedHeight(32)
+        self._search_edit.setStyleSheet(
+            "QLineEdit{background:#1a1a1a;color:#ddd;border:1px solid #2a2a2a;"
+            "border-radius:6px;padding:0 12px;font-size:12px;}"
+            "QLineEdit:focus{border-color:#00d4ff55;}"
+        )
+        self._search_edit.textChanged.connect(self._on_search_changed)
+        tb_layout.addWidget(self._search_edit, 1)
+
+        btn_new = QPushButton("✦  Nouvelle fixture")
+        btn_new.setFixedHeight(32)
+        btn_new.setStyleSheet(
+            "QPushButton{background:#1a3a2a;color:#44cc88;border:1px solid #44cc8844;"
+            "border-radius:6px;font-size:12px;font-weight:bold;padding:0 14px;}"
+            "QPushButton:hover{border-color:#44cc88;color:#66ee99;}"
+        )
+        btn_new.clicked.connect(self._new_fixture)
+        tb_layout.addWidget(btn_new)
+        outer.addWidget(top_bar)
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(2)
         outer.addWidget(splitter, 1)
@@ -425,17 +446,11 @@ class FixtureEditorDialog(QDialog):
 
         # ── Col 1 : Fabricants ───────────────────────────────────────────────
         mfr_panel = QWidget()
-        mfr_panel.setMinimumWidth(160)
+        mfr_panel.setMinimumWidth(140)
         mfr_panel.setStyleSheet("QWidget{background:#0d0d0d;border-right:1px solid #1a1a1a;}")
         mv = QVBoxLayout(mfr_panel)
-        mv.setContentsMargins(10, 14, 10, 12)
-        mv.setSpacing(6)
-
-        mfr_hdr = QLabel("FABRICANTS")
-        mfr_hdr.setStyleSheet(
-            "font-size:9px;color:#444;font-weight:bold;letter-spacing:1.5px;background:transparent;"
-        )
-        mv.addWidget(mfr_hdr)
+        mv.setContentsMargins(8, 10, 8, 10)
+        mv.setSpacing(0)
 
         self._mfr_list = QListWidget()
         self._mfr_list.setStyleSheet(_LIST_SS)
@@ -445,23 +460,11 @@ class FixtureEditorDialog(QDialog):
 
         # ── Col 2 : Fixtures ─────────────────────────────────────────────────
         fix_panel = QWidget()
-        fix_panel.setMinimumWidth(200)
+        fix_panel.setMinimumWidth(180)
         fix_panel.setStyleSheet("QWidget{background:#0d0d0d;border-right:1px solid #1a1a1a;}")
         fv2 = QVBoxLayout(fix_panel)
-        fv2.setContentsMargins(10, 14, 10, 12)
-        fv2.setSpacing(6)
-
-        fx_hdr = QLabel("FIXTURES")
-        fx_hdr.setStyleSheet(
-            "font-size:9px;color:#444;font-weight:bold;letter-spacing:1.5px;background:transparent;"
-        )
-        fv2.addWidget(fx_hdr)
-
-        self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("🔍  Rechercher...")
-        self._search_edit.setFixedHeight(32)
-        self._search_edit.textChanged.connect(self._on_search_changed)
-        fv2.addWidget(self._search_edit)
+        fv2.setContentsMargins(8, 10, 8, 10)
+        fv2.setSpacing(0)
 
         self._list_widget = QListWidget()
         self._list_widget.setStyleSheet(_LIST_SS)
@@ -471,16 +474,6 @@ class FixtureEditorDialog(QDialog):
         self._list_widget.viewport().setMouseTracking(True)
         self._list_widget.setItemDelegate(_FixtureItemDelegate(self._list_widget))
         fv2.addWidget(self._list_widget, 1)
-
-        btn_new = QPushButton("✦  Nouvelle fixture")
-        btn_new.setFixedHeight(34)
-        btn_new.setStyleSheet(
-            "QPushButton{background:#1a3a2a;color:#44cc88;border:1px solid #44cc8844;"
-            "border-radius:6px;font-size:12px;font-weight:bold;}"
-            "QPushButton:hover{border-color:#44cc88;color:#66ee99;}"
-        )
-        btn_new.clicked.connect(self._new_fixture)
-        fv2.addWidget(btn_new)
         splitter.addWidget(fix_panel)
 
         # ── Col 3 : Édition ──────────────────────────────────────────────────
@@ -637,7 +630,7 @@ class FixtureEditorDialog(QDialog):
 
         rv.addLayout(btn_row)
         splitter.addWidget(right)
-        splitter.setSizes([170, 250, 700])
+        splitter.setSizes([155, 210, 700])
 
         self._list_widget.currentRowChanged.connect(self._on_list_selection)
 
@@ -689,14 +682,10 @@ class FixtureEditorDialog(QDialog):
         query = self._search_edit.text().strip().lower() if hasattr(self, '_search_edit') else ""
 
         cur_item = self._mfr_list.currentItem()
-        cur_mfr = cur_item.data(Qt.UserRole) if cur_item else None  # None = "Tous"
+        cur_mfr = cur_item.data(Qt.UserRole) if cur_item else None
 
         self._mfr_list.blockSignals(True)
         self._mfr_list.clear()
-
-        all_item = QListWidgetItem("Tous")
-        all_item.setData(Qt.UserRole, None)
-        self._mfr_list.addItem(all_item)
 
         mfr_counts: dict[str, int] = {}
         for fx in self._all_fixtures():
@@ -763,7 +752,7 @@ class FixtureEditorDialog(QDialog):
                 bmfr   = bfx.get("manufacturer", "")
                 bftype = bfx.get("fixture_type", "")
                 bn_ch  = len(bfx.get("profile", []))
-                bitem  = QListWidgetItem(f"◦  {bname}")
+                bitem  = QListWidgetItem(bname)
                 bitem.setData(_BUNDLE_ROLE, bfx)
                 bitem.setData(_SUB_ROLE, f"{bftype}  ·  {bn_ch} ch  ·  {bmfr}")
                 bitem.setForeground(QColor("#4488aa"))
@@ -794,8 +783,7 @@ class FixtureEditorDialog(QDialog):
                 is_builtin = fx.get("builtin", False)
                 ftype  = fx.get("fixture_type", "")
                 n_ch   = len(fx.get("profile", []))
-                icon   = "◦" if is_builtin else "◈"
-                item   = QListWidgetItem(f"{icon}  {name}")
+                item   = QListWidgetItem(name)
                 item.setData(Qt.UserRole, i)
                 item.setData(_SUB_ROLE, f"{ftype}  ·  {n_ch} ch")
                 item.setForeground(QColor("#777" if is_builtin else "#dddddd"))

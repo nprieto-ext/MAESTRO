@@ -1310,6 +1310,8 @@ class PlanDeFeu(QFrame):
         dim_wa = QWidgetAction(menu)
         dim_wa.setDefaultWidget(dim_w)
         menu.addAction(dim_wa)
+        menu.addSeparator()
+        menu.addAction("✏  Remplacer la fixture...", lambda: self._edit_fixture(fixture_idx))
         menu.exec(global_pos)
 
     def _show_canvas_context_menu(self, global_pos, local_pos=None):
@@ -1407,6 +1409,8 @@ class PlanDeFeu(QFrame):
                 proj.fixture_type = data['fixture_type']
                 proj.group = data['group']
                 proj.start_address = data['start_address']
+                if data.get('profile'):
+                    proj.dmx_profile = data['profile']
                 if self.main_window and hasattr(self.main_window, '_rebuild_dmx_patch'):
                     self.main_window._rebuild_dmx_patch()
                 self.refresh()
@@ -1560,7 +1564,7 @@ class _FixtureFormWidget(QWidget):
         from artnet_dmx import DMX_PROFILES, profile_display_text
         self.profile_combo.clear()
         TYPE_PROFILES = {
-            "PAR LED":        ["RGB", "RGBD", "RGBDS", "RGBSD", "DRGB", "DRGBS",
+            "PAR LED":        ["DIM", "RGB", "RGBD", "RGBDS", "RGBSD", "DRGB", "DRGBS",
                                "RGBW", "RGBWD", "RGBWDS", "RGBWZ", "RGBWA", "RGBWAD", "RGBWOUV"],
             "Moving Head":    ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
             "Barre LED":      ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
@@ -1715,11 +1719,25 @@ class EditFixtureDialog(QDialog):
             QLabel { color: #ccc; }
         """)
 
+        # Retrouver la clé du profil DMX à partir de la liste stockée sur le projecteur
+        profile_key = None
+        stored_profile = getattr(proj, 'dmx_profile', None)
+        if isinstance(stored_profile, list) and stored_profile:
+            try:
+                from artnet_dmx import DMX_PROFILES
+                for k, v in DMX_PROFILES.items():
+                    if list(v) == stored_profile:
+                        profile_key = k
+                        break
+            except Exception:
+                pass
+
         preset = {
             'name': proj.name,
             'fixture_type': getattr(proj, 'fixture_type', 'PAR LED'),
             'start_address': proj.start_address,
             'group': proj.group,
+            'profile': profile_key,
         }
         root = QVBoxLayout(self)
         self._form = _FixtureFormWidget(projectors, preset=preset, parent=self)

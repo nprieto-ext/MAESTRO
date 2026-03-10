@@ -2329,6 +2329,7 @@ class EffectEditorDialog(QDialog):
         self._preview_timer = QTimer(self)
         self._preview_timer.timeout.connect(self._preview_tick)
         self.finished.connect(lambda _: self._stop_preview())
+        self.finished.connect(lambda _: self._autosave_on_close())
 
         self._build_ui()
         self._rebuild_rows()
@@ -2604,11 +2605,15 @@ class EffectEditorDialog(QDialog):
         if not ok or not name.strip():
             return
         name = name.strip()
+        src_eff = next(
+            (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == self._selected_card),
+            None
+        )
         custom = {
             "name":     name,
             "emoji":    "★",
             "category": "Mes Effets",
-            "type":     self._selected_card or "Custom",
+            "type":     src_eff.get("type", "Custom") if src_eff else "Custom",
             "layers":   [l.to_dict() for l in self._layers],
         }
         self._custom_effects.append(custom)
@@ -2738,29 +2743,44 @@ class EffectEditorDialog(QDialog):
             btn.setChecked(is_me)
             btn.blockSignals(False)
 
+    def _autosave_on_close(self):
+        """À la fermeture, sauvegarde automatiquement les couches éditées sur tous
+        les boutons déjà assignés à l'effet courant — plus besoin de cliquer E1-E8."""
+        if not self._main_window or not self._selected_card or not self._layers:
+            return
+        cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
+        cur_name = self._selected_card
+        eff_dict = next(
+            (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == cur_name),
+            None
+        )
+        layers_data = [l.to_dict() for l in self._layers]
+        saved = False
+        for btn_idx, cfg in cfg_map.items():
+            if isinstance(cfg, dict) and cfg.get("name") == cur_name:
+                cfg["layers"] = layers_data
+                if eff_dict:
+                    cfg["type"] = eff_dict.get("type", cfg.get("type", ""))
+                saved = True
+        if saved and hasattr(self._main_window, '_save_effect_assignments'):
+            self._main_window._save_effect_assignments()
+
     def _on_assign(self, btn_idx: int):
         if not self._main_window or not self._selected_card:
             self._assign_btns[btn_idx].setChecked(False)
             return
-        cfg_map  = getattr(self._main_window, '_button_effect_configs', {})
         cur_name = self._selected_card
-        already  = isinstance(cfg_map.get(btn_idx), dict) and \
-                   cfg_map.get(btn_idx, {}).get("name") == cur_name
-        if already:
-            if hasattr(self._main_window, '_on_effect_assigned'):
-                self._main_window._on_effect_assigned(btn_idx, None)
-        else:
-            eff_dict = next(
-                (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == cur_name),
-                None
-            )
-            cfg = {
-                "name":   cur_name,
-                "type":   eff_dict.get("type", "") if eff_dict else "",
-                "layers": [l.to_dict() for l in self._layers],
-            }
-            if hasattr(self._main_window, '_on_effect_assigned'):
-                self._main_window._on_effect_assigned(btn_idx, cfg)
+        eff_dict = next(
+            (e for e in BUILTIN_EFFECTS + self._custom_effects if e.get("name") == cur_name),
+            None
+        )
+        cfg = {
+            "name":   cur_name,
+            "type":   eff_dict.get("type", "") if eff_dict else "",
+            "layers": [l.to_dict() for l in self._layers],
+        }
+        if hasattr(self._main_window, '_on_effect_assigned'):
+            self._main_window._on_effect_assigned(btn_idx, cfg)
         self._refresh_assign_btns()
 
     # ── Header / Footer ───────────────────────────────────────────────────────
@@ -2820,11 +2840,29 @@ class EffectEditorDialog(QDialog):
     def _rebuild_rows(self):
         pass  # Layer rows replaced by SimpleEffectPanel
 
+    def _get_saved_layers_for(self, name: str) -> list:
+        """Retourne les EffectLayer sauvegardés pour cet effet (si assigné à un bouton)."""
+        if not self._main_window or not name:
+            return []
+        cfg_map = getattr(self._main_window, '_button_effect_configs', {})
+        for cfg in cfg_map.values():
+            if isinstance(cfg, dict) and cfg.get("name") == name:
+                layers_data = cfg.get("layers", [])
+                if layers_data:
+                    return [EffectLayer.from_dict(d) for d in layers_data]
+        return []
+
     def _apply_preset(self, eff: dict):
         """Remplace les couches par le preset et met à jour le panneau central."""
         self._selected_card = eff.get("name", "")
         self._layers.clear()
-        self._layers.extend(EffectLayer.layers_from_builtin(eff))
+        # Si cet effet est déjà assigné à un bouton avec des layers personnalisés,
+        # charger ces layers plutôt que les valeurs builtin par défaut
+        saved_layers = self._get_saved_layers_for(self._selected_card)
+        if saved_layers:
+            self._layers.extend(saved_layers)
+        else:
+            self._layers.extend(EffectLayer.layers_from_builtin(eff))
         self._simple_panel.set_effect(eff, self._layers)
         self._rebuild_library()
         self._refresh_assign_btns()

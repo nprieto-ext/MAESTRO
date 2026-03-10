@@ -437,18 +437,28 @@ print(json.dumps(energy))
             if not strobe_on:
                 lat_level = 0
 
-        # === GROUPES D/E/F : chase sequentiel — un groupe actif a la fois ===
+        # === GROUPES D/E/F : tous actifs — accent qui tourne sur les beats ===
         grp_d_max = max_dimmers.get('douche1', 100) / 100.0
         grp_e_max = max_dimmers.get('douche2', 100) / 100.0
         grp_f_max = max_dimmers.get('douche3', 100) / 100.0
-        def_color = self.palette[self._contre_color_idx] if self.palette else self.dominant_color
         def_base_level = int((70 + energy * 30) * global_fade)
+        pal = self.palette if self.palette else [self.dominant_color]
         if is_flashing:
-            def_color = QColor(255, 255, 255)
-            def_base_level = 100
-        grp_d_level = def_base_level if self._def_chase_idx == 0 else 0
-        grp_e_level = def_base_level if self._def_chase_idx == 1 else 0
-        grp_f_level = def_base_level if self._def_chase_idx == 2 else 0
+            # Flash : tous à blanc max
+            grp_d_level = grp_e_level = grp_f_level = 100
+            def_color_d = def_color_e = def_color_f = QColor(255, 255, 255)
+        else:
+            # Tous actifs : groupe accentué à plein niveau, les autres à ~45 %
+            accent = def_base_level
+            base   = max(20, int(def_base_level * 0.45))
+            grp_d_level = accent if self._def_chase_idx == 0 else base
+            grp_e_level = accent if self._def_chase_idx == 1 else base
+            grp_f_level = accent if self._def_chase_idx == 2 else base
+            # Couleurs décalées dans la palette pour chaque groupe
+            def_color_d = pal[self._contre_color_idx % len(pal)]
+            def_color_e = pal[(self._contre_color_idx + 2) % len(pal)]
+            def_color_f = pal[(self._contre_color_idx + 4) % len(pal)]
+        def_color = def_color_d  # compat retour
 
         # Couleurs alternatives pour mode bicolore
         contre_alt = None
@@ -463,9 +473,9 @@ print(json.dumps(energy))
             'face': (face_color, max(0, min(100, face_level))),
             'contre': (contre_color, max(0, min(100, contre_level))),
             'lat': (lat_color, max(0, min(100, lat_level))),
-            'douche1': (def_color, max(0, min(100, int(grp_d_level * grp_d_max)))),
-            'douche2': (def_color, max(0, min(100, int(grp_e_level * grp_e_max)))),
-            'douche3': (def_color, max(0, min(100, int(grp_f_level * grp_f_max)))),
+            'douche1': (def_color_d, max(0, min(100, int(grp_d_level * grp_d_max)))),
+            'douche2': (def_color_e, max(0, min(100, int(grp_e_level * grp_e_max)))),
+            'douche3': (def_color_f, max(0, min(100, int(grp_f_level * grp_f_max)))),
             'contre_alt': contre_alt,
             'lat_alt': lat_alt,
             'face_alt': face_alt,

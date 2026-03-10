@@ -506,6 +506,11 @@ class MainWindow(QMainWindow):
         self._tap_btn = None         # reference au bouton tap tempo
         self.active_dual_pad = None
         self.audio_ai = AudioColorAI()
+        self._ia_fadeout_timer = None
+        self._ia_fadeout_levels = {}
+        self._ia_fadeout_steps = 0
+        self._ia_fadeout_total = 30   # 30 × 50 ms = 1.5 s
+        self._ia_fadeout_callback = None
         self.fader_buttons = []
         self.faders = {}
         self.pads = {}
@@ -1268,6 +1273,15 @@ class MainWindow(QMainWindow):
             layout.addWidget(cart)
             self.cartouches.append(cart)
 
+        layout.addSpacing(8)
+        self._bpm_label = QLabel("— BPM")
+        self._bpm_label.setAlignment(Qt.AlignCenter)
+        self._bpm_label.setStyleSheet(
+            "QLabel { color: #444; font-size: 11px; font-weight: bold; "
+            "background: transparent; }"
+        )
+        layout.addWidget(self._bpm_label)
+
         layout.addStretch()
 
         # Banniere de licence supprimee
@@ -1531,18 +1545,29 @@ class MainWindow(QMainWindow):
                 self.stop_recording()
                 return
 
-            # Reset IA Lumiere si le mode courant est IA
             current_mode = self.seq.get_dmx_mode(self.seq.current_row)
+            next_row = self.seq.current_row + 1
+
+            # IA Lumière : fade-out puis transition
             if current_mode == "IA Lumiere":
                 self.audio_ai.reset()
 
-            next_row = self.seq.current_row + 1
+                def _after_ia_fade():
+                    if next_row < self.seq.table.rowCount():
+                        self.seq.play_row(next_row)
+                    else:
+                        print("Fin de la sequence")
+                        self.update_play_icon(QMediaPlayer.StoppedState)
+                        self._update_video_output_state()
+
+                self._ia_start_fadeout(_after_ia_fade)
+                return
 
             if next_row < self.seq.table.rowCount():
                 next_mode = self.seq.get_dmx_mode(next_row)
                 if current_mode == "Play Lumiere":
                     self.full_blackout()
-                elif (current_mode in ["IA Lumiere", "Programme"]) and next_mode == "Manuel":
+                elif current_mode == "Programme" and next_mode == "Manuel":
                     self.full_blackout()
 
                 self.seq.play_row(next_row)
@@ -1707,6 +1732,32 @@ class MainWindow(QMainWindow):
         toast.raise_()
         QTimer.singleShot(2200, toast.deleteLater)
 
+    def _show_bpm_toast(self, bpm: int):
+        """Affiche le BPM calculé via tap tempo dans un popup éphémère."""
+        # Supprimer un éventuel toast BPM précédent encore affiché
+        existing = getattr(self, '_bpm_toast_widget', None)
+        if existing:
+            try:
+                existing.deleteLater()
+            except Exception:
+                pass
+        toast = QLabel(f"🎵  {bpm} BPM", self)
+        toast.setStyleSheet(
+            "QLabel { background: #1a1a2e; color: #00d4ff; "
+            "border: 1px solid #00d4ff; border-radius: 8px; "
+            "padding: 8px 20px; font-size: 16px; font-weight: bold; }"
+        )
+        toast.setWindowFlags(Qt.SubWindow)
+        toast.adjustSize()
+        # Centré horizontalement, proche du bas
+        x = (self.width() - toast.width()) // 2
+        y = self.height() - toast.height() - 24
+        toast.move(x, y)
+        toast.show()
+        toast.raise_()
+        self._bpm_toast_widget = toast
+        QTimer.singleShot(2500, toast.deleteLater)
+
     def _activate_memory_pad(self, btn, mem_col, row):
         """Active un pad memoire - independant par colonne.
         Chaque colonne memoire est independante : activer un pad dans la colonne 2
@@ -1725,6 +1776,7 @@ class MainWindow(QMainWindow):
                 )
                 self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
             self._show_mem_toast("✔ Séquence enregistrée")
+            self._blink_memory_pad(mem_col, row)
             return
 
         col_akai = self._mem_col_to_fader(mem_col)
@@ -1861,6 +1913,43 @@ class MainWindow(QMainWindow):
             velocity = rgb_to_akai_velocity(color)
             channel = 0x96 if active else 0x90
             self.midi_handler.midi_out.send_message([channel, note, velocity])
+
+    def _blink_memory_pad(self, mem_col, row, n_blinks=6):
+        """Fait clignoter un pad mémoire n_blinks fois après enregistrement."""
+        col_akai = self._mem_col_to_fader(mem_col)
+        pad = self.pads.get((row, col_akai))
+        if not pad:
+            return
+
+        blink_state = [0]
+        total_ticks = n_blinks * 2  # ON + OFF par blink
+
+        def _tick():
+            blink_state[0] += 1
+            if blink_state[0] > total_ticks:
+                # Restaurer le style normal
+                is_active = self.active_memory_pads.get(col_akai) == row
+                self._style_memory_pad(mem_col, row, active=is_active)
+                self._update_memory_pad_led(mem_col, row, active=is_active)
+                return
+
+            on = (blink_state[0] % 2 == 1)
+            if on:
+                pad.setStyleSheet(
+                    "QPushButton { background: #ffffff; border: 2px solid #cccccc; border-radius: 4px; }"
+                )
+                if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+                    self.midi_handler.set_pad_led(row, col_akai, 3, brightness_percent=100)
+            else:
+                pad.setStyleSheet(
+                    "QPushButton { background: #111111; border: 1px solid #333333; border-radius: 4px; }"
+                )
+                if MIDI_AVAILABLE and hasattr(self, 'midi_handler') and self.midi_handler.midi_out:
+                    self.midi_handler.set_pad_led(row, col_akai, 0)
+
+            QTimer.singleShot(200, _tick)
+
+        _tick()
 
     def _set_memory_custom_color(self, mem_col, row, color):
         """Definit une couleur personnalisee pour un pad memoire"""
@@ -2494,7 +2583,8 @@ class MainWindow(QMainWindow):
                 forme     = ld.get("forme", "Sinus")
                 attr      = ld.get("attribute", "Dimmer")
 
-                freq = 0.3 + speed / 100.0 * 3.5
+                fader_mult = max(0.05, self.effect_speed / 100.0)
+                freq = (0.3 + speed / 100.0 * 3.5) * fader_mult
                 sp   = spread / 100.0
                 if direction == 0:
                     t_osc = abs(2 * ((freq * t) % 1.0) - 1)
@@ -2551,15 +2641,16 @@ class MainWindow(QMainWindow):
         import math as _math
 
         etype      = cfg.get("type", "Pulse")
-        speed_raw  = cfg.get("speed", 50)
-        # Fader FX : 0 = très lent (5%), 100 = vitesse configurée (100%)
+        # Fader FX : contrôle direct de la vitesse (0=lent, 100=rapide)
         fader = self.effect_speed  # 0-100
-        speed_raw = int(speed_raw * max(0.05, fader / 100.0))
+        # sf : 0 = lent (sf=1.0) → 100 = rapide (sf=0.05), identique à update_effect
+        sf_fader = max(0.05, 1.0 - (fader / 100.0) * 0.95)
+        speed_raw  = cfg.get("speed", 50)
         target     = cfg.get("target", "all")
         color_mode = cfg.get("color_mode", "base")
         custom_hex = cfg.get("custom_color", "#ffffff")
 
-        sf = max(0.05, 1.0 - speed_raw / 100.0 * 0.95)
+        sf = sf_fader  # vitesse contrôlée par le fader FX
 
         def resolve(p, idx):
             if color_mode == "white":  return QColor(255, 255, 255)
@@ -2585,7 +2676,7 @@ class MainWindow(QMainWindow):
         black = QColor(0, 0, 0)
 
         if etype in ("Strobe", "Flash"):
-            interval = max(25, int(500 - speed_raw / 100.0 * 475))
+            interval = max(25, int(500 - (fader / 100.0) * 475))
             self.effect_timer.setInterval(interval)
             if target == "alternate":
                 phase = self.effect_state % 2
@@ -2613,7 +2704,7 @@ class MainWindow(QMainWindow):
                 c = resolve(p, i)
                 bv = (p.level / 100.0) * b
                 p.color = QColor(int(c.red()*bv), int(c.green()*bv), int(c.blue()*bv))
-            step = 2 + int(speed_raw / 20)
+            step = 2 + int(fader / 20)
             self.effect_brightness += self.effect_direction * step
             if self.effect_brightness >= 100: self.effect_brightness, self.effect_direction = 100, -1
             if self.effect_brightness <= 0:   self.effect_brightness, self.effect_direction = 0, 1
@@ -2625,7 +2716,7 @@ class MainWindow(QMainWindow):
                 b = (p.level / 100.0) * (abs(50 - phase) / 50.0)
                 c = resolve(p, i)
                 p.color = QColor(int(c.red()*b), int(c.green()*b), int(c.blue()*b))
-            self.effect_state += 3 + int(speed_raw / 25)
+            self.effect_state += 3 + int(fader / 25)
 
         elif etype == "Chase":
             self.effect_timer.setInterval(max(40, int(400 * sf)))
@@ -2751,11 +2842,17 @@ class MainWindow(QMainWindow):
         if 8 in self.faders:
             self.faders[8].set_value(speed)
 
-        # Afficher le BPM détecté dans le label FX
-        if hasattr(self, '_lbl_fader8'):
-            self._lbl_fader8.setText(f"{int(bpm)} BPM")
-            QTimer.singleShot(3000, lambda: self._lbl_fader8.setText("FX")
-                              if hasattr(self, '_lbl_fader8') else None)
+        # Mettre à jour le label BPM sous les cartouches
+        bpm_int = int(bpm)
+        if hasattr(self, '_bpm_label'):
+            self._bpm_label.setText(f"{bpm_int} BPM")
+            self._bpm_label.setStyleSheet(
+                "QLabel { color: #00d4ff; font-size: 11px; font-weight: bold; "
+                "background: transparent; }"
+            )
+
+        # Afficher le BPM détecté via un toast éphémère
+        self._show_bpm_toast(bpm_int)
 
     def set_master_level(self, index, value):
         """Définit le niveau master général (0-100) et recompute les couleurs de sortie."""
@@ -2885,6 +2982,9 @@ class MainWindow(QMainWindow):
     def update_audio_ai(self):
         """IA Lumiere - Met a jour les projecteurs selon l'analyse audio avec effets creatifs"""
         try:
+            # Ne pas interférer avec le fade-out de fin de média
+            if self._ia_fadeout_timer and self._ia_fadeout_timer.isActive():
+                return
             if self.seq.current_row < 0:
                 return
             dmx_mode = self.seq.get_dmx_mode(self.seq.current_row)
@@ -2952,6 +3052,52 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             print(f"Erreur IA Lumiere: {e}")
+
+    def _ia_start_fadeout(self, callback=None):
+        """Démarre un fade-out IA (~1.5 s) puis appelle callback."""
+        # Arrêter tout fade en cours
+        if self._ia_fadeout_timer and self._ia_fadeout_timer.isActive():
+            self._ia_fadeout_timer.stop()
+
+        self._ia_fadeout_levels = {id(p): p.level for p in self.projectors}
+        self._ia_fadeout_steps = 0
+        self._ia_fadeout_callback = callback
+
+        if self._ia_fadeout_timer is None:
+            self._ia_fadeout_timer = QTimer(self)
+            self._ia_fadeout_timer.timeout.connect(self._ia_fadeout_tick)
+        self._ia_fadeout_timer.start(50)
+
+    def _ia_fadeout_tick(self):
+        """Tick du fade-out IA : réduit les niveaux progressivement."""
+        self._ia_fadeout_steps += 1
+        progress = self._ia_fadeout_steps / self._ia_fadeout_total
+        for p in self.projectors:
+            orig = self._ia_fadeout_levels.get(id(p), 0)
+            p.level = max(0, int(orig * (1.0 - progress)))
+            if p.level <= 0:
+                p.color = QColor("black")
+            else:
+                factor = p.level / 100.0
+                p.color = QColor(
+                    int(p.base_color.red() * factor),
+                    int(p.base_color.green() * factor),
+                    int(p.base_color.blue() * factor),
+                )
+        self.send_dmx_update()
+        if hasattr(self, 'plan_de_feu'):
+            self.plan_de_feu.update()
+
+        if self._ia_fadeout_steps >= self._ia_fadeout_total:
+            self._ia_fadeout_timer.stop()
+            for p in self.projectors:
+                p.level = 0
+                p.color = QColor("black")
+            self.send_dmx_update()
+            if self._ia_fadeout_callback:
+                cb = self._ia_fadeout_callback
+                self._ia_fadeout_callback = None
+                cb()
 
     def play_path(self, path):
         """Joue un fichier media"""
@@ -5046,6 +5192,15 @@ class MainWindow(QMainWindow):
             ("douche2", "E", "Dch 2",   "#ffcc44"),
             ("douche3", "F", "Dch 3",   "#ff4488"),
         ]
+
+        TYPE_PROFILES = {
+            "PAR LED":          ["DIM", "RGB", "RGBD", "RGBDS", "RGBSD", "DRGB", "DRGBS",
+                                  "RGBW", "RGBWD", "RGBWDS", "RGBWZ", "RGBWA", "RGBWAD", "RGBWOUV"],
+            "Moving Head":      ["MOVING_5CH", "MOVING_8CH", "MOVING_RGB", "MOVING_RGBW"],
+            "Barre LED":        ["LED_BAR_RGB", "RGB", "RGBD", "RGBDS"],
+            "Stroboscope":      ["STROBE_2CH"],
+            "Machine a fumee":  ["2CH_FUMEE"],
+        }
         _selected_group = [None]
 
         tg_lbl_row = QHBoxLayout()
@@ -5111,6 +5266,12 @@ class MainWindow(QMainWindow):
         fv.addWidget(_hdiv())
 
         fv.addWidget(_sec("Profil DMX"))
+
+        det_profile_cb = QComboBox()
+        det_profile_cb.setFixedHeight(36)
+        det_profile_cb.setToolTip("Sélectionner le profil de canaux DMX de la fixture")
+        fv.addWidget(det_profile_cb)
+        fv.addSpacing(6)
 
         chips_w = QWidget()
         chips_w.setStyleSheet("background:transparent;")
@@ -5373,6 +5534,27 @@ class MainWindow(QMainWindow):
             rn.addStretch(); ru.addStretch()
             chips_vl.addWidget(row_n)
             chips_vl.addWidget(row_u)
+
+        def _populate_profile_cb(fixture_type, current_profile=None):
+            """Remplit le combo profil selon le type de fixture, pré-sélectionne current_profile."""
+            det_profile_cb.blockSignals(True)
+            det_profile_cb.clear()
+            keys = TYPE_PROFILES.get(fixture_type, list(DMX_PROFILES.keys()))
+            for key in keys:
+                if key in DMX_PROFILES:
+                    label = f"{key}  —  {profile_display_text(DMX_PROFILES[key])}"
+                    det_profile_cb.addItem(label, key)
+            # Pré-sélectionner si possible
+            if current_profile:
+                # Chercher la clé dont la valeur correspond au profil actuel
+                for k, v in DMX_PROFILES.items():
+                    if list(v) == current_profile:
+                        idx2 = det_profile_cb.findData(k)
+                        if idx2 >= 0:
+                            det_profile_cb.setCurrentIndex(idx2)
+                        break
+            det_profile_cb.blockSignals(False)
+
         _dirty = [False]
         _checked = set()
 
@@ -5637,6 +5819,7 @@ class MainWindow(QMainWindow):
             _refresh_group_blocks(fd['group'])
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);  addr_sb.blockSignals(False)
             _update_addr_range()
+            _populate_profile_cb(fd['fixture_type'], fd.get('profile'))
             _update_chips(fd['profile'])
             if idx in conflicts:
                 others = []
@@ -5662,10 +5845,16 @@ class MainWindow(QMainWindow):
             fd['fixture_type']  = det_type_cb.currentText()
             fd['group']         = _selected_group[0] or fd['group']
             fd['start_address'] = addr_sb.value()
+            # Profil : lire depuis le combo (clé → liste de canaux)
+            prof_key = det_profile_cb.currentData()
+            if prof_key and prof_key in DMX_PROFILES:
+                fd['profile'] = list(DMX_PROFILES[prof_key])
             proj.name           = fd['name']
             proj.fixture_type   = fd['fixture_type']
             proj.group          = fd['group']
             proj.start_address  = fd['start_address']
+            if fd.get('profile'):
+                proj.dmx_profile = fd['profile']
             _apply_fd_to_dmx()
             _mark_dirty()
             conflicts = _get_conflicts()
@@ -5716,7 +5905,31 @@ class MainWindow(QMainWindow):
         _name_tmr.setInterval(500)
         _name_tmr.timeout.connect(_commit)
         det_name_e.textChanged.connect(lambda _: _name_tmr.start())
-        det_type_cb.currentIndexChanged.connect(lambda _: _commit())
+
+        def _on_type_changed():
+            """Quand le type change : rafraîchir la liste de profils, garder le profil si compatible."""
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data):
+                return
+            cur_prof = fixture_data[idx].get('profile')
+            _populate_profile_cb(det_type_cb.currentText(), cur_prof)
+            # Mettre à jour les chips avec le nouveau profil sélectionné
+            prof_key = det_profile_cb.currentData()
+            if prof_key and prof_key in DMX_PROFILES:
+                _update_chips(list(DMX_PROFILES[prof_key]))
+            _commit()
+
+        det_type_cb.currentIndexChanged.connect(lambda _: _on_type_changed())
+
+        def _on_profile_changed():
+            """Quand le profil change : mettre à jour les chips et sauvegarder."""
+            prof_key = det_profile_cb.currentData()
+            if prof_key and prof_key in DMX_PROFILES:
+                _update_chips(list(DMX_PROFILES[prof_key]))
+            _commit()
+
+        det_profile_cb.currentIndexChanged.connect(lambda _: _on_profile_changed())
+
         addr_sb.valueChanged.connect(lambda _: (_update_addr_range(), _commit()))
         btn_am.clicked.connect(lambda: addr_sb.setValue(max(1, addr_sb.value() - 1)))
         btn_ap.clicked.connect(lambda: addr_sb.setValue(min(512, addr_sb.value() + 1)))
@@ -6176,6 +6389,7 @@ class MainWindow(QMainWindow):
                 _mark_dirty()
 
             editor.fixture_added.connect(_on_fixture_added)
+            editor.showMaximized()
             editor.exec()
 
         act_new.triggered.connect(_open_wizard)

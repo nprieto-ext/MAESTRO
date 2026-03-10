@@ -19,7 +19,6 @@ BUILTIN_FIXTURES = [
     # Générique  (profils de base, sans marque spécifique)
     # ──────────────────────────────────────────────────────────────────────────
     # ── PAR LED / Projecteur à LEDs ───────────────────────────────────────────
-    {"name": "Gradateur · 1 canal",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "PAR LED · R, G, B (3ch)",              "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B"],                                           "builtin": _B},
     {"name": "PAR LED · R, G, B, Dim (4ch)",         "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Dim"],                                     "builtin": _B},
     {"name": "PAR LED · R, G, B, Dim, Strobe (5ch)", "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["R","G","B","Dim","Strobe"],                            "builtin": _B},
@@ -32,7 +31,6 @@ BUILTIN_FIXTURES = [
     {"name": "PAR LED · R, G, B, Blanc, Ambre, UV (6ch)", "manufacturer": "Générique", "fixture_type": "PAR LED",   "group": "face",   "profile": ["R","G","B","W","Ambre","UV"],                          "builtin": _B},
     # ── Gradateurs / Traditionnels (incandescence, halogène) ─────────────────
     {"name": "Gradateur 1 canal",                    "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Gradateur 2 canaux",                   "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","Dim"],                                           "builtin": _B},
     {"name": "PAR 64 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "PAR 56 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "PAR 36 Incandescent",                  "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
@@ -41,9 +39,6 @@ BUILTIN_FIXTURES = [
     {"name": "Profil / Leko Incandescent",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "Cyclorama Incandescent",               "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "contre", "profile": ["Dim"],                                                 "builtin": _B},
     {"name": "Strip / Rampe Incandescent",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim"],                                                 "builtin": _B},
-    {"name": "Rack Gradateur · 4 sorties",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","Dim","Dim","Dim"],                               "builtin": _B},
-    {"name": "Rack Gradateur · 6 sorties",           "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","Dim","Dim","Dim","Dim","Dim"],                   "builtin": _B},
-    {"name": "Rack Gradateur · 12 sorties",          "manufacturer": "Générique", "fixture_type": "PAR LED",         "group": "face",   "profile": ["Dim","Dim","Dim","Dim","Dim","Dim","Dim","Dim","Dim","Dim","Dim","Dim"], "builtin": _B},
     # ── Lyres / Têtes mobiles ─────────────────────────────────────────────────
     {"name": "Lyre Spot · Basique (5ch)",            "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Shutter","Dim","ColorWheel","Gobo1","Speed"],           "builtin": _B},
     {"name": "Lyre Spot · Pan/Tilt (8ch)",           "manufacturer": "Générique", "fixture_type": "Moving Head",     "group": "lyre",   "profile": ["Pan","Tilt","Shutter","Dim","ColorWheel","Gobo1","Speed","Mode"], "builtin": _B},

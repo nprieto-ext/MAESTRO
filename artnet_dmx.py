@@ -18,6 +18,7 @@ except ImportError:
 
 # Profils DMX pre-definis : nom -> liste ordonnee de types de canaux
 DMX_PROFILES = {
+    "DIM":         ["Dim"],
     "RGB":         ["R", "G", "B"],
     "RGBD":        ["R", "G", "B", "Dim"],
     "RGBDS":       ["R", "G", "B", "Dim", "Strobe"],
