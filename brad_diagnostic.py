@@ -171,7 +171,56 @@ class _DiagWorker(QThread):
         except Exception as e:
             add("ArtPoll broadcast", "err", f"Erreur : {e}")
 
-        # ── 9. ArtPoll unicast vers IP configurée ─────────────────────────
+        # ── 9. Scan ARP — détection boîtiers sur 2.x.x.x ────────────────
+        self.progress.emit(62, "Scan réseau 2.0.0.x...")
+        try:
+            # Ping sweep rapide sur 2.0.0.1 → 2.0.0.30 pour peupler la table ARP
+            scan_cmd = "for /L %i in (1,1,30) do @ping -n 1 -w 80 2.0.0.%i > nul"
+            subprocess.run(["cmd", "/c", scan_cmd], capture_output=True,
+                           creationflags=CREATE_NO_WINDOW, timeout=15)
+            # Lire la table ARP
+            arp = subprocess.run(["arp", "-a"], capture_output=True, text=True,
+                                 encoding="cp850", errors="replace",
+                                 creationflags=CREATE_NO_WINDOW)
+            import re as _re
+            found_devices = []
+            for line in arp.stdout.splitlines():
+                m = _re.search(r"(2\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+([\w-]{17})", line)
+                if m:
+                    ip, mac = m.group(1), m.group(2)
+                    if not ip == "2.0.0.1" or True:  # inclure toutes les IPs 2.x
+                        found_devices.append((ip, mac))
+            if found_devices:
+                for ip, mac in found_devices:
+                    is_pc = ip == w.dmx.target_ip or any(
+                        ip == a[1] for a in _parse_adapters(arp.stdout, filter_irrelevant=False)
+                    )
+                    label = " ← boîtier probable" if not is_pc else " ← ce PC"
+                    add("Scan réseau", "ok" if not is_pc else "info",
+                        f"Appareil trouvé : {ip}  MAC={mac}{label}")
+            else:
+                add("Scan réseau", "warn", "Aucun appareil trouvé sur 2.0.0.1–30")
+        except Exception as e:
+            add("Scan réseau", "warn", f"Scan ARP non disponible : {e}")
+
+        # ── 10. Ping vers IP configurée ───────────────────────────────────
+        self.progress.emit(68, "Ping boîtier...")
+        try:
+            target = w.dmx.target_ip
+            ping_result = subprocess.run(
+                ["ping", "-n", "2", "-w", "1000", target],
+                capture_output=True, text=True, encoding="cp850", errors="replace",
+                creationflags=CREATE_NO_WINDOW
+            )
+            ping_ok = "TTL=" in ping_result.stdout or "ttl=" in ping_result.stdout.lower()
+            if ping_ok:
+                add("Ping", "ok", f"Boîtier {target} répond au ping ✓")
+            else:
+                add("Ping", "err", f"Boîtier {target} ne répond PAS au ping — vérifiez l'IP et le câble")
+        except Exception as e:
+            add("Ping", "err", f"Ping échoué : {e}")
+
+        # ── 10. ArtPoll unicast vers IP configurée ────────────────────────
         self.progress.emit(74, "ArtPoll unicast...")
         try:
             target = w.dmx.target_ip
@@ -182,7 +231,7 @@ class _DiagWorker(QThread):
         except Exception as e:
             add("ArtPoll unicast", "err", f"Erreur : {e}")
 
-        # ── 10. Envoi test Art-Net ────────────────────────────────────────
+        # ── 11. Envoi test Art-Net ────────────────────────────────────────
         self.progress.emit(85, "Envoi paquet Art-Net test...")
         try:
             target_ip   = w.dmx.target_ip
@@ -209,7 +258,7 @@ class _DiagWorker(QThread):
         except Exception as e:
             add("Envoi test", "err", f"Erreur envoi : {e}")
 
-        # ── 11. Projecteurs en mémoire ────────────────────────────────────
+        # ── 12. Projecteurs en mémoire ────────────────────────────────────
         self.progress.emit(92, "Projecteurs...")
         try:
             projs = w.projectors
