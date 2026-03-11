@@ -1035,6 +1035,11 @@ class MainWindow(QMainWindow):
         # Watermark sur le preview video integre
         self._setup_video_watermark()
 
+        # Serveur HTTP pour le plugin StreamDeck
+        from streamdeck_api import StreamDeckAPIServer
+        self._streamdeck_server = StreamDeckAPIServer(self)
+        self._streamdeck_server.start()
+
     def showEvent(self, event):
         """Au premier affichage, fixer les tailles du splitter droit (ratio 16:9 video)"""
         super().showEvent(event)
@@ -4697,6 +4702,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'midi_handler'):
             self.midi_handler.close()
 
+        if hasattr(self, '_streamdeck_server'):
+            self._streamdeck_server.stop()
+
         if self.seq.is_dirty:
             res = QMessageBox.question(self, "Quitter",
                 "Sauvegarder avant de quitter ?",
@@ -7591,10 +7599,17 @@ class MainWindow(QMainWindow):
         if node_ok:
             icon_node.setText("✓")
             icon_node.setStyleSheet("color: #4CAF50;")
-            detail_node.setText(f"Répond sur {found_ip}  —  Art-Net opérationnel")
+            if found_ip != self.dmx.target_ip:
+                detail_node.setText(
+                    f"Répond sur {found_ip}  —  Art-Net opérationnel\n"
+                    f"IP cible mise à jour ({self.dmx.target_ip} → {found_ip})"
+                )
+                self.dmx.connect(target_ip=found_ip)
+            else:
+                detail_node.setText(f"Répond sur {found_ip}  —  Art-Net opérationnel")
+                if not self.dmx.connected:
+                    self.dmx.connect()
             detail_node.setStyleSheet("color: #4CAF50;")
-            if not self.dmx.connected:
-                self.dmx.connect()
         else:
             icon_node.setText("✗")
             icon_node.setStyleSheet("color: #f44336;")

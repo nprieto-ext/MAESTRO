@@ -1935,19 +1935,45 @@ class AdminPanel(QMainWindow):
         lay.addWidget(sep)
 
         bk_row = QHBoxLayout()
-        bk_row.setSpacing(12)
-        bk_lbl = QLabel("Backup projet :")
+        bk_row.setSpacing(8)
+        bk_lbl = QLabel("Backup :")
+        bk_lbl.setFixedWidth(48)
         bk_lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
         bk_row.addWidget(bk_lbl)
 
-        btn_bk = QPushButton("💾  Sauvegarder en .zip")
-        btn_bk.setFixedHeight(32)
+        self._backup_dest_edit = QLineEdit()
+        self._backup_dest_edit.setPlaceholderText("Dossier de destination (Bureau par défaut)")
+        self._backup_dest_edit.setFixedHeight(30)
+        self._backup_dest_edit.setStyleSheet(
+            f"QLineEdit {{ background:#1e1e1e; color:#ccc; border:1px solid #333;"
+            f" border-radius:4px; padding:0 8px; font-size:11px; }}"
+            f"QLineEdit:focus {{ border-color:{ACCENT}; }}"
+        )
+        # Charger le chemin sauvegardé
+        _saved = _backup_dest_load()
+        if _saved:
+            self._backup_dest_edit.setText(str(_saved))
+        self._backup_dest_edit.textChanged.connect(lambda t: _backup_dest_save(t))
+        bk_row.addWidget(self._backup_dest_edit, 1)
+
+        btn_browse = QPushButton("📂")
+        btn_browse.setFixedSize(30, 30)
+        btn_browse.setToolTip("Choisir le dossier de destination")
+        btn_browse.setStyleSheet(
+            f"QPushButton {{ background:#2a2a2a; color:#aaa; border:1px solid #444;"
+            f" border-radius:4px; font-size:14px; }}"
+            f"QPushButton:hover {{ background:#3a3a3a; color:#fff; }}"
+        )
+        btn_browse.clicked.connect(self._browse_backup_dest)
+        bk_row.addWidget(btn_browse)
+
+        self.btn_backup = btn_bk = QPushButton("💾  Sauvegarder")
+        btn_bk.setFixedHeight(30)
         btn_bk.setStyleSheet(_BTN_SECONDARY)
         btn_bk.setEnabled(_RELEASE_OK)
-        btn_bk.setToolTip("Sauvegarde le projet en .zip sur le Bureau (+ Google Drive si détecté)")
+        btn_bk.setToolTip("Sauvegarde le projet en .zip dans le dossier choisi")
         btn_bk.clicked.connect(self._on_backup)
         bk_row.addWidget(btn_bk)
-        bk_row.addStretch()
         lay.addLayout(bk_row)
 
         self._content_stack.addWidget(page)
@@ -2406,21 +2432,37 @@ class AdminPanel(QMainWindow):
         dlg = GdtfUploadDialog(self)
         dlg.exec()
 
+    def _browse_backup_dest(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choisir le dossier de destination du backup",
+            self._backup_dest_edit.text() or str(Path.home() / "Desktop"),
+        )
+        if folder:
+            self._backup_dest_edit.setText(folder)
+
     def _on_backup(self):
-        """Lance la sauvegarde du projet en .zip sur le Bureau (+ Google Drive si détecté)."""
+        """Lance la sauvegarde du projet en .zip dans le dossier choisi."""
         if not _RELEASE_OK:
             QMessageBox.warning(self, "Backup", "release.py introuvable — impossible de localiser le dossier projet.")
             return
 
-        src = _RELEASE_DIR  # dossier MyStrow source
+        src  = _RELEASE_DIR
         dest = Path.home() / "Desktop"
-        gdrive = _find_google_drive()
 
-        # Demande confirmation avec info Google Drive
-        gdrive_info = f"\n\nGoogle Drive détecté :\n{gdrive}\n→ Le zip sera également copié là-bas." if gdrive else "\n\n(Google Drive non détecté — zip sur le Bureau uniquement.)"
+        # Dossier personnalisé saisi dans le champ
+        custom = self._backup_dest_edit.text().strip()
+        extra  = Path(custom) if custom else None
+        if extra and not extra.exists():
+            QMessageBox.warning(self, "Backup", f"Dossier de destination introuvable :\n{extra}")
+            return
+
+        dest_info = f"\nBureau : {dest}"
+        if extra:
+            dest_info += f"\n+ Copie dans : {extra}"
+
         reply = QMessageBox.question(
             self, "Backup projet",
-            f"Sauvegarder le projet en .zip ?\n\nSource : {src}\nDestination : {dest}{gdrive_info}",
+            f"Sauvegarder le projet en .zip ?\n\nSource : {src}{dest_info}",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -2431,7 +2473,7 @@ class AdminPanel(QMainWindow):
         self.btn_backup.setText("⏳  Backup…")
 
         self._backup_thread = QThread(self)
-        self._backup_worker = BackupWorker(src, dest, gdrive)
+        self._backup_worker = BackupWorker(src, dest, extra)
         self._backup_worker.moveToThread(self._backup_thread)
         self._backup_thread.started.connect(self._backup_worker.run)
         self._backup_worker.progress.connect(lambda msg: self.status_lbl.setText(msg))
@@ -2727,20 +2769,84 @@ class ReleaseWorker(QObject):
 _BACKUP_EXCLUDE = {"dist", "build", "__pycache__", ".git", ".mypy_cache", ".pytest_cache"}
 
 
+_BACKUP_PREFS = Path.home() / ".mystrow_backup_prefs.json"
+
+def _backup_dest_load() -> Path | None:
+    """Charge le dossier de backup personnalisé sauvegardé."""
+    try:
+        import json
+        data = json.loads(_BACKUP_PREFS.read_text())
+        p = Path(data.get("backup_dest", ""))
+        return p if p and p.exists() else None
+    except Exception:
+        return None
+
+def _backup_dest_save(path_str: str):
+    """Persiste le dossier de backup choisi."""
+    try:
+        import json
+        _BACKUP_PREFS.write_text(json.dumps({"backup_dest": path_str}))
+    except Exception:
+        pass
+
+
 def _find_google_drive() -> Path | None:
-    """Cherche le dossier de synchronisation Google Drive sur Windows."""
-    candidates = [
+    """
+    Cherche le dossier Google Drive sur Windows.
+    1. Registre HKCU\\Software\\Google\\DriveFS  (Google Drive for Desktop)
+    2. Scan de toutes les lettres de lecteur pour 'Mon Drive' / 'My Drive'
+    3. Chemins classiques dans le dossier utilisateur
+    """
+    import string
+
+    # ── 1. Registre Google Drive for Desktop ────────────────────────────────
+    try:
+        import winreg
+        key_path = r"Software\Google\DriveFS\PerAccountPreferences"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            i = 0
+            while True:
+                try:
+                    sub_name = winreg.EnumKey(key, i)
+                    with winreg.OpenKey(key, sub_name) as sub:
+                        mount, _ = winreg.QueryValueEx(sub, "mount_point_path")
+                        p = Path(mount)
+                        if p.exists():
+                            return p
+                except OSError:
+                    break
+                i += 1
+    except Exception:
+        pass
+
+    # ── 2. Scan de toutes les lettres de lecteur ─────────────────────────────
+    for letter in string.ascii_uppercase:
+        for sub in ("Mon Drive", "My Drive", ""):
+            p = Path(f"{letter}:\\") / sub if sub else Path(f"{letter}:\\")
+            try:
+                # Vérifier que c'est bien un lecteur Google Drive (présence metadata)
+                marker = Path(f"{letter}:\\") / ".metadata_never_index"
+                drive_root = Path(f"{letter}:\\")
+                if drive_root.exists():
+                    # Google Drive for Desktop laisse souvent un dossier "Mon Drive" ou "My Drive"
+                    for name in ("Mon Drive", "My Drive"):
+                        candidate = drive_root / name
+                        if candidate.exists() and candidate.is_dir():
+                            return candidate
+            except Exception:
+                pass
+
+    # ── 3. Chemins classiques utilisateur ────────────────────────────────────
+    for p in [
         Path.home() / "Google Drive" / "Mon Drive",
         Path.home() / "Google Drive" / "My Drive",
         Path.home() / "Google Drive",
+        Path.home() / "Mon Drive",
         Path.home() / "My Drive",
-        Path("G:") / "Mon Drive",
-        Path("G:") / "My Drive",
-        Path("G:/"),
-    ]
-    for p in candidates:
+    ]:
         if p.exists() and p.is_dir():
             return p
+
     return None
 
 
