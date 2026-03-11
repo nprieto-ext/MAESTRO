@@ -58,11 +58,11 @@ jobs:
           path: artifacts/
 
   # ─────────────────────────────────────────────
-  # BUILD MAC (.app + DMG)
+  # BUILD MAC (.app + DMG signé + notarisé)
   # ─────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
-    continue-on-error: true  # Ne bloque pas la release si le build Mac échoue
+    continue-on-error: true  # Ne bloque pas la release Windows si le build Mac échoue
     steps:
       - uses: actions/checkout@v4
 
@@ -75,10 +75,80 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller pillow
 
-      - name: Build .app
-        run: pyinstaller --windowed --icon=logo.png --add-data "logo.png:." main.py --name MyStrow
+      - name: Convert logo.png → mystrow.icns
+        run: |
+          mkdir -p mystrow.iconset
+          python3 - <<'EOF'
+          from PIL import Image
+          sizes = [16,32,64,128,256,512]
+          img = Image.open("logo.png").convert("RGBA")
+          import os; os.makedirs("mystrow.iconset", exist_ok=True)
+          for s in sizes:
+              img.resize((s,s), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}.png")
+              img.resize((s*2,s*2), Image.LANCZOS).save(f"mystrow.iconset/icon_{s}x{s}@2x.png")
+          EOF
+          iconutil -c icns mystrow.iconset -o mystrow.icns
 
-      - name: Create DMG
+      - name: Build .app
+        run: |
+          pyinstaller \
+            --windowed \
+            --icon=mystrow.icns \
+            --add-data "logo.png:." \
+            --add-data "mystrow.icns:." \
+            --name MyStrow \
+            --paths=. \
+            --collect-all rtmidi \
+            --hidden-import=rtmidi \
+            --hidden-import=rtmidi._rtmidi \
+            --hidden-import=node_connection \
+            --hidden-import=brad_diagnostic \
+            --hidden-import=artnet_dmx \
+            --hidden-import=firebase_config \
+            --noupx \
+            --noconfirm \
+            main.py
+
+      - name: Import certificat de signature
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p mystrow-ci temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p mystrow-ci temp.keychain
+          security import certificate.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k mystrow-ci temp.keychain
+
+      - name: Signer .app
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        env:
+          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
+        run: |
+          codesign --deep --force --verify --verbose \
+            --sign "Developer ID Application: Nicolas PRIETO ($NOTARIZATION_TEAM_ID)" \
+            --options runtime \
+            --entitlements entitlements.plist \
+            dist/MyStrow.app
+
+      - name: Notariser
+        if: ${{ secrets.NOTARIZATION_APPLE_ID != '' }}
+        env:
+          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+          NOTARIZATION_APPLE_PASSWORD: ${{ secrets.NOTARIZATION_APPLE_PASSWORD }}
+          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent dist/MyStrow.app MyStrow_notarize.zip
+          xcrun notarytool submit MyStrow_notarize.zip \
+            --apple-id "$NOTARIZATION_APPLE_ID" \
+            --password "$NOTARIZATION_APPLE_PASSWORD" \
+            --team-id "$NOTARIZATION_TEAM_ID" \
+            --wait
+          xcrun stapler staple dist/MyStrow.app
+
+      - name: Créer DMG
         run: |
           brew install create-dmg
           create-dmg \
@@ -89,7 +159,15 @@ jobs:
             --icon "MyStrow.app" 150 190 \
             --app-drop-link 450 190 \
             "MyStrow_Installer.dmg" \
-            "dist/MyStrow.app"
+            "dist/"
+
+      - name: Signer le DMG
+        if: ${{ secrets.MACOS_CERTIFICATE != '' }}
+        env:
+          NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
+        run: |
+          codesign --sign "Developer ID Application: Nicolas PRIETO ($NOTARIZATION_TEAM_ID)" \
+            MyStrow_Installer.dmg
 
       - name: Upload Mac DMG
         uses: actions/upload-artifact@v4

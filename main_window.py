@@ -783,7 +783,6 @@ class MainWindow(QMainWindow):
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
 
         self.node_menu = conn_menu.addMenu("🌐 Sortie Node")
-        self.node_menu.addAction("🔍 Tester la connexion", self.test_node_connection)
         self.node_menu.addAction("⚙️ Paramétrer la sortie", self.open_node_connection)
         self.node_menu.addSeparator()
         self.node_menu.addAction("🤖 Assistant BRAD", self.open_brad_diagnostic)
@@ -3358,6 +3357,25 @@ class MainWindow(QMainWindow):
             "active_color_pads": active_color_pads
         }
 
+        # Avertissement si des clips lumière sont orphelins (row supprimé ou séquence vide)
+        row_count = self.seq.table.rowCount()
+        all_clip_rows = set(self.seq.sequences.keys()) if hasattr(self.seq, 'sequences') else set()
+        orphan_clips = len([r for r in all_clip_rows if r >= row_count])
+        if orphan_clips > 0:
+            from PySide6.QtWidgets import QMessageBox
+            ret = QMessageBox.warning(
+                self, "Rec Lumière non sauvegardé",
+                f"Attention : vous avez {orphan_clips} séquence(s) de Rec Lumière en mémoire,\n"
+                "mais la playlist est vide.\n\n"
+                "Le Rec Lumière ne sera PAS sauvegardé dans ce fichier.\n\n"
+                "Pour sauvegarder le Rec Lumière, ajoutez d'abord votre média\n"
+                "dans la playlist, attachez-lui le Rec Lumière, puis sauvegardez.",
+                QMessageBox.Save | QMessageBox.Cancel,
+                QMessageBox.Cancel
+            )
+            if ret == QMessageBox.Cancel:
+                return False
+
         try:
             with open(path, 'w') as f:
                 json.dump(save_data, f, indent=2)
@@ -3388,6 +3406,18 @@ class MainWindow(QMainWindow):
             path, _ = QFileDialog.getOpenFileName(self, "Ouvrir Show", "", "TUI Show (*.tui)")
         if not path:
             return
+
+        # Stopper la lecture en cours avant de charger
+        try:
+            self.player.stop()
+            self.cart_player.stop()
+            self.pause_mode = False
+            if hasattr(self.seq, 'tempo_timer') and self.seq.tempo_timer.isActive():
+                self.seq.tempo_timer.stop()
+            if hasattr(self.seq, 'timeline_playback_timer') and self.seq.timeline_playback_timer.isActive():
+                self.seq.timeline_playback_timer.stop()
+        except Exception:
+            pass
 
         try:
             with open(path, 'r') as f:

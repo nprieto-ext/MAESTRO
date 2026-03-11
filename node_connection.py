@@ -1,20 +1,18 @@
 """
-Assistant de connexion et configuration du Node DMX
-- Détection rapide au démarrage (ArtPoll 0.5 s sur l'IP cible)
-- Sélection explicite de la carte réseau (jamais automatique)
-- Configuration IPv4 192.168.0.1 automatique ou manuelle
-- Guide Electroconcept : câbles RJ45 + USB, configuration TCP/IP, recherche node
+node_connection.py — Paramétrer la sortie Node DMX
+Détecte et corrige automatiquement les problèmes de connexion Art-Net.
+Tous les boîtiers ElectroConcept sont sur 2.0.0.15.
 """
 
 import re
 import time
+import socket
 import subprocess
 import platform
-from typing import List, Tuple, Optional
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QWidget, QFrame, QScrollArea,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication,
+    QWidget, QStackedWidget, QScrollArea,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
@@ -23,202 +21,131 @@ from PySide6.QtGui import QFont, QCursor
 # CONSTANTES
 # ============================================================
 
-TARGET_IP   = "2.0.0.15"   # IP du node Art-Net Electroconcept
-TARGET_PORT = 5568
+TARGET_IP   = "2.0.0.15"
+TARGET_PORT = 6454
 
 CREATE_NO_WINDOW = 0x08000000 if platform.system() == "Windows" else 0
 
-# Mots-clés pour ignorer les adaptateurs non-Ethernet physiques
 _SKIP_ADAPTERS = [
     "wi-fi", "wifi", "wireless", "loopback", "vmware", "virtual",
     "bluetooth", "tunnel", "teredo", "isatap", "6to4", "miniport",
-    "local*",       # Connexion au réseau local* = Wi-Fi Direct virtuel
-    "vethernet",    # Hyper-V virtual switch
+    "local*", "vethernet",
 ]
-
-# Index des pages
-P_DETECTING   = 0
-P_CONNECTED   = 1
-P_CHOOSE      = 2
-P_EC_CABLES   = 3
-P_WORKING     = 4
-P_NET_MANUAL  = 5
-P_SUCCESS     = 6
-P_NET_SELECT  = 7   # Sélection de la carte réseau Node
-P_NET_METHOD  = 8   # Choix auto / manuel
 
 
 # ============================================================
-# UTILITAIRES RÉSEAU (module-level, réutilisables par les threads)
+# UTILITAIRES RÉSEAU
 # ============================================================
 
 def _artpoll_packet() -> bytes:
     p = bytearray(b'Art-Net\x00')
-    p.extend(b'\x00\x20')  # OpCode ArtPoll
-    p.extend(b'\x00\x0e')  # Protocol version 14
-    p.extend(b'\x00\x00')  # TalkToMe + Priority
+    p.extend(b'\x00\x20')
+    p.extend(b'\x00\x0e')
+    p.extend(b'\x00\x00')
     return bytes(p)
 
 
-def _open_network_connections():
-    """Ouvre le panneau Connexions réseau Windows."""
+def _get_all_local_ips() -> set:
+    """Toutes les IPs locales du PC pour filtrer les faux positifs ArtPoll."""
+    local = set()
     try:
-        subprocess.Popen(["control", "ncpa.cpl"],
-                         creationflags=CREATE_NO_WINDOW)
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ":" not in ip:
+                local.add(ip)
     except Exception:
         pass
-
-
-def _get_ethernet_adapters() -> List[Tuple[str, str]]:
-    """
-    Retourne [(nom_interface, ipv4)] pour tous les adaptateurs réseau actifs.
-    Parse ipconfig /all — robuste quelle que soit la locale Windows.
-    """
     try:
-        r = subprocess.run(
-            ["ipconfig", "/all"],
-            capture_output=True, text=True,
-            encoding="cp1252", errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-        )
+        r = subprocess.run(["ipconfig"], capture_output=True, text=True,
+                           encoding="cp1252", errors="replace",
+                           creationflags=CREATE_NO_WINDOW)
+        for line in r.stdout.splitlines():
+            if "ipv4" in line.lower():
+                m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                if m:
+                    local.add(m.group(1))
+    except Exception:
+        pass
+    return local
+
+
+def _get_ethernet_adapters():
+    """Retourne [(nom, ip)] pour les adaptateurs Ethernet physiques."""
+    try:
+        r = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True,
+                           encoding="cp1252", errors="replace",
+                           creationflags=CREATE_NO_WINDOW)
     except Exception:
         return []
 
-    adapters     = []
+    adapters = []
     current_name = None
-    current_ip   = ""
+    current_ip = ""
     skip_current = False
 
     for line in r.stdout.splitlines():
-        # Ligne de section : ne commence pas par un espace, se termine par ":"
-        # (avec possible \xa0 ou espace insécable avant le ":")
-        stripped_line = line.strip()
-        is_section = (
-            line
-            and not line.startswith("\t")
-            and not line.startswith(" ")
-            and stripped_line.endswith(":")
-        )
-
+        stripped = line.strip()
+        is_section = (line and not line.startswith(("\t", " "))
+                      and stripped.endswith(":"))
         if is_section:
-            # Enregistrer l'adaptateur précédent si valide
             if current_name and not skip_current:
                 adapters.append((current_name, current_ip))
-
-            # Extraire le nom : retirer le préfixe de catégorie
-            raw = stripped_line.rstrip(":").strip()
-            for prefix in (
-                "Carte Ethernet ", "Ethernet adapter ",
-                "Carte réseau sans fil ", "Wireless LAN adapter ",
-                "Adaptateur ", "Adapter ",
-            ):
+            raw = stripped.rstrip(":").strip()
+            for prefix in ("Carte Ethernet ", "Ethernet adapter ",
+                           "Carte réseau sans fil ", "Wireless LAN adapter ",
+                           "Adaptateur ", "Adapter "):
                 if raw.lower().startswith(prefix.lower()):
                     raw = raw[len(prefix):]
                     break
-
             current_name = raw.strip()
-            current_ip   = ""
-            # Filtrer Wi-Fi, Bluetooth, Virtual, Tunnel, Loopback…
+            current_ip = ""
             skip_current = any(kw in current_name.lower() for kw in _SKIP_ADAPTERS)
             continue
-
         if not current_name or skip_current:
             continue
-
-        stripped = line.strip()
-
-        low = stripped.lower()
-        # Tunnel = jamais pertinent
-        if "tunnel" in low:
-            skip_current = True
-            continue
-
-        # Adresse IPv4 — regex pour ignorer "(Préféré)"/"(Preferred)" collé à l'IP
-        if "ipv4" in low:
+        if "ipv4" in stripped.lower():
             m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", stripped)
-            if m:
-                ip = m.group(1)
-                if not ip.startswith("127."):
-                    current_ip = ip
+            if m and not m.group(1).startswith("127."):
+                current_ip = m.group(1)
 
-    # Dernier adaptateur
     if current_name and not skip_current:
         adapters.append((current_name, current_ip))
-
     return adapters
 
 
-def _set_static_ip(adapter_name: str) -> bool:
-    """Configure l'IP statique 2.0.0.1/255.0.0.0 (sans passerelle) via netsh. Requiert les droits admin."""
+def _ping(ip: str, timeout_ms: int = 1000) -> bool:
     try:
         r = subprocess.run(
-            [
-                "netsh", "interface", "ip", "set", "address",
-                f"name={adapter_name}",
-                "static", "2.0.0.1", "255.0.0.0", "none",
-            ],
-            capture_output=True,
-            creationflags=CREATE_NO_WINDOW,
+            ["ping", "-n", "1", "-w", str(timeout_ms), ip],
+            capture_output=True, creationflags=CREATE_NO_WINDOW
         )
         return r.returncode == 0
     except Exception:
         return False
 
 
-# ============================================================
-# THREADS
-# ============================================================
-
-def _artpoll_broadcast(timeout: float = 1.0) -> bool:
-    """
-    Envoie un ArtPoll en broadcast sur le réseau Art-Net (port 6454)
-    et retourne True si un boîtier répond avec un paquet Art-Net valide.
-    Sonde: 2.255.255.255, 255.255.255.255, TARGET_IP.
-    """
-    import socket as _sock, time as _t
+def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
+    """ArtPoll vers target_ip, filtre les réponses du PC lui-même."""
+    local_ips = _get_all_local_ips()
     try:
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
-        s.setsockopt(_sock.SOL_SOCKET, _sock.SO_BROADCAST, 1)
-        s.bind(("", 6454))
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        try:
+            s.bind(("", 6454))
+        except OSError:
+            s.bind(("", 0))
         s.settimeout(timeout)
-        for ip in ("2.255.255.255", "255.255.255.255", TARGET_IP):
+        for dst in ("2.255.255.255", "255.255.255.255", target_ip):
             try:
-                s.sendto(_artpoll_packet(), (ip, 6454))
+                s.sendto(_artpoll_packet(), (dst, 6454))
             except Exception:
                 pass
-        found = False
-        deadline = _t.time() + timeout
-        while _t.time() < deadline:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
             try:
-                s.settimeout(max(0.05, deadline - _t.time()))
-                data, _ = s.recvfrom(512)
-                if data[:8] == b'Art-Net\x00':
-                    found = True
-                    break
-            except Exception:
-                break
-        s.close()
-        return found
-    except Exception:
-        return False
-
-
-def _artpoll_unicast(target_ip: str, timeout: float = 1.0) -> bool:
-    """
-    Envoie un ArtPoll directement en unicast vers target_ip (port 6454).
-    Pour les vieux boitiers qui ne repondent pas au broadcast.
-    """
-    import socket as _sock
-    try:
-        s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
-        s.settimeout(timeout)
-        s.sendto(_artpoll_packet(), (target_ip, 6454))
-        deadline = __import__('time').time() + timeout
-        while __import__('time').time() < deadline:
-            try:
-                s.settimeout(max(0.05, deadline - __import__('time').time()))
-                data, _ = s.recvfrom(512)
-                if data[:8] == b'Art-Net\x00':
+                s.settimeout(max(0.05, deadline - time.time()))
+                data, (sender, _) = s.recvfrom(512)
+                if data[:8] == b'Art-Net\x00' and sender not in local_ips:
                     s.close()
                     return True
             except Exception:
@@ -229,89 +156,351 @@ def _artpoll_unicast(target_ip: str, timeout: float = 1.0) -> bool:
     return False
 
 
-class QuickDetector(QThread):
-    """Vérifie qu'un boîtier Art-Net répond — broadcast d'abord, puis unicast vers target_ip."""
-    finished = Signal(bool)
-
-    def __init__(self, target_ip: str = TARGET_IP, parent=None):
-        super().__init__(parent)
-        self._target_ip = target_ip
-
-    def run(self):
-        try:
-            adapters = _get_ethernet_adapters()
-            if not adapters:
-                self.finished.emit(False)
-                return
-            # 1. Broadcast Art-Net (nouveaux boitiers)
-            if _artpoll_broadcast(timeout=0.8):
-                self.finished.emit(True)
-                return
-            # 2. Unicast vers l'IP configuree (vieux boitiers qui ne repondent pas au broadcast)
-            if self._target_ip and self._target_ip != TARGET_IP:
-                if _artpoll_unicast(self._target_ip, timeout=0.8):
-                    self.finished.emit(True)
-                    return
-            self.finished.emit(False)
-        except Exception:
-            self.finished.emit(False)
+def _set_static_ip(adapter_name: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["netsh", "interface", "ip", "set", "address",
+             f"name={adapter_name}", "static", "2.0.0.1", "255.0.0.0", "none"],
+            capture_output=True, creationflags=CREATE_NO_WINDOW
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
-class AdapterScanner(QThread):
-    """Scanne les adaptateurs Ethernet connectés de façon asynchrone."""
-    done = Signal(list)   # list of (name, ip)
-
-    def run(self):
-        self.done.emit(_get_ethernet_adapters())
-
-
-class NetworkSetup(QThread):
-    """
-    Configure l'IP statique 2.0.0.1/255.0.0.0 (sans passerelle) sur l'adaptateur choisi.
-    Émet : ('ok'|'manual', adapter_name)
-    """
-    done = Signal(str, str)
-
-    def __init__(self, adapter_name: str):
-        super().__init__()
-        self.adapter_name = adapter_name
-
-    def run(self):
-        if _set_static_ip(self.adapter_name):
-            time.sleep(1.5)
-            self.done.emit("ok", self.adapter_name)
-        else:
-            self.done.emit("manual", self.adapter_name)
-
-
-class NodeSearcher(QThread):
-    """Après stabilisation réseau, sonde le boîtier Art-Net (broadcast + unicast)."""
-    finished = Signal(bool)
-
-    def __init__(self, target_ip: str = TARGET_IP, parent=None):
-        super().__init__(parent)
-        self._target_ip = target_ip
-
-    def run(self):
-        time.sleep(0.5)
-        try:
-            adapters = _get_ethernet_adapters()
-            if not any(ip.startswith("2.") for _, ip in adapters):
-                self.finished.emit(False)
-                return
-            if _artpoll_broadcast(timeout=2.0):
-                self.finished.emit(True)
-                return
-            if self._target_ip:
-                self.finished.emit(_artpoll_unicast(self._target_ip, timeout=1.5))
-                return
-            self.finished.emit(False)
-        except Exception:
-            self.finished.emit(False)
+def _open_network_connections():
+    try:
+        subprocess.Popen(["control", "ncpa.cpl"], creationflags=CREATE_NO_WINDOW)
+    except Exception:
+        pass
 
 
 # ============================================================
-# STYLES
+# WORKER — tourne tous les checks en arrière-plan
+# ============================================================
+
+class _DiagWorker(QThread):
+    step   = Signal(int, str, str, str)  # (index, status, titre, detail)
+    done   = Signal(list)                # [(status, titre, detail, fix_key)]
+
+    def run(self):
+        results = []
+
+        # ── 1. Transport Art-Net ──────────────────────────────────────────
+        try:
+            from artnet_dmx import TRANSPORT_ARTNET
+            import importlib, sys
+            # Trouver l'instance ArtNetDMX via le module déjà chargé
+            transport_ok = True
+            transport_val = "?"
+            for mod in sys.modules.values():
+                if hasattr(mod, '_dmx_instance'):
+                    dmx = mod._dmx_instance
+                    transport_val = dmx.transport
+                    transport_ok = (dmx.transport == TRANSPORT_ARTNET)
+                    break
+        except Exception as e:
+            transport_ok = False
+            transport_val = str(e)
+
+        results.append((
+            "ok" if transport_ok else "err",
+            "Transport Art-Net",
+            f"Mode actuel : {transport_val}" if not transport_ok else "Mode Art-Net actif",
+            "fix_transport" if not transport_ok else None
+        ))
+        self.step.emit(0, results[-1][0], results[-1][1], results[-1][2])
+
+        # ── 2. Carte Ethernet sur 2.x.x.x ───────────────────────────────
+        adapters = _get_ethernet_adapters()
+        eth_ok = any(ip.startswith("2.") for _, ip in adapters)
+        eth_name = next((n for n, ip in adapters if ip.startswith("2.")), None)
+        if not adapters:
+            eth_detail = "Aucune carte Ethernet détectée — vérifiez le câble RJ45"
+            eth_fix = "fix_cable"
+        elif not eth_ok:
+            eth_name = adapters[0][0]
+            eth_detail = f"Carte « {eth_name} » — IP incorrecte ({adapters[0][1] or 'non configurée'})"
+            eth_fix = "fix_ip"
+        else:
+            eth_detail = f"Carte « {eth_name} » — IP 2.0.0.x ✓"
+            eth_fix = None
+
+        results.append(("ok" if eth_ok else "err", "Carte Ethernet", eth_detail, eth_fix))
+        self.step.emit(1, results[-1][0], results[-1][1], results[-1][2])
+
+        # ── 3. Boîtier 2.0.0.15 joignable ──────────────────────────────
+        if eth_ok:
+            box_ok = _ping(TARGET_IP, timeout_ms=1200)
+            if not box_ok:
+                box_ok = _artpoll_probe(TARGET_IP, timeout=1.5)
+            box_detail = f"Boîtier {TARGET_IP} répond ✓" if box_ok else f"Boîtier {TARGET_IP} ne répond pas — allumé ? câble branché ?"
+        else:
+            box_ok = False
+            box_detail = "En attente de la carte réseau"
+
+        results.append(("ok" if box_ok else "err", f"Boîtier {TARGET_IP}", box_detail,
+                        None if box_ok else "fix_box"))
+        self.step.emit(2, results[-1][0], results[-1][1], results[-1][2])
+
+        # ── 4. IP cible dans MyStrow ─────────────────────────────────────
+        ip_ok = False
+        ip_detail = "Impossible de vérifier"
+        ip_fix = None
+        try:
+            import sys
+            for mod in sys.modules.values():
+                if hasattr(mod, '_dmx_instance'):
+                    dmx = mod._dmx_instance
+                    ip_ok = (dmx.target_ip == TARGET_IP)
+                    ip_detail = (f"IP cible : {dmx.target_ip} ✓" if ip_ok
+                                 else f"IP cible : {dmx.target_ip} → doit être {TARGET_IP}")
+                    ip_fix = None if ip_ok else "fix_target_ip"
+                    break
+        except Exception:
+            pass
+
+        results.append(("ok" if ip_ok else "err", "IP cible MyStrow", ip_detail, ip_fix))
+        self.step.emit(3, results[-1][0], results[-1][1], results[-1][2])
+
+        self.done.emit(results)
+
+
+# ============================================================
+# DIALOG
+# ============================================================
+
+_C_OK   = "#4ade80"
+_C_ERR  = "#f87171"
+_C_WARN = "#fbbf24"
+_C_INFO = "#00d4ff"
+_C_DIM  = "#555555"
+
+
+class NodeConnectionDialog(QDialog):
+    """Paramétrer la sortie Node DMX — détection et correction automatique."""
+
+    def __init__(self, parent=None, target_ip: str = TARGET_IP):
+        super().__init__(parent)
+        self._main_win = parent
+        self.setWindowTitle("Paramétrer la sortie Node DMX")
+        self.setFixedSize(480, 520)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setStyleSheet("""
+            QDialog  { background: #131313; }
+            QLabel   { color: #e0e0e0; background: transparent; }
+            QPushButton {
+                background: #1e1e1e; color: #aaa;
+                border: 1px solid #333; border-radius: 6px;
+                padding: 8px 20px; font-size: 12px;
+            }
+            QPushButton:hover  { background: #252525; color: #eee; border-color: #555; }
+            QPushButton:pressed { background: #0a0a0a; }
+            QPushButton:disabled { color: #333; border-color: #222; }
+        """)
+
+        self._worker = None
+        self._results = []
+        self._row_widgets = []  # [(icon_lbl, title_lbl, detail_lbl)]
+
+        self._build_ui()
+        QTimer.singleShot(200, self._run)
+
+    # ──────────────────────────────────────────────────────
+    # UI
+    # ──────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 24, 28, 20)
+        root.setSpacing(16)
+
+        # Titre
+        title = QLabel("Sortie Node DMX")
+        title.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        title.setStyleSheet("color: #f0f0f0;")
+        sub = QLabel(f"Boîtier ElectroConcept  ·  {TARGET_IP}  ·  Art-Net")
+        sub.setStyleSheet("color: #444; font-size: 10px;")
+        root.addWidget(title)
+        root.addWidget(sub)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #222;")
+        root.addWidget(sep)
+
+        # 4 lignes de check
+        checks_frame = QFrame()
+        checks_frame.setStyleSheet(
+            "QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
+        )
+        checks_lay = QVBoxLayout(checks_frame)
+        checks_lay.setContentsMargins(18, 14, 18, 14)
+        checks_lay.setSpacing(14)
+
+        labels = [
+            "Transport Art-Net",
+            "Carte Ethernet",
+            f"Boîtier {TARGET_IP}",
+            "IP cible MyStrow",
+        ]
+        for i, label in enumerate(labels):
+            row = QHBoxLayout()
+            row.setSpacing(12)
+
+            icon = QLabel("◌")
+            icon.setFont(QFont("Segoe UI", 14))
+            icon.setStyleSheet(f"color: {_C_DIM};")
+            icon.setFixedWidth(22)
+            icon.setAlignment(Qt.AlignCenter)
+
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            t = QLabel(label)
+            t.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            t.setStyleSheet("color: #ccc;")
+            d = QLabel("Vérification en cours...")
+            d.setFont(QFont("Segoe UI", 9))
+            d.setStyleSheet(f"color: {_C_DIM};")
+            d.setWordWrap(True)
+            col.addWidget(t)
+            col.addWidget(d)
+
+            row.addWidget(icon)
+            row.addLayout(col, 1)
+            checks_lay.addLayout(row)
+
+            if i < len(labels) - 1:
+                line = QFrame()
+                line.setFrameShape(QFrame.HLine)
+                line.setStyleSheet("color: #222; border: none; border-top: 1px solid #222;")
+                checks_lay.addWidget(line)
+
+            self._row_widgets.append((icon, t, d))
+
+        root.addWidget(checks_frame)
+
+        # Zone message global
+        self._msg_lbl = QLabel("")
+        self._msg_lbl.setAlignment(Qt.AlignCenter)
+        self._msg_lbl.setWordWrap(True)
+        self._msg_lbl.setFont(QFont("Segoe UI", 10))
+        self._msg_lbl.setStyleSheet("color: #555;")
+        root.addWidget(self._msg_lbl)
+
+        root.addStretch()
+
+        # Boutons
+        btn_row = QHBoxLayout()
+
+        self._fix_btn = QPushButton("⚙️  Configurer le réseau")
+        self._fix_btn.setVisible(False)
+        self._fix_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a0f00; color: #fbbf24;
+                border: 1px solid #fbbf2444; border-radius: 6px;
+                padding: 10px 20px; font-size: 12px; font-weight: bold;
+            }
+            QPushButton:hover { background: #251500; border-color: #fbbf2499; }
+        """)
+        self._fix_btn.clicked.connect(self._open_wizard)
+
+        self._retry_btn = QPushButton("↺  Relancer")
+        self._retry_btn.setEnabled(False)
+        self._retry_btn.clicked.connect(self._run)
+
+        self._manual_btn = QPushButton("📂  Réseau")
+        self._manual_btn.setVisible(False)
+        self._manual_btn.clicked.connect(_open_network_connections)
+
+        close_btn = QPushButton("Fermer")
+        close_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(self._fix_btn)
+        btn_row.addWidget(self._manual_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self._retry_btn)
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+    # ──────────────────────────────────────────────────────
+    # CHECKS
+    # ──────────────────────────────────────────────────────
+
+    def _run(self):
+        self._fix_btn.setVisible(False)
+        self._manual_btn.setVisible(False)
+        self._retry_btn.setEnabled(False)
+        self._msg_lbl.setText("Analyse en cours...")
+        self._msg_lbl.setStyleSheet("color: #555;")
+        for icon, t, d in self._row_widgets:
+            icon.setText("◌")
+            icon.setStyleSheet(f"color: {_C_DIM};")
+            d.setText("Vérification en cours...")
+            d.setStyleSheet(f"color: {_C_DIM};")
+
+        # Injecter l'instance dmx dans un attribut module pour que le worker y accède
+        if self._main_win and hasattr(self._main_win, 'dmx'):
+            import sys
+            import artnet_dmx as _adm
+            _adm._dmx_instance = self._main_win.dmx
+
+        self._worker = _DiagWorker()
+        self._worker.step.connect(self._on_step)
+        self._worker.done.connect(self._on_done)
+        self._worker.start()
+
+    def _on_step(self, idx: int, status: str, titre: str, detail: str):
+        if idx >= len(self._row_widgets):
+            return
+        icon, t, d = self._row_widgets[idx]
+        if status == "ok":
+            icon.setText("✓")
+            icon.setStyleSheet(f"color: {_C_OK};")
+            d.setStyleSheet(f"color: {_C_DIM};")
+        else:
+            icon.setText("✗")
+            icon.setStyleSheet(f"color: {_C_ERR};")
+            d.setStyleSheet(f"color: {_C_ERR};")
+        d.setText(detail)
+
+    def _on_done(self, results: list):
+        self._results = results
+        errors = [r for r in results if r[0] == "err"]
+        fixable = [r for r in errors if r[3] and r[3] != "fix_cable" and r[3] != "fix_box"]
+        cable_issue = any(r[3] == "fix_cable" for r in errors)
+        box_issue = any(r[3] == "fix_box" for r in errors)
+
+        if not errors:
+            self._msg_lbl.setText("Tout est opérationnel ✓")
+            self._msg_lbl.setStyleSheet(f"color: {_C_OK}; font-weight: bold;")
+        elif cable_issue:
+            self._msg_lbl.setText("Aucune carte Ethernet détectée.\nVérifiez que le câble RJ45 est bien branché.")
+            self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
+            self._manual_btn.setVisible(True)
+        elif box_issue and not fixable:
+            self._msg_lbl.setText(f"Le boîtier {TARGET_IP} ne répond pas.\nVérifiez qu'il est allumé et que le câble est branché.")
+            self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
+        else:
+            self._msg_lbl.setText(f"{len(errors)} problème(s) détecté(s) — l'assistant BRAD peut vous aider")
+            self._msg_lbl.setStyleSheet(f"color: {_C_WARN};")
+
+        self._fix_btn.setVisible(bool(fixable))
+        self._retry_btn.setEnabled(True)
+
+    # ──────────────────────────────────────────────────────
+    # AUTO-FIX
+    # ──────────────────────────────────────────────────────
+
+    def _open_wizard(self):
+        self.accept()
+        if self._main_win:
+            dlg = NodeSetupWizard(self._main_win)
+            dlg.exec()
+
+
+# ============================================================
+# WIZARD — Configuration réseau pas à pas
 # ============================================================
 
 _BTN_PRIMARY = """
@@ -322,7 +511,6 @@ QPushButton {
 QPushButton:hover { background: #22ddff; }
 QPushButton:disabled { background: #1a3a3a; color: #2a6a6a; }
 """
-
 _BTN_SECONDARY = """
 QPushButton {
     background: #242424; color: #aaaaaa; font-size: 11px;
@@ -330,7 +518,6 @@ QPushButton {
 }
 QPushButton:hover { background: #2e2e2e; color: #e0e0e0; border-color: #484848; }
 """
-
 _BTN_GHOST = """
 QPushButton {
     background: transparent; color: #555555; font-size: 11px;
@@ -338,7 +525,6 @@ QPushButton {
 }
 QPushButton:hover { color: #aaaaaa; background: #222222; }
 """
-
 _BTN_ADAPTER = """
 QPushButton {
     background: #212121; color: #cccccc; font-size: 10px;
@@ -347,7 +533,6 @@ QPushButton {
 }
 QPushButton:hover { background: #282828; border-color: #00d4ff; color: white; }
 """
-
 _BTN_ADAPTER_OK = """
 QPushButton {
     background: #0f2318; color: #4ade80; font-size: 10px;
@@ -356,7 +541,6 @@ QPushButton {
 }
 QPushButton:hover { background: #162d20; }
 """
-
 _BTN_ADAPTER_SEL = """
 QPushButton {
     background: #0a2830; color: #00d4ff; font-size: 10px;
@@ -365,579 +549,392 @@ QPushButton {
 }
 """
 
-# Wizard step labels
 _WIZARD_STEPS = ["Câbles", "Carte réseau", "Adresse IP", "Connexion"]
 
-# Page index constants
-P_DETECTING  = 0   # spinner auto-detect
-P_CONNECTED  = 1   # already connected
-P_CABLES     = 2   # step 1: verify cables
-P_ADAPTERS   = 3   # step 2: select network adapter
-P_IP_METHOD  = 4   # step 3: auto vs manual IP
-P_WORKING    = 5   # spinner (config in progress)
-P_IP_MANUAL  = 6   # step 3b: manual IP instructions
-P_SUCCESS    = 7   # success
+P_W_DETECTING = 0
+P_W_CONNECTED = 1
+P_W_CABLES    = 2
+P_W_ADAPTERS  = 3
+P_W_IP_METHOD = 4
+P_W_WORKING   = 5
+P_W_IP_MANUAL = 6
+P_W_SUCCESS   = 7
 
 
-# ============================================================
-# DIALOG
-# ============================================================
+class _AdapterScanner(QThread):
+    done = Signal(list)
+    def run(self): self.done.emit(_get_ethernet_adapters())
 
-class NodeConnectionDialog(QDialog):
-    """Assistant de connexion et configuration du Node DMX."""
 
-    def __init__(self, parent=None, target_ip: str = TARGET_IP):
+class _NetworkSetup(QThread):
+    done = Signal(str, str)
+    def __init__(self, adapter_name):
+        super().__init__()
+        self.adapter_name = adapter_name
+    def run(self):
+        if _set_static_ip(self.adapter_name):
+            time.sleep(1.5)
+            self.done.emit("ok", self.adapter_name)
+        else:
+            self.done.emit("manual", self.adapter_name)
+
+
+class _NodeSearcher(QThread):
+    finished = Signal(bool)
+    def run(self):
+        time.sleep(0.5)
+        try:
+            adapters = _get_ethernet_adapters()
+            if not any(ip.startswith("2.") for _, ip in adapters):
+                self.finished.emit(False); return
+            if _artpoll_probe(TARGET_IP, timeout=2.0):
+                self.finished.emit(True); return
+            self.finished.emit(_ping(TARGET_IP, timeout_ms=1500))
+        except Exception:
+            self.finished.emit(False)
+
+
+class _QuickDetector(QThread):
+    finished = Signal(bool)
+    def run(self):
+        try:
+            if not _get_ethernet_adapters():
+                self.finished.emit(False); return
+            self.finished.emit(_artpoll_probe(TARGET_IP, timeout=1.0)
+                               or _ping(TARGET_IP, timeout_ms=800))
+        except Exception:
+            self.finished.emit(False)
+
+
+class NodeSetupWizard(QDialog):
+    """Wizard de configuration réseau pas à pas pour le Node DMX."""
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._configured_ip = target_ip
-        self.setWindowTitle("Connexion – Node DMX")
+        self.setWindowTitle("Configuration Node DMX")
         self.setFixedSize(500, 560)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet(
             "QDialog { background: #171717; } "
             "QLabel { color: #e0e0e0; border: none; background: transparent; }"
         )
-
-        self._adapter_name: str = ""
-        self._selected_adapter_name: str = ""
-        self._selected_adapter_ip: str = ""
-        self._adapter_buttons: list = []
-        self._net_came_from_method: bool = False
-
-        self._q_detect     = None
-        self._adapter_scan = None
-        self._net_setup    = None
-        self._node_srch    = None
-
+        self._adapter_name = ""
+        self._selected_adapter_name = ""
+        self._selected_adapter_ip = ""
+        self._adapter_buttons = []
+        self._net_came_from_method = False
+        self._threads = []
         self._spin_frames = ["◐", "◓", "◑", "◒"]
         self._spin_idx = 0
         self._spin_timer = QTimer(self)
         self._spin_timer.timeout.connect(self._tick)
-
         self._build_ui()
         QTimer.singleShot(150, self._start_quick_detection)
 
-    # ──────────────────────────────────────────────────────
-    # WIDGET HELPERS
-    # ──────────────────────────────────────────────────────
+    # ── helpers ──────────────────────────────────────────────
 
     def _make_page(self):
-        """Returns (QWidget, QVBoxLayout) with dark background and standard margins."""
-        w = QWidget()
-        w.setStyleSheet("background: #171717;")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(32, 24, 32, 20)
-        lay.setSpacing(0)
+        w = QWidget(); w.setStyleSheet("background: #171717;")
+        lay = QVBoxLayout(w); lay.setContentsMargins(32, 24, 32, 20); lay.setSpacing(0)
         return w, lay
 
-    def _big_icon(self, text: str, color: str = "#00d4ff") -> QLabel:
-        lbl = QLabel(text)
-        f = QFont("Segoe UI Emoji", 32)
-        lbl.setFont(f)
+    def _big_icon(self, text, color="#00d4ff"):
+        lbl = QLabel(text); lbl.setFont(QFont("Segoe UI Emoji", 32))
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setStyleSheet(f"color: {color}; background: transparent;")
         return lbl
 
-    def _title_lbl(self, text: str) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setFont(QFont("Segoe UI", 15, QFont.Bold))
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setWordWrap(True)
+    def _title_lbl(self, text):
+        lbl = QLabel(text); lbl.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        lbl.setAlignment(Qt.AlignCenter); lbl.setWordWrap(True)
         lbl.setStyleSheet("color: #f0f0f0; background: transparent;")
         return lbl
 
-    def _sub_lbl(self, text: str, color: str = "#777777") -> QLabel:
-        lbl = QLabel(text)
-        lbl.setFont(QFont("Segoe UI", 10))
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setWordWrap(True)
+    def _sub_lbl(self, text, color="#777777"):
+        lbl = QLabel(text); lbl.setFont(QFont("Segoe UI", 10))
+        lbl.setAlignment(Qt.AlignCenter); lbl.setWordWrap(True)
         lbl.setStyleSheet(f"color: {color}; background: transparent;")
         return lbl
 
-    def _card(self, icon_char: str, bold_text: str, dim_text: str,
-              accent: str = "#00d4ff") -> QFrame:
+    def _card(self, icon_char, bold_text, dim_text, accent="#00d4ff"):
         frame = QFrame()
         frame.setStyleSheet(
             f"QFrame {{ background: #222222; border: 1px solid #333333; "
             f"border-left: 3px solid {accent}; border-radius: 8px; padding: 12px 14px; }}"
         )
-        row = QHBoxLayout(frame)
-        row.setContentsMargins(10, 8, 10, 8)
-        row.setSpacing(10)
-
-        icon_lbl = QLabel(icon_char)
-        icon_lbl.setFont(QFont("Segoe UI Emoji", 16))
-        icon_lbl.setStyleSheet("background: transparent; border: none;")
-        icon_lbl.setFixedWidth(28)
-        row.addWidget(icon_lbl)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-        bold_lbl = QLabel(bold_text)
-        bold_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        bold_lbl.setStyleSheet("color: #e0e0e0; background: transparent; border: none;")
-        text_col.addWidget(bold_lbl)
-        dim_lbl = QLabel(dim_text)
-        dim_lbl.setFont(QFont("Segoe UI", 9))
-        dim_lbl.setWordWrap(True)
-        dim_lbl.setStyleSheet("color: #777777; background: transparent; border: none;")
-        text_col.addWidget(dim_lbl)
-
-        row.addLayout(text_col, 1)
+        row = QHBoxLayout(frame); row.setContentsMargins(10, 8, 10, 8); row.setSpacing(10)
+        icon = QLabel(icon_char); icon.setFont(QFont("Segoe UI Emoji", 16))
+        icon.setStyleSheet("background: transparent; border: none;"); icon.setFixedWidth(28)
+        row.addWidget(icon)
+        col = QVBoxLayout(); col.setSpacing(2)
+        b = QLabel(bold_text); b.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        b.setStyleSheet("color: #e0e0e0; background: transparent; border: none;")
+        d = QLabel(dim_text); d.setFont(QFont("Segoe UI", 9)); d.setWordWrap(True)
+        d.setStyleSheet("color: #777777; background: transparent; border: none;")
+        col.addWidget(b); col.addWidget(d); row.addLayout(col, 1)
         return frame
 
-    def _step_indicator(self, active: int) -> QWidget:
-        """Renders a row of step dots with connecting lines and labels."""
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(4)
-
-        # Top row: dots + lines
-        dots_row = QHBoxLayout()
-        dots_row.setContentsMargins(0, 0, 0, 0)
-        dots_row.setSpacing(0)
-
+    def _step_indicator(self, active):
+        container = QWidget(); container.setStyleSheet("background: transparent;")
+        outer = QVBoxLayout(container); outer.setContentsMargins(0,0,0,0); outer.setSpacing(4)
+        dots_row = QHBoxLayout(); dots_row.setContentsMargins(0,0,0,0); dots_row.setSpacing(0)
         n = len(_WIZARD_STEPS)
         for i in range(n):
-            # Dot
-            if i < active:
-                dot_color = "#4ade80"
-                dot_char = "●"
-            elif i == active:
-                dot_color = "#00d4ff"
-                dot_char = "●"
-            else:
-                dot_color = "#333333"
-                dot_char = "○"
-
-            dot = QLabel(dot_char)
-            dot.setFont(QFont("Segoe UI", 12))
-            dot.setStyleSheet(f"color: {dot_color}; background: transparent;")
-            dot.setAlignment(Qt.AlignCenter)
-            dot.setFixedWidth(20)
+            color = "#4ade80" if i < active else ("#00d4ff" if i == active else "#333333")
+            char  = "●" if i <= active else "○"
+            dot = QLabel(char); dot.setFont(QFont("Segoe UI", 12))
+            dot.setStyleSheet(f"color: {color}; background: transparent;")
+            dot.setAlignment(Qt.AlignCenter); dot.setFixedWidth(20)
             dots_row.addWidget(dot)
-
-            # Connecting line (not after the last dot)
             if i < n - 1:
-                line_color = "#4ade80" if i < active else "#2a2a2a"
-                line = QFrame()
-                line.setFrameShape(QFrame.HLine)
-                line.setFrameShadow(QFrame.Plain)
-                line.setFixedHeight(2)
-                line.setStyleSheet(
-                    f"QFrame {{ background: {line_color}; border: none; "
-                    f"border-top: 2px solid {line_color}; }}"
-                )
+                lc = "#4ade80" if i < active else "#2a2a2a"
+                line = QFrame(); line.setFrameShape(QFrame.HLine); line.setFixedHeight(2)
+                line.setStyleSheet(f"QFrame {{ background: {lc}; border: none; border-top: 2px solid {lc}; }}")
                 dots_row.addWidget(line, 1)
-
         outer.addLayout(dots_row)
-
-        # Bottom row: labels under each dot
-        labels_row = QHBoxLayout()
-        labels_row.setContentsMargins(0, 0, 0, 0)
-        labels_row.setSpacing(0)
-
-        for i, step_name in enumerate(_WIZARD_STEPS):
-            if i < active:
-                lbl_color = "#4ade80"
-            elif i == active:
-                lbl_color = "#00d4ff"
-            else:
-                lbl_color = "#444444"
-
-            lbl = QLabel(step_name)
-            lbl.setFont(QFont("Segoe UI", 8))
-            lbl.setStyleSheet(f"color: {lbl_color}; background: transparent;")
-            lbl.setAlignment(Qt.AlignCenter)
-            labels_row.addWidget(lbl, 1)
-
+        labels_row = QHBoxLayout(); labels_row.setContentsMargins(0,0,0,0); labels_row.setSpacing(0)
+        for i, name in enumerate(_WIZARD_STEPS):
+            c = "#4ade80" if i < active else ("#00d4ff" if i == active else "#444444")
+            lbl = QLabel(name); lbl.setFont(QFont("Segoe UI", 8))
+            lbl.setStyleSheet(f"color: {c}; background: transparent;")
+            lbl.setAlignment(Qt.AlignCenter); labels_row.addWidget(lbl, 1)
         outer.addLayout(labels_row)
         return container
 
-    def _primary_btn(self, text: str, callback) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setStyleSheet(_BTN_PRIMARY)
-        btn.setFixedHeight(42)
-        btn.setCursor(QCursor(Qt.PointingHandCursor))
-        btn.clicked.connect(callback)
-        return btn
+    def _primary_btn(self, text, cb):
+        btn = QPushButton(text); btn.setStyleSheet(_BTN_PRIMARY)
+        btn.setFixedHeight(42); btn.setCursor(QCursor(Qt.PointingHandCursor))
+        btn.clicked.connect(cb); return btn
 
-    def _secondary_btn(self, text: str, callback) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setStyleSheet(_BTN_SECONDARY)
-        btn.setFixedHeight(36)
-        btn.setCursor(QCursor(Qt.PointingHandCursor))
-        btn.clicked.connect(callback)
-        return btn
+    def _secondary_btn(self, text, cb):
+        btn = QPushButton(text); btn.setStyleSheet(_BTN_SECONDARY)
+        btn.setFixedHeight(36); btn.setCursor(QCursor(Qt.PointingHandCursor))
+        btn.clicked.connect(cb); return btn
 
-    # ──────────────────────────────────────────────────────
-    # BUILD UI
-    # ──────────────────────────────────────────────────────
+    # ── pages ────────────────────────────────────────────────
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
+        root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
         self._stack = QStackedWidget()
         self._stack.setStyleSheet("background: #171717;")
         root.addWidget(self._stack, 1)
 
-        # Add pages in order
-        self._stack.addWidget(self._pg_detecting())   # 0 = P_DETECTING
-        self._stack.addWidget(self._pg_connected())   # 1 = P_CONNECTED
-        self._stack.addWidget(self._pg_cables())      # 2 = P_CABLES
-        self._stack.addWidget(self._pg_adapters())    # 3 = P_ADAPTERS
-        self._stack.addWidget(self._pg_ip_method())   # 4 = P_IP_METHOD
-        self._stack.addWidget(self._pg_working())     # 5 = P_WORKING
-        self._stack.addWidget(self._pg_ip_manual())   # 6 = P_IP_MANUAL
-        self._stack.addWidget(self._pg_success())     # 7 = P_SUCCESS
+        # Pages
+        self._stack.addWidget(self._pg_detecting())
+        self._stack.addWidget(self._pg_connected())
+        self._stack.addWidget(self._pg_cables())
+        self._stack.addWidget(self._pg_adapters())
+        self._stack.addWidget(self._pg_ip_method())
+        self._stack.addWidget(self._pg_working())
+        self._stack.addWidget(self._pg_ip_manual())
+        self._stack.addWidget(self._pg_success())
 
-        # Footer (back + close)
-        ftr = QFrame()
-        ftr.setFixedHeight(64)
+        # Footer
+        ftr = QFrame(); ftr.setFixedHeight(64)
         ftr.setStyleSheet("QFrame { background: #111111; border-top: 1px solid #222222; }")
-        fl = QHBoxLayout(ftr)
-        fl.setContentsMargins(24, 0, 24, 0)
-        fl.setSpacing(10)
-
-        self._btn_back = QPushButton("← Retour")
-        self._btn_back.setFixedHeight(36)
+        fl = QHBoxLayout(ftr); fl.setContentsMargins(24, 0, 24, 0); fl.setSpacing(10)
+        self._btn_back = QPushButton("← Retour"); self._btn_back.setFixedHeight(36)
         self._btn_back.setStyleSheet(_BTN_GHOST)
         self._btn_back.setCursor(QCursor(Qt.PointingHandCursor))
-        self._btn_back.clicked.connect(self._on_back)
-        self._btn_back.hide()
-        fl.addWidget(self._btn_back)
-        fl.addStretch()
-
-        self._btn_close = QPushButton("Fermer")
-        self._btn_close.setFixedHeight(36)
-        self._btn_close.setStyleSheet(_BTN_GHOST)
-        self._btn_close.setCursor(QCursor(Qt.PointingHandCursor))
-        self._btn_close.clicked.connect(self.accept)
-        fl.addWidget(self._btn_close)
-
+        self._btn_back.clicked.connect(self._on_back); self._btn_back.hide()
+        fl.addWidget(self._btn_back); fl.addStretch()
+        close_btn = QPushButton("Fermer"); close_btn.setFixedHeight(36)
+        close_btn.setStyleSheet(_BTN_GHOST)
+        close_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        close_btn.clicked.connect(self.accept)
+        fl.addWidget(close_btn)
         root.addWidget(ftr)
 
-    # ──────────────────────────────────────────────────────
-    # PAGES
-    # ──────────────────────────────────────────────────────
-
-    # 0 — P_DETECTING
     def _pg_detecting(self):
-        w, lay = self._make_page()
-        lay.addStretch()
-        self._spin_lbl = QLabel("◐")
-        self._spin_lbl.setFont(QFont("Segoe UI", 48))
+        w, lay = self._make_page(); lay.addStretch()
+        self._spin_lbl = QLabel("◐"); self._spin_lbl.setFont(QFont("Segoe UI", 48))
         self._spin_lbl.setStyleSheet("color: #00d4ff; background: transparent;")
-        self._spin_lbl.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self._spin_lbl)
-        lay.addSpacing(12)
-        lay.addWidget(self._sub_lbl("Recherche du boîtier DMX..."))
-        lay.addStretch()
-        return w
+        self._spin_lbl.setAlignment(Qt.AlignCenter); lay.addWidget(self._spin_lbl)
+        lay.addSpacing(12); lay.addWidget(self._sub_lbl("Recherche du boîtier DMX..."))
+        lay.addStretch(); return w
 
-    # 1 — P_CONNECTED
     def _pg_connected(self):
-        w, lay = self._make_page()
-        lay.addStretch()
-        lay.addWidget(self._big_icon("✅", "#4ade80"))
-        lay.addSpacing(12)
-        lay.addWidget(self._title_lbl("Boîtier connecté !"))
-        lay.addSpacing(8)
-        self._connected_ip_lbl = self._sub_lbl("")
-        lay.addWidget(self._connected_ip_lbl)
-        lay.addSpacing(24)
+        w, lay = self._make_page(); lay.addStretch()
+        lay.addWidget(self._big_icon("✅", "#4ade80")); lay.addSpacing(12)
+        lay.addWidget(self._title_lbl("Boîtier connecté !")); lay.addSpacing(8)
+        self._connected_ip_lbl = self._sub_lbl(f"Adresse IP : {TARGET_IP}")
+        lay.addWidget(self._connected_ip_lbl); lay.addSpacing(24)
         lay.addWidget(self._primary_btn("Super, fermer  ✓", self.accept))
-        lay.addStretch()
-        return w
+        lay.addSpacing(8)
+        lay.addWidget(self._secondary_btn("↺  Relancer depuis le début", self._restart_wizard))
+        lay.addStretch(); return w
 
-    # 2 — P_CABLES
     def _pg_cables(self):
         w, lay = self._make_page()
-        lay.addWidget(self._big_icon("🔌"))
-        lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Branchons le boîtier"))
-        lay.addSpacing(4)
+        lay.addWidget(self._big_icon("🔌")); lay.addSpacing(8)
+        lay.addWidget(self._title_lbl("Branchons le boîtier")); lay.addSpacing(4)
         lay.addWidget(self._sub_lbl("Vérifiez que les 2 connexions sont bien faites"))
         lay.addSpacing(14)
-        lay.addWidget(self._card(
-            "🔵", "Câble RJ45 (Ethernet)",
-            "Entre le boîtier et l'ordinateur  —  données DMX",
-            accent="#00d4ff"
-        ))
+        lay.addWidget(self._card("🔵", "Câble RJ45 (Ethernet)",
+            "Entre le boîtier et l'ordinateur  —  données DMX", accent="#00d4ff"))
         lay.addSpacing(8)
-        lay.addWidget(self._card(
-            "🔴", "Alimentation",
-            "Port USB carré (USB-B) ou USB Type-C selon le modèle\n"
-            "Prise secteur ou port USB de l'ordinateur",
-            accent="#f87171"
-        ))
-        lay.addSpacing(16)
-        lay.addWidget(self._step_indicator(0))
-        lay.addSpacing(14)
+        lay.addWidget(self._card("🔴", "Alimentation",
+            "Port USB carré (USB-B) ou USB Type-C selon le modèle", accent="#f87171"))
+        lay.addSpacing(16); lay.addWidget(self._step_indicator(0)); lay.addSpacing(14)
         lay.addWidget(self._primary_btn("Les 2 sont branchés  →", self._start_adapter_scan))
         return w
 
-    # 3 — P_ADAPTERS
     def _pg_adapters(self):
         w, lay = self._make_page()
-        lay.addWidget(self._big_icon("🌐"))
-        lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Quelle carte réseau ?"))
-        lay.addSpacing(4)
-        lay.addWidget(self._sub_lbl(
-            "Choisissez la carte RJ45 reliée au boîtier\n"
-            "(pas la Wi-Fi, pas la carte Internet)"
-        ))
+        lay.addWidget(self._big_icon("🌐")); lay.addSpacing(8)
+        lay.addWidget(self._title_lbl("Quelle carte réseau ?")); lay.addSpacing(4)
+        lay.addWidget(self._sub_lbl("Choisissez la carte RJ45 reliée au boîtier\n(pas la Wi-Fi)"))
         lay.addSpacing(12)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(
-            "QScrollArea { border: none; background: transparent; }"
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }"
             "QScrollBar:vertical { background: #1e1e1e; width: 6px; border-radius: 3px; }"
-            "QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 3px; }"
-        )
+            "QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 3px; }")
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner = QWidget(); inner.setStyleSheet("background: transparent;")
         self._adapters_layout = QVBoxLayout(inner)
-        self._adapters_layout.setSpacing(6)
-        self._adapters_layout.setContentsMargins(0, 0, 0, 0)
+        self._adapters_layout.setSpacing(6); self._adapters_layout.setContentsMargins(0,0,0,0)
         self._adapters_layout.addStretch()
-
-        scroll.setWidget(inner)
-        lay.addWidget(scroll, 1)
-
-        lay.addSpacing(12)
-        lay.addWidget(self._step_indicator(1))
-        lay.addSpacing(12)
-
+        scroll.setWidget(inner); lay.addWidget(scroll, 1)
+        lay.addSpacing(12); lay.addWidget(self._step_indicator(1)); lay.addSpacing(12)
         self._btn_net_suivant = QPushButton("Continuer  →")
-        self._btn_net_suivant.setStyleSheet(_BTN_PRIMARY)
-        self._btn_net_suivant.setFixedHeight(42)
+        self._btn_net_suivant.setStyleSheet(_BTN_PRIMARY); self._btn_net_suivant.setFixedHeight(42)
         self._btn_net_suivant.setEnabled(False)
         self._btn_net_suivant.setCursor(QCursor(Qt.PointingHandCursor))
         self._btn_net_suivant.clicked.connect(self._on_net_suivant)
-        lay.addWidget(self._btn_net_suivant)
-        return w
+        lay.addWidget(self._btn_net_suivant); return w
 
-    # 4 — P_IP_METHOD
     def _pg_ip_method(self):
         w, lay = self._make_page()
-        lay.addWidget(self._big_icon("⚙️"))
-        lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Configuration IP"))
-        lay.addSpacing(12)
-
-        # Info card
-        info_frame = QFrame()
-        info_frame.setStyleSheet(
-            "QFrame { background: #222222; border: 1px solid #333333; border-radius: 8px; }"
-        )
-        info_lay = QVBoxLayout(info_frame)
-        info_lay.setContentsMargins(16, 12, 16, 12)
-        info_lay.setSpacing(4)
-
+        lay.addWidget(self._big_icon("⚙️")); lay.addSpacing(8)
+        lay.addWidget(self._title_lbl("Configuration IP")); lay.addSpacing(12)
+        info = QFrame(); info.setStyleSheet(
+            "QFrame { background: #222222; border: 1px solid #333333; border-radius: 8px; }")
+        il = QVBoxLayout(info); il.setContentsMargins(16,12,16,12); il.setSpacing(4)
         self._ip_method_adapter_lbl = QLabel()
         self._ip_method_adapter_lbl.setFont(QFont("Segoe UI", 10))
-        self._ip_method_adapter_lbl.setStyleSheet(
-            "color: #666666; background: transparent; border: none;"
-        )
+        self._ip_method_adapter_lbl.setStyleSheet("color: #666666; background: transparent; border: none;")
         self._ip_method_adapter_lbl.setAlignment(Qt.AlignCenter)
-        info_lay.addWidget(self._ip_method_adapter_lbl)
-
-        ip_target = QLabel("IP cible :  2.0.0.1  /  255.0.0.0")
-        ip_target.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        ip_target.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
-        ip_target.setAlignment(Qt.AlignCenter)
-        info_lay.addWidget(ip_target)
-
-        lay.addWidget(info_frame)
-        lay.addSpacing(10)
-
-        admin_note = QLabel(
-            "ⓘ  Droits administrateur requis pour la configuration auto"
-        )
-        admin_note.setFont(QFont("Segoe UI", 9))
-        admin_note.setWordWrap(True)
-        admin_note.setStyleSheet("color: #444444; background: transparent;")
-        admin_note.setAlignment(Qt.AlignCenter)
-        lay.addWidget(admin_note)
-
-        lay.addSpacing(16)
-        lay.addWidget(self._step_indicator(2))
-        lay.addSpacing(14)
+        il.addWidget(self._ip_method_adapter_lbl)
+        ip_t = QLabel("IP cible :  2.0.0.1  /  255.0.0.0")
+        ip_t.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        ip_t.setStyleSheet("color: #00d4ff; background: transparent; border: none;")
+        ip_t.setAlignment(Qt.AlignCenter); il.addWidget(ip_t)
+        lay.addWidget(info); lay.addSpacing(10)
+        note = QLabel("ⓘ  Droits administrateur requis pour la configuration auto")
+        note.setFont(QFont("Segoe UI", 9)); note.setWordWrap(True)
+        note.setStyleSheet("color: #444444; background: transparent;")
+        note.setAlignment(Qt.AlignCenter); lay.addWidget(note)
+        lay.addSpacing(16); lay.addWidget(self._step_indicator(2)); lay.addSpacing(14)
         lay.addWidget(self._primary_btn("Configurer automatiquement  ✓", self._do_auto_config))
         lay.addSpacing(8)
         lay.addWidget(self._secondary_btn("Je configure moi-même", self._show_manual_from_method))
         return w
 
-    # 5 — P_WORKING
     def _pg_working(self):
-        w, lay = self._make_page()
-        lay.addStretch()
-        self._work_spin_lbl = QLabel("◐")
-        self._work_spin_lbl.setFont(QFont("Segoe UI", 48))
+        w, lay = self._make_page(); lay.addStretch()
+        self._work_spin_lbl = QLabel("◐"); self._work_spin_lbl.setFont(QFont("Segoe UI", 48))
         self._work_spin_lbl.setStyleSheet("color: #00d4ff; background: transparent;")
-        self._work_spin_lbl.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self._work_spin_lbl)
+        self._work_spin_lbl.setAlignment(Qt.AlignCenter); lay.addWidget(self._work_spin_lbl)
         lay.addSpacing(12)
         self._work_status_lbl = QLabel("")
         self._work_status_lbl.setFont(QFont("Segoe UI", 11))
         self._work_status_lbl.setStyleSheet("color: #888888; background: transparent;")
-        self._work_status_lbl.setWordWrap(True)
-        self._work_status_lbl.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self._work_status_lbl)
-        lay.addSpacing(6)
+        self._work_status_lbl.setWordWrap(True); self._work_status_lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self._work_status_lbl); lay.addSpacing(6)
         self._work_detail_lbl = QLabel("")
         self._work_detail_lbl.setFont(QFont("Segoe UI", 9))
         self._work_detail_lbl.setStyleSheet("color: #444444; background: transparent;")
-        self._work_detail_lbl.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self._work_detail_lbl)
-        lay.addStretch()
-        return w
+        self._work_detail_lbl.setAlignment(Qt.AlignCenter); lay.addWidget(self._work_detail_lbl)
+        lay.addStretch(); return w
 
-    # 6 — P_IP_MANUAL
     def _pg_ip_manual(self):
         w, lay = self._make_page()
-        lay.addWidget(self._big_icon("📋"))
-        lay.addSpacing(8)
-        lay.addWidget(self._title_lbl("Configuration manuelle"))
-        lay.addSpacing(6)
-        self._manual_ctx_lbl = self._sub_lbl("")
-        lay.addWidget(self._manual_ctx_lbl)
+        lay.addWidget(self._big_icon("📋")); lay.addSpacing(8)
+        lay.addWidget(self._title_lbl("Configuration manuelle")); lay.addSpacing(6)
+        self._manual_ctx_lbl = self._sub_lbl(""); lay.addWidget(self._manual_ctx_lbl)
         lay.addSpacing(12)
-
-        steps_frame = QFrame()
-        steps_frame.setStyleSheet(
-            "QFrame { background: #222222; border: 1px solid #333333; "
-            "border-radius: 8px; padding: 14px; }"
-        )
-        steps_lay = QVBoxLayout(steps_frame)
-        steps_lay.setContentsMargins(14, 10, 14, 10)
+        sf = QFrame(); sf.setStyleSheet(
+            "QFrame { background: #222222; border: 1px solid #333333; border-radius: 8px; padding: 14px; }")
+        sl = QVBoxLayout(sf); sl.setContentsMargins(14,10,14,10)
         self._manual_steps_lbl = QLabel()
         self._manual_steps_lbl.setFont(QFont("Segoe UI", 10))
-        self._manual_steps_lbl.setStyleSheet(
-            "color: #cccccc; background: transparent; border: none;"
-        )
-        self._manual_steps_lbl.setWordWrap(True)
-        steps_lay.addWidget(self._manual_steps_lbl)
-        lay.addWidget(steps_frame)
-
-        lay.addSpacing(8)
-        lay.addWidget(self._secondary_btn(
-            "📂  Ouvrir les connexions réseau", _open_network_connections
-        ))
+        self._manual_steps_lbl.setStyleSheet("color: #cccccc; background: transparent; border: none;")
+        self._manual_steps_lbl.setWordWrap(True); sl.addWidget(self._manual_steps_lbl)
+        lay.addWidget(sf); lay.addSpacing(8)
+        lay.addWidget(self._secondary_btn("📂  Ouvrir les connexions réseau", _open_network_connections))
         lay.addSpacing(4)
-        lay.addWidget(self._secondary_btn(
-            "🔑  Relancer en administrateur", self._restart_as_admin
-        ))
-        lay.addSpacing(12)
-        lay.addWidget(self._step_indicator(2))
-        lay.addSpacing(12)
-        lay.addWidget(self._primary_btn(
-            "J'ai configuré  →  Tester la connexion", self._start_final_search
-        ))
+        lay.addWidget(self._secondary_btn("🔑  Relancer en administrateur", self._restart_as_admin))
+        lay.addSpacing(12); lay.addWidget(self._step_indicator(2)); lay.addSpacing(12)
+        lay.addWidget(self._primary_btn("J'ai configuré  →  Tester la connexion", self._start_final_search))
         return w
 
-    # 7 — P_SUCCESS
     def _pg_success(self):
-        w, lay = self._make_page()
-        lay.addStretch()
-        lay.addWidget(self._big_icon("🎉", "#4ade80"))
-        lay.addSpacing(12)
-        lay.addWidget(self._title_lbl("Connexion établie !"))
-        lay.addSpacing(8)
-        self._success_sub_lbl = self._sub_lbl(
-            "Votre boîtier est prêt à recevoir les données DMX."
-        )
-        lay.addWidget(self._success_sub_lbl)
-        lay.addSpacing(20)
-        lay.addWidget(self._step_indicator(3))
-        lay.addSpacing(20)
+        w, lay = self._make_page(); lay.addStretch()
+        lay.addWidget(self._big_icon("🎉", "#4ade80")); lay.addSpacing(12)
+        lay.addWidget(self._title_lbl("Connexion établie !")); lay.addSpacing(8)
+        lay.addWidget(self._sub_lbl("Votre boîtier est prêt à recevoir les données DMX."))
+        lay.addSpacing(20); lay.addWidget(self._step_indicator(3)); lay.addSpacing(20)
         lay.addWidget(self._primary_btn("Super, fermer  ✓", self.accept))
-        lay.addStretch()
-        return w
+        lay.addStretch(); return w
 
-    # ──────────────────────────────────────────────────────
-    # NAVIGATION
-    # ──────────────────────────────────────────────────────
+    # ── navigation ───────────────────────────────────────────
 
-    def _go_to(self, page: int):
+    def _go_to(self, page):
         self._stack.setCurrentIndex(page)
-        self._btn_back.setVisible(page in {P_ADAPTERS, P_IP_METHOD, P_IP_MANUAL})
+        self._btn_back.setVisible(page in {P_W_ADAPTERS, P_W_IP_METHOD, P_W_IP_MANUAL})
 
     def _on_back(self):
-        page = self._stack.currentIndex()
-        if page == P_ADAPTERS:
-            self._go_to(P_CABLES)
-        elif page == P_IP_METHOD:
-            self._go_to(P_ADAPTERS)
-        elif page == P_IP_MANUAL:
-            self._go_to(P_IP_METHOD if self._net_came_from_method else P_ADAPTERS)
+        p = self._stack.currentIndex()
+        if p == P_W_ADAPTERS:   self._go_to(P_W_CABLES)
+        elif p == P_W_IP_METHOD: self._go_to(P_W_ADAPTERS)
+        elif p == P_W_IP_MANUAL: self._go_to(P_W_IP_METHOD if self._net_came_from_method else P_W_ADAPTERS)
 
-    # ──────────────────────────────────────────────────────
-    # SPINNER
-    # ──────────────────────────────────────────────────────
+    def _restart_wizard(self):
+        self._adapter_name = ""
+        self._selected_adapter_name = ""
+        self._selected_adapter_ip = ""
+        self._net_came_from_method = False
+        self._stop_spinner()
+        self._go_to(P_W_CABLES)
+
+    # ── spinner ──────────────────────────────────────────────
 
     def _tick(self):
         self._spin_idx = (self._spin_idx + 1) % len(self._spin_frames)
         f = self._spin_frames[self._spin_idx]
         p = self._stack.currentIndex()
-        if p == P_DETECTING:
-            self._spin_lbl.setText(f)
-        elif p == P_WORKING:
-            self._work_spin_lbl.setText(f)
+        if p == P_W_DETECTING: self._spin_lbl.setText(f)
+        elif p == P_W_WORKING: self._work_spin_lbl.setText(f)
 
-    def _set_working(self, status: str, detail: str = ""):
-        self._work_status_lbl.setText(status)
-        self._work_detail_lbl.setText(detail)
-        self._go_to(P_WORKING)
-        self._spin_timer.start(180)
+    def _set_working(self, status, detail=""):
+        self._work_status_lbl.setText(status); self._work_detail_lbl.setText(detail)
+        self._go_to(P_W_WORKING); self._spin_timer.start(180)
 
-    def _stop_spinner(self):
-        self._spin_timer.stop()
+    def _stop_spinner(self): self._spin_timer.stop()
 
-    # ──────────────────────────────────────────────────────
-    # STEP 1 — QUICK DETECTION
-    # ──────────────────────────────────────────────────────
+    # ── quick detection ──────────────────────────────────────
 
     def _start_quick_detection(self):
-        self._go_to(P_DETECTING)
-        self._spin_timer.start(180)
-        self._q_detect = QuickDetector(target_ip=self._configured_ip)
-        self._q_detect.finished.connect(self._on_quick_done)
-        self._q_detect.start()
+        self._go_to(P_W_DETECTING); self._spin_timer.start(180)
+        t = _QuickDetector(); t.finished.connect(self._on_quick_done)
+        self._threads.append(t); t.start()
 
-    def _on_quick_done(self, found: bool):
+    def _on_quick_done(self, found):
         self._stop_spinner()
-        if found:
-            self._connected_ip_lbl.setText(f"Adresse IP : {TARGET_IP}")
-            self._go_to(P_CONNECTED)
-        else:
-            self._go_to(P_CABLES)
+        if found: self._go_to(P_W_CONNECTED)
+        else:     self._go_to(P_W_CABLES)
 
-    # ──────────────────────────────────────────────────────
-    # STEP 2 — ADAPTER SCAN
-    # ──────────────────────────────────────────────────────
+    # ── adapter scan ─────────────────────────────────────────
 
     def _start_adapter_scan(self):
         self._set_working("Scan des cartes réseau...", "Recherche des adaptateurs Ethernet")
-        self._adapter_scan = AdapterScanner()
-        self._adapter_scan.done.connect(self._on_adapters_scanned)
-        self._adapter_scan.start()
+        t = _AdapterScanner(); t.done.connect(self._on_adapters_scanned)
+        self._threads.append(t); t.start()
 
-    def _on_adapters_scanned(self, adapters: list):
-        # clear adapters_layout (keep stretch at end)
+    def _on_adapters_scanned(self, adapters):
         while self._adapters_layout.count() > 1:
             item = self._adapters_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-
+            if item.widget(): item.widget().setParent(None)
         self._adapter_buttons.clear()
         self._selected_adapter_name = ""
         self._selected_adapter_ip = ""
@@ -945,37 +942,27 @@ class NodeConnectionDialog(QDialog):
 
         if not adapters:
             lbl = QLabel("Aucune carte Ethernet détectée.\nVérifiez que le câble RJ45 est bien branché.")
-            lbl.setStyleSheet(
-                "color: #fbbf24; background: #2a2000; border: 1px solid #554400; "
-                "border-radius: 6px; padding: 12px;"
-            )
-            lbl.setWordWrap(True)
-            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("color: #fbbf24; background: #2a2000; border: 1px solid #554400; "
+                "border-radius: 6px; padding: 12px;")
+            lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
             self._adapters_layout.insertWidget(0, lbl)
         else:
             for i, (name, ip) in enumerate(adapters):
                 already_ok = ip.startswith("2.0.0.")
                 ip_display = ip if ip else "IP non configurée"
-                if already_ok:
-                    txt = f"  {name}\n  {ip_display}   ✓  déjà configurée pour le Node"
-                    style = _BTN_ADAPTER_OK
-                else:
-                    txt = f"  {name}\n  IP actuelle : {ip_display}"
-                    style = _BTN_ADAPTER
+                txt = (f"  {name}\n  {ip_display}   ✓  déjà configurée" if already_ok
+                       else f"  {name}\n  IP actuelle : {ip_display}")
                 btn = QPushButton(txt)
-                btn.setStyleSheet(style)
-                btn.setFixedHeight(58)
-                btn.setCursor(QCursor(Qt.PointingHandCursor))
+                btn.setStyleSheet(_BTN_ADAPTER_OK if already_ok else _BTN_ADAPTER)
+                btn.setFixedHeight(58); btn.setCursor(QCursor(Qt.PointingHandCursor))
                 btn.clicked.connect(lambda _, n=name, curr_ip=ip: self._select_adapter(n, curr_ip))
                 self._adapters_layout.insertWidget(i, btn)
                 self._adapter_buttons.append((btn, name, ip))
 
-        self._stop_spinner()
-        self._go_to(P_ADAPTERS)
+        self._stop_spinner(); self._go_to(P_W_ADAPTERS)
 
-    def _select_adapter(self, name: str, ip: str):
-        self._selected_adapter_name = name
-        self._selected_adapter_ip = ip
+    def _select_adapter(self, name, ip):
+        self._selected_adapter_name = name; self._selected_adapter_ip = ip
         for btn, n, _ in self._adapter_buttons:
             btn.setStyleSheet(_BTN_ADAPTER_SEL if n == name else _BTN_ADAPTER)
         self._btn_net_suivant.setEnabled(True)
@@ -983,11 +970,7 @@ class NodeConnectionDialog(QDialog):
     def _on_net_suivant(self):
         self._on_adapter_selected(self._selected_adapter_name, self._selected_adapter_ip)
 
-    # ──────────────────────────────────────────────────────
-    # STEP 3 — ADAPTER SELECTED, IP CHECK
-    # ──────────────────────────────────────────────────────
-
-    def _on_adapter_selected(self, adapter_name: str, current_ip: str):
+    def _on_adapter_selected(self, adapter_name, current_ip):
         self._adapter_name = adapter_name
         if current_ip.startswith("2.0.0."):
             self._set_working("IP déjà configurée ✓", f"Recherche du boîtier sur {TARGET_IP}...")
@@ -995,88 +978,63 @@ class NodeConnectionDialog(QDialog):
         else:
             ip_display = current_ip if current_ip else "non configurée"
             self._ip_method_adapter_lbl.setText(
-                f"Carte : « {adapter_name} »  —  IP actuelle : {ip_display}"
-            )
+                f"Carte : « {adapter_name} »  —  IP actuelle : {ip_display}")
             self._net_came_from_method = False
-            self._go_to(P_IP_METHOD)
+            self._go_to(P_W_IP_METHOD)
 
-    # ──────────────────────────────────────────────────────
-    # STEP 4A — AUTO CONFIG
-    # ──────────────────────────────────────────────────────
+    # ── auto config ──────────────────────────────────────────
 
     def _do_auto_config(self):
-        self._set_working(
-            "Configuration en cours...",
-            f"Application de 2.0.0.1 sur « {self._adapter_name} »..."
-        )
-        self._net_setup = NetworkSetup(self._adapter_name)
-        self._net_setup.done.connect(self._on_network_done)
-        self._net_setup.start()
+        self._set_working("Configuration en cours...",
+            f"Application de 2.0.0.1 sur « {self._adapter_name} »...")
+        t = _NetworkSetup(self._adapter_name); t.done.connect(self._on_network_done)
+        self._threads.append(t); t.start()
 
-    def _on_network_done(self, status: str, adapter: str):
+    def _on_network_done(self, status, adapter):
         self._adapter_name = adapter
         if status == "ok":
-            self._start_final_search()
-            return
+            self._start_final_search(); return
         self._stop_spinner()
         self._net_came_from_method = True
         self._show_net_manual(adapter, status)
-
-    # ──────────────────────────────────────────────────────
-    # STEP 4B — MANUAL CONFIG
-    # ──────────────────────────────────────────────────────
 
     def _show_manual_from_method(self):
         self._net_came_from_method = True
         self._show_net_manual(self._adapter_name, "manual")
 
-    def _show_net_manual(self, adapter: str, status: str = "manual"):
-        adapter_label = f"« {adapter} »" if adapter else "votre carte Ethernet"
-        if status == "manual":
-            ctx = (
-                f"Droits insuffisants sur {adapter_label}.\n"
-                "Configurez manuellement ou relancez en administrateur."
-            )
-        elif status == "no_adapter":
-            ctx = "Aucune carte Ethernet détectée. Vérifiez le câble RJ45."
-        else:
-            ctx = f"Carte : {adapter_label}"
+    def _show_net_manual(self, adapter, status="manual"):
+        label = f"« {adapter} »" if adapter else "votre carte Ethernet"
+        ctx = (f"Droits insuffisants sur {label}.\nConfigurez manuellement ou relancez en administrateur."
+               if status == "manual" else f"Carte : {label}")
         self._manual_ctx_lbl.setText(ctx)
         self._manual_steps_lbl.setText(
-            f"1.  Clic droit sur {adapter_label}\n"
+            f"1.  Clic droit sur {label}\n"
             "2.  Propriétés\n"
             "3.  TCP/IPv4  →  Propriétés\n"
             "4.  Adresse IP :          2 . 0 . 0 . 1\n"
             "    Masque :  255 . 0 . 0 . 0\n"
             "5.  OK  →  OK  →  Fermer"
         )
-        self._go_to(P_IP_MANUAL)
+        self._go_to(P_W_IP_MANUAL)
 
-    # ──────────────────────────────────────────────────────
-    # STEP 5 — SEARCH NODE
-    # ──────────────────────────────────────────────────────
+    # ── node search ──────────────────────────────────────────
 
     def _start_final_search(self):
-        self._start_node_search()
+        self._set_working("Recherche du boîtier DMX...", f"Envoi ArtPoll sur {TARGET_IP}...")
+        t = _NodeSearcher(); t.finished.connect(self._on_search_done)
+        self._threads.append(t); t.start()
 
-    def _start_node_search(self):
-        self._set_working("Recherche du boîtier DMX...", f"Envoi ArtPoll sur {self._configured_ip}...")
-        self._node_srch = NodeSearcher(target_ip=self._configured_ip)
-        self._node_srch.finished.connect(self._on_search_done)
-        self._node_srch.start()
-
-    def _on_search_done(self, found: bool):
+    def _on_search_done(self, found):
         self._stop_spinner()
         if found:
-            self._go_to(P_SUCCESS)
+            self._go_to(P_W_SUCCESS)
         else:
-            adapter_label = f"« {self._adapter_name} »" if self._adapter_name else "votre carte Ethernet"
+            label = f"« {self._adapter_name} »" if self._adapter_name else "votre carte Ethernet"
             self._manual_ctx_lbl.setText(
                 f"Le boîtier n'a pas répondu sur {TARGET_IP}.\n"
-                "Vérifiez qu'il est allumé et que le câble RJ45 est branché."
-            )
+                "Vérifiez qu'il est allumé et que le câble RJ45 est branché.")
             self._manual_steps_lbl.setText(
-                f"1.  Clic droit sur {adapter_label}\n"
+                f"1.  Clic droit sur {label}\n"
                 "2.  Propriétés\n"
                 "3.  TCP/IPv4  →  Propriétés\n"
                 "4.  Adresse IP :          2 . 0 . 0 . 1\n"
@@ -1084,11 +1042,9 @@ class NodeConnectionDialog(QDialog):
                 "5.  OK  →  OK  →  Fermer"
             )
             self._net_came_from_method = True
-            self._go_to(P_IP_MANUAL)
+            self._go_to(P_W_IP_MANUAL)
 
-    # ──────────────────────────────────────────────────────
-    # ADMIN RESTART
-    # ──────────────────────────────────────────────────────
+    # ── admin restart ────────────────────────────────────────
 
     def _restart_as_admin(self):
         import sys, ctypes
@@ -1101,14 +1057,8 @@ class NodeConnectionDialog(QDialog):
         except Exception:
             pass
 
-    # ──────────────────────────────────────────────────────
-    # CLEANUP
-    # ──────────────────────────────────────────────────────
-
     def closeEvent(self, event):
         self._spin_timer.stop()
-        for t in (self._q_detect, self._adapter_scan, self._net_setup, self._node_srch):
-            if t and t.isRunning():
-                t.quit()
-                t.wait(300)
+        for t in self._threads:
+            if t.isRunning(): t.quit(); t.wait(300)
         super().closeEvent(event)

@@ -1,0 +1,4345 @@
+{
+  "version": 5,
+  "sequence": [],
+  "cartouches": [
+    {
+      "path": null,
+      "volume": 100
+    },
+    {
+      "path": null,
+      "volume": 100
+    },
+    {
+      "path": null,
+      "volume": 100
+    },
+    {
+      "path": null,
+      "volume": 100
+    }
+  ],
+  "memories": [
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche2",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche3",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "face",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffffff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff0000",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff8800",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ffdd00",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00ff00",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#00dddd",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#0000ff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      },
+      {
+        "projectors": [
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "face",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche1",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche2",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "douche3",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "lat",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "contre",
+            "base_color": "#ff00ff",
+            "level": 100
+          },
+          {
+            "group": "public",
+            "base_color": "#000000",
+            "level": 0
+          },
+          {
+            "group": "fumee",
+            "base_color": "#000000",
+            "level": 0
+          }
+        ]
+      }
+    ]
+  ],
+  "memory_custom_colors": [
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ],
+    [
+      "#ffffff",
+      "#ff0000",
+      "#ff8800",
+      "#ffdd00",
+      "#00ff00",
+      "#00dddd",
+      "#0000ff",
+      "#ff00ff"
+    ]
+  ],
+  "active_memory_pads": {
+    "4": 0,
+    "5": 0,
+    "6": 0,
+    "7": 0
+  },
+  "plan_de_feu": [
+    {
+      "group": "face",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "face",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "face",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "face",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "douche1",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "douche2",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "douche3",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "lat",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "lat",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "contre",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "public",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    },
+    {
+      "group": "fumee",
+      "level": 0,
+      "base_color": "#ffffff",
+      "muted": false
+    }
+  ],
+  "faders": {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0,
+    "4": 0,
+    "5": 0,
+    "6": 0,
+    "7": 0,
+    "8": 0
+  },
+  "active_color_pads": {
+    "0": "#ffffff",
+    "1": "#ffffff",
+    "2": "#ffffff",
+    "3": "#ffffff"
+  }
+}
