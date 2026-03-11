@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QProgressBar, QFrame, QApplication,
+    QTextEdit, QProgressBar, QFrame, QApplication, QInputDialog,
 )
 
 from core import APP_NAME, VERSION
@@ -133,14 +133,27 @@ class _DiagWorker(QThread):
                 encoding="cp850", errors="replace",
                 creationflags=CREATE_NO_WINDOW
             )
-            adapters = _parse_adapters(result.stdout)
+            # Tous les adaptateurs (sans filtre agressif)
+            all_adapters = _parse_adapters(result.stdout, filter_irrelevant=False)
+            # Filtrer loopback/tunnel pour l'affichage
+            skip_display = ["loopback", "bluetooth", "tunnel", "vmware", "vethernet", "isatap"]
+            adapters = [(n, ip) for n, ip in all_adapters
+                        if not any(k in n.lower() for k in skip_display)
+                        and not ip.startswith("127.") and not ip.startswith("169.254.")]
             if adapters:
                 for name, ip in adapters:
                     ok = ip.startswith("2.")
                     add("Réseau", "ok" if ok else "warn",
                         f"{name[:35]:<35} IP={ip}")
             else:
-                add("Réseau", "warn", "Aucun adaptateur Ethernet détecté")
+                # Montrer quand même tous les adaptateurs trouvés pour diagnostic
+                visible = [(n, ip) for n, ip in all_adapters if not ip.startswith("127.")]
+                if visible:
+                    add("Réseau", "warn", "Aucun adaptateur sur réseau 2.x.x.x — adaptateurs trouvés :")
+                    for name, ip in visible:
+                        add("Réseau", "info", f"  {name[:35]:<35} IP={ip}")
+                else:
+                    add("Réseau", "err", "Aucun adaptateur Ethernet détecté — branchez le câble RJ45 !")
         except Exception as e:
             add("Réseau", "err", f"ipconfig échoué : {e}")
 
@@ -255,22 +268,21 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5,
     return False, ""
 
 
-def _parse_adapters(ipconfig_out: str):
-    """Parse basique ipconfig pour extraire (nom, IP)."""
+def _parse_adapters(ipconfig_out: str, filter_irrelevant: bool = True):
+    """Parse ipconfig pour extraire (nom, IP).
+    Si filter_irrelevant=False, retourne tous les adaptateurs avec une IPv4."""
     import re
     adapters = []
     current = None
-    skip_keywords = ["wi-fi", "wifi", "wireless", "loopback", "bluetooth",
-                     "tunnel", "vmware", "virtual", "vethernet", "isatap"]
+    skip_keywords = ["loopback", "bluetooth", "tunnel", "vmware",
+                     "vethernet", "isatap"]
     for line in ipconfig_out.splitlines():
         if line and not line.startswith(" "):
             low = line.lower()
-            if any(k in low for k in skip_keywords):
-                current = None
-            elif ":" in line:
-                current = line.strip().rstrip(":")
+            skip = filter_irrelevant and any(k in low for k in skip_keywords)
+            current = None if skip else (line.strip().rstrip(":") if ":" in line else None)
         elif current and "ipv4" in line.lower():
-            m = __import__("re").search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+            m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
             if m:
                 ip = m.group(1)
                 if not ip.startswith("127."):
@@ -444,12 +456,49 @@ class BradDiagnosticDialog(QDialog):
         dmx = self._window.dmx
         if dmx.transport != "artnet":
             self._fixable["transport"] = "artnet"
-        # Si ArtPoll unicast a trouvé une IP différente de la cible actuelle
-        for cat, status, detail in results:
-            if cat == "ArtPoll broadcast" and status == "ok" and "réponse de" in detail:
-                found_ip = detail.split("réponse de")[-1].strip()
-                if found_ip and found_ip != dmx.target_ip:
-                    self._fixable["target_ip"] = found_ip
+
+        # Détecter absence de carte Ethernet
+        no_ethernet = any(
+            cat == "Réseau" and "branchez le câble" in detail
+            for cat, status, detail in results
+        )
+        if no_ethernet:
+            self._fixable["no_ethernet"] = True
+
+        # Récupérer les IPs locales pour détecter si target_ip == PC lui-même
+        local_ips = set()
+        try:
+            import subprocess as _sp, platform as _pl
+            r = _sp.run(["ipconfig"], capture_output=True, text=True,
+                        encoding="cp850", errors="replace",
+                        creationflags=CREATE_NO_WINDOW)
+            for a in _parse_adapters(r.stdout):
+                local_ips.add(a[1])
+        except Exception:
+            pass
+
+        if dmx.target_ip in local_ips:
+            # L'IP cible est le PC lui-même — chercher l'IP du boîtier dans les réponses ArtPoll
+            external_found = None
+            for cat, status, detail in results:
+                if cat == "ArtPoll broadcast" and status == "ok" and "réponse de" in detail:
+                    found_ip = detail.split("réponse de")[-1].strip()
+                    if found_ip and found_ip not in local_ips:
+                        external_found = found_ip
+                        break
+            if external_found:
+                self._fixable["target_ip"] = external_found
+            else:
+                # Pas de boîtier détecté (câble débranché ?) — signaler sans proposer d'IP
+                self._fixable["target_ip_local"] = dmx.target_ip
+        else:
+            # Si ArtPoll a trouvé un boîtier à une IP différente de la cible
+            for cat, status, detail in results:
+                if cat == "ArtPoll broadcast" and status == "ok" and "réponse de" in detail:
+                    found_ip = detail.split("réponse de")[-1].strip()
+                    if found_ip and found_ip != dmx.target_ip and found_ip not in local_ips:
+                        self._fixable["target_ip"] = found_ip
+                        break
 
         current_cat = None
         for cat, status, detail in results:
@@ -498,6 +547,27 @@ class BradDiagnosticDialog(QDialog):
         )
         self._raw_lines.append("=" * 60)
 
+        # Avertissement câble débranché
+        if "no_ethernet" in self._fixable:
+            self._append_html(
+                '<br><span style="color:#f44336;font-size:13px;font-weight:bold;">'
+                '🔌 Aucun câble RJ45 détecté — branchez le câble Ethernet entre le PC et le boîtier !</span>'
+            )
+
+        # Forcer une erreur visible si target_ip == IP locale (PC lui-même)
+        if "target_ip_local" in self._fixable:
+            self._append_html(
+                f'<br><span style="color:#f44336;font-weight:bold;">'
+                f'✗ IP cible ({self._fixable["target_ip_local"]}) est l\'IP du PC lui-même —'
+                f' les paquets DMX ne partent pas vers le boîtier !</span>'
+            )
+        elif "target_ip" in self._fixable and self._fixable["target_ip"] != self._window.dmx.target_ip:
+            self._append_html(
+                f'<br><span style="color:#ff9800;font-weight:bold;">'
+                f'⚠ Boîtier détecté sur {self._fixable["target_ip"]}'
+                f' mais IP cible = {self._window.dmx.target_ip}</span>'
+            )
+
         self._copy_btn.setEnabled(True)
         self._retry_btn.setEnabled(True)
         self._fix_btn.setVisible(bool(self._fixable))
@@ -510,11 +580,34 @@ class BradDiagnosticDialog(QDialog):
     def _auto_fix(self):
         """Applique les corrections détectées automatiquement."""
         from artnet_dmx import TRANSPORT_ARTNET
+        from PySide6.QtWidgets import QMessageBox
         dmx = self._window.dmx
+
+        if "no_ethernet" in self._fixable:
+            QMessageBox.warning(self, "Câble non branché",
+                "Aucun adaptateur Ethernet détecté.\n\n"
+                "Branchez le câble RJ45 entre votre PC et le boîtier Art-Net,\n"
+                "puis relancez le diagnostic.")
+            return
         fixes = []
 
         new_transport = self._fixable.get("transport", dmx.transport)
-        new_ip = self._fixable.get("target_ip", dmx.target_ip)
+        # Si l'IP cible est celle du PC et qu'aucun boîtier n'a été détecté, demander l'IP
+        if "target_ip" in self._fixable:
+            new_ip = self._fixable["target_ip"]
+        elif "target_ip_local" in self._fixable:
+            ip_input, ok = QInputDialog.getText(
+                self, "IP du boîtier Art-Net",
+                "Aucun boîtier détecté automatiquement.\n"
+                "Entrez l'IP de votre boîtier Art-Net :",
+                text="2.0.0.30"
+            )
+            if not ok or not ip_input.strip():
+                return
+            new_ip = ip_input.strip()
+            self._fixable["target_ip"] = new_ip
+        else:
+            new_ip = dmx.target_ip
 
         if new_transport != dmx.transport:
             fixes.append(f"Transport : {dmx.transport} → {new_transport}")
