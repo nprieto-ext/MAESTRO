@@ -111,11 +111,11 @@ class ArtNetDMX:
 
     def __init__(self):
         # --- Transport actif ---
-        self.transport = TRANSPORT_ENTTEC
+        self.transport = TRANSPORT_ARTNET
 
         # --- Produit selectionne ---
-        self.product_id   = "enttec_open"
-        self.product_name = "ENTTEC Open DMX USB"
+        self.product_id   = "artnet"
+        self.product_name = "Art-Net (réseau)"
 
         # --- ENTTEC Open DMX USB ---
         self.com_port = None
@@ -148,9 +148,9 @@ class ArtNetDMX:
             if os.path.exists(self.CONFIG_FILE):
                 with open(self.CONFIG_FILE, "r") as f:
                     cfg = json.load(f)
-                self.transport    = cfg.get("transport", TRANSPORT_ENTTEC)
-                self.product_id   = cfg.get("product_id", "enttec_open")
-                self.product_name = cfg.get("product_name", "ENTTEC Open DMX USB")
+                self.transport    = cfg.get("transport", TRANSPORT_ARTNET)
+                self.product_id   = cfg.get("product_id", "artnet")
+                self.product_name = cfg.get("product_name", "Art-Net (réseau)")
                 self.com_port     = cfg.get("com_port")
                 self.target_ip    = cfg.get("target_ip", "2.0.0.15")
                 self.target_port  = int(cfg.get("target_port", 6454))

@@ -7699,18 +7699,24 @@ class MainWindow(QMainWindow):
         """)
 
         def apply_config():
-            self.dmx.target_ip = ip_edit.text().strip()
+            new_ip = ip_edit.text().strip()
             try:
-                self.dmx.target_port = int(port_edit.text().strip())
+                new_port = int(port_edit.text().strip())
             except ValueError:
-                pass
+                new_port = self.dmx.target_port
             try:
-                self.dmx.universe = int(univers_edit.text().strip())
+                new_universe = int(univers_edit.text().strip())
             except ValueError:
-                pass
-            # Reconnecter avec les nouveaux parametres
+                new_universe = self.dmx.universe
+            # Force transport artnet (le dialog "Configure NODE" est toujours Art-Net)
+            from artnet_dmx import TRANSPORT_ARTNET
             self.dmx.connected = False
-            self.dmx.connect()
+            self.dmx.connect(
+                transport=TRANSPORT_ARTNET,
+                target_ip=new_ip,
+                target_port=new_port,
+                universe=new_universe,
+            )
             dialog.accept()
             QMessageBox.information(self, "NODE",
                 f"Configuration appliquee:\n"

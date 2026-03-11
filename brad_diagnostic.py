@@ -373,6 +373,19 @@ class BradDiagnosticDialog(QDialog):
         """)
         self._copy_btn.clicked.connect(self._copy_report)
 
+        self._fix_btn = QPushButton("🔧  Corriger automatiquement")
+        self._fix_btn.setVisible(False)
+        self._fix_btn.setStyleSheet("""
+            QPushButton {
+                background: #3a2000; color: #ff9800;
+                border: 1px solid #ff980044; border-radius: 6px;
+                padding: 10px 28px; font-size: 13px; font-weight: bold;
+            }
+            QPushButton:hover  { background: #4a2800; border-color: #ff980099; }
+            QPushButton:pressed { background: #1a1000; }
+        """)
+        self._fix_btn.clicked.connect(self._auto_fix)
+
         self._retry_btn = QPushButton("↺  Relancer")
         self._retry_btn.setEnabled(False)
         self._retry_btn.clicked.connect(self._start)
@@ -381,6 +394,7 @@ class BradDiagnosticDialog(QDialog):
         close_btn.clicked.connect(self.accept)
 
         btn_row.addWidget(self._copy_btn)
+        btn_row.addWidget(self._fix_btn)
         btn_row.addStretch()
         btn_row.addWidget(self._retry_btn)
         btn_row.addWidget(close_btn)
@@ -388,6 +402,7 @@ class BradDiagnosticDialog(QDialog):
 
         self._raw_lines = []   # lignes texte brut pour le copier-coller
         self._worker = None
+        self._fixable = {}    # problèmes corrigeables détectés {clé: valeur}
 
         QTimer.singleShot(150, self._start)
 
@@ -423,6 +438,18 @@ class BradDiagnosticDialog(QDialog):
     def _on_done(self, results: list):
         self._prog.setValue(100)
         self._status_lbl.setText("Terminé.")
+        self._fixable = {}
+
+        # Détecter les problèmes corrigeables avant d'afficher
+        dmx = self._window.dmx
+        if dmx.transport != "artnet":
+            self._fixable["transport"] = "artnet"
+        # Si ArtPoll unicast a trouvé une IP différente de la cible actuelle
+        for cat, status, detail in results:
+            if cat == "ArtPoll broadcast" and status == "ok" and "réponse de" in detail:
+                found_ip = detail.split("réponse de")[-1].strip()
+                if found_ip and found_ip != dmx.target_ip:
+                    self._fixable["target_ip"] = found_ip
 
         current_cat = None
         for cat, status, detail in results:
@@ -473,11 +500,44 @@ class BradDiagnosticDialog(QDialog):
 
         self._copy_btn.setEnabled(True)
         self._retry_btn.setEnabled(True)
+        self._fix_btn.setVisible(bool(self._fixable))
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _append_html(self, html: str):
         self._output.append(html)
+
+    def _auto_fix(self):
+        """Applique les corrections détectées automatiquement."""
+        from artnet_dmx import TRANSPORT_ARTNET
+        dmx = self._window.dmx
+        fixes = []
+
+        new_transport = self._fixable.get("transport", dmx.transport)
+        new_ip = self._fixable.get("target_ip", dmx.target_ip)
+
+        if new_transport != dmx.transport:
+            fixes.append(f"Transport : {dmx.transport} → {new_transport}")
+        if new_ip != dmx.target_ip:
+            fixes.append(f"IP cible  : {dmx.target_ip} → {new_ip}")
+
+        dmx.connected = False
+        dmx.connect(
+            transport=TRANSPORT_ARTNET,
+            target_ip=new_ip,
+        )
+
+        self._append_html(
+            '<br><span style="color:#4caf50;font-weight:bold;">🔧 Corrections appliquées :</span>'
+        )
+        for fix in fixes:
+            self._append_html(f'<span style="color:#4caf50;">  ✓ {fix}</span>')
+
+        self._fix_btn.setVisible(False)
+        self._retry_btn.setEnabled(True)
+
+        # Relancer le diagnostic pour confirmer
+        QTimer.singleShot(800, self._start)
 
     def _copy_report(self):
         text = "\n".join(self._raw_lines)
