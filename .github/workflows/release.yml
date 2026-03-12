@@ -114,7 +114,7 @@ jobs:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: |
-          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          echo "$MACOS_CERTIFICATE" | tr -d '\n' | base64 --decode > certificate.p12
           security create-keychain -p mystrow-ci temp.keychain
           security default-keychain -s temp.keychain
           security unlock-keychain -p mystrow-ci temp.keychain
