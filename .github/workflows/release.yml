@@ -123,12 +123,17 @@ jobs:
           security default-keychain -s temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
 
+      - name: Debug identités disponibles
+        run: security find-identity -v -p codesigning
+
       - name: Signer .app
         env:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          echo "Identité trouvée : $IDENTITY"
           codesign --deep --force --verify --verbose \
-            --sign "Developer ID Application: Nicolas PRIETO ($NOTARIZATION_TEAM_ID)" \
+            --sign "$IDENTITY" \
             --options runtime \
             --entitlements entitlements.plist \
             dist/MyStrow.app
