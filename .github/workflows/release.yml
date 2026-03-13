@@ -133,17 +133,13 @@ jobs:
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: |
           echo "$MACOS_CERTIFICATE" | tr -d '\r\n' | base64 -D > certificate.p12
-          echo "=== P12 file info ==="
-          file certificate.p12
-          wc -c certificate.p12
-          echo "=== Password length ==="
-          echo -n "$MACOS_CERTIFICATE_PWD" | wc -c
-          echo "=== Verify P12 with openssl ==="
-          openssl pkcs12 -in certificate.p12 -passin env:MACOS_CERTIFICATE_PWD -nokeys -noout && echo "P12 OK" || echo "P12 INVALID or WRONG PASSWORD"
+          # Re-encode P12 in modern format (macOS runner uses old RC2-40-CBC format)
+          openssl pkcs12 -in certificate.p12 -passin env:MACOS_CERTIFICATE_PWD -legacy \
+            | openssl pkcs12 -export -out certificate_modern.p12 -passout env:MACOS_CERTIFICATE_PWD
           security create-keychain -p mystrow-ci temp.keychain
           security set-keychain-settings -lut 21600 temp.keychain
           security unlock-keychain -p mystrow-ci temp.keychain
-          security import certificate.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
+          security import certificate_modern.p12 -k temp.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -d user -s temp.keychain $(security list-keychains -d user | tr -d '"')
           security default-keychain -s temp.keychain
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
