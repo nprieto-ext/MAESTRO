@@ -109,7 +109,25 @@ jobs:
             --noconfirm \
             main.py
 
+      - name: Check signing secrets availability
+        id: check-secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
+        run: |
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            echo "has_cert=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cert=false" >> $GITHUB_OUTPUT
+          fi
+          if [ -n "$NOTARIZATION_APPLE_ID" ]; then
+            echo "has_notarization=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_notarization=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Import certificat de signature
+        if: steps.check-secrets.outputs.has_cert == 'true'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
@@ -124,9 +142,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k mystrow-ci temp.keychain
 
       - name: Debug identités disponibles
+        if: steps.check-secrets.outputs.has_cert == 'true'
         run: security find-identity -v -p codesigning
 
       - name: Signer .app
+        if: steps.check-secrets.outputs.has_cert == 'true'
         env:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
@@ -139,6 +159,7 @@ jobs:
             dist/MyStrow.app
 
       - name: Notariser
+        if: steps.check-secrets.outputs.has_notarization == 'true'
         env:
           NOTARIZATION_APPLE_ID: ${{ secrets.NOTARIZATION_APPLE_ID }}
           NOTARIZATION_APPLE_PASSWORD: ${{ secrets.NOTARIZATION_APPLE_PASSWORD }}
@@ -166,6 +187,7 @@ jobs:
             "dist/"
 
       - name: Signer le DMG
+        if: steps.check-secrets.outputs.has_cert == 'true'
         env:
           NOTARIZATION_TEAM_ID: ${{ secrets.NOTARIZATION_TEAM_ID }}
         run: |
