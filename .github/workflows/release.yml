@@ -133,6 +133,13 @@ jobs:
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
         run: |
           echo "$MACOS_CERTIFICATE" | tr -d '\r\n' | base64 -D > certificate.p12
+          echo "=== P12 file info ==="
+          file certificate.p12
+          wc -c certificate.p12
+          echo "=== Password length ==="
+          echo -n "$MACOS_CERTIFICATE_PWD" | wc -c
+          echo "=== Verify P12 with openssl ==="
+          openssl pkcs12 -in certificate.p12 -passin env:MACOS_CERTIFICATE_PWD -nokeys -noout && echo "P12 OK" || echo "P12 INVALID or WRONG PASSWORD"
           security create-keychain -p mystrow-ci temp.keychain
           security set-keychain-settings -lut 21600 temp.keychain
           security unlock-keychain -p mystrow-ci temp.keychain
