@@ -92,40 +92,7 @@ jobs:
           iconutil -c icns mystrow.iconset -o mystrow.icns
 
       - name: Build .app
-        run: |
-          pyinstaller \
-            --windowed \
-            --icon=mystrow.icns \
-            --add-data "logo.png:." \
-            --add-data "mystrow.icns:." \
-            --name MyStrow \
-            --paths=. \
-            --collect-all rtmidi \
-            --collect-all serial \
-            --hidden-import=rtmidi \
-            --hidden-import=rtmidi._rtmidi \
-            --hidden-import=main_window \
-            --hidden-import=license_manager \
-            --hidden-import=license_ui \
-            --hidden-import=node_connection \
-            --hidden-import=brad_diagnostic \
-            --hidden-import=artnet_dmx \
-            --hidden-import=firebase_client \
-            --hidden-import=firebase_config \
-            --hidden-import=core \
-            --hidden-import=sequencer \
-            --hidden-import=plan_de_feu \
-            --hidden-import=light_timeline \
-            --hidden-import=timeline_editor \
-            --hidden-import=effect_editor \
-            --hidden-import=midi_handler \
-            --hidden-import=ui_components \
-            --hidden-import=serial \
-            --hidden-import=serial.tools \
-            --hidden-import=serial.tools.list_ports \
-            --noupx \
-            --noconfirm \
-            main.py
+        run: pyinstaller --noconfirm MyStrow.spec
 
       - name: Check signing secrets availability
         id: check-secrets
