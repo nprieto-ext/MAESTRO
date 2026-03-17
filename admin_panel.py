@@ -902,6 +902,16 @@ class OflSyncWorker(QObject):
         import zipfile as _zf
         import ofl_parser
 
+        # ── 0. Vérifier que le secret est configuré ────────────────────────
+        if not _GDTF_SYNC_SECRET:
+            raise Exception(
+                "GDTF_SYNC_SECRET manquant.\n\n"
+                "Créez le fichier gdtf_config.py à côté de admin_panel.py :\n"
+                "  GDTF_SYNC_SECRET = 'votre_secret'\n\n"
+                "Ce secret doit correspondre à la variable Firebase :\n"
+                "  firebase functions:secrets:set GDTF_SYNC_SECRET"
+            )
+
         # ── 1. Téléchargement du ZIP OFL (~50 Mo) ─────────────────────────
         self.progress.emit(0, 0, "Téléchargement du ZIP Open Fixture Library…")
         req = urllib.request.Request(
@@ -957,8 +967,24 @@ class OflSyncWorker(QObject):
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(r_req, timeout=120) as r_resp:
-                r = json.loads(r_resp.read().decode())
+            try:
+                with urllib.request.urlopen(r_req, timeout=120) as r_resp:
+                    r = json.loads(r_resp.read().decode())
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8", errors="replace")
+                    err_data = json.loads(body)
+                    body = err_data.get("error", body)
+                except Exception:
+                    pass
+                if e.code == 403:
+                    raise Exception(
+                        f"Accès refusé (403) — {body or 'Secret invalide ou non configuré'}\n\n"
+                        f"Vérifiez que GDTF_SYNC_SECRET est identique dans gdtf_config.py "
+                        f"et dans Firebase (firebase functions:secrets:set GDTF_SYNC_SECRET)."
+                    )
+                raise Exception(f"HTTP {e.code} — {body or e.reason}")
             if not r.get("ok"):
                 raise Exception(r.get("error", "Upload batch échoué"))
             upload_batch.clear()

@@ -742,8 +742,20 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     Body: {"fixtures": [{name, manufacturer, fixture_type, source, uuid, modes: [{name, channelCount, profile: [...]}]}]}
     """
     secret = req.headers.get("X-Sync-Secret", "")
-    if not GDTF_SYNC_SECRET or secret != GDTF_SYNC_SECRET:
-        return https_fn.Response("Acces refuse", status=403)
+    if not GDTF_SYNC_SECRET:
+        print("[gdtf_upload] ERREUR : variable GDTF_SYNC_SECRET non configuree dans Firebase")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "GDTF_SYNC_SECRET non configuree sur le serveur — firebase functions:secrets:set GDTF_SYNC_SECRET"}),
+            status=403,
+            headers={"Content-Type": "application/json"},
+        )
+    if secret != GDTF_SYNC_SECRET:
+        print(f"[gdtf_upload] Secret invalide (recu: '{secret[:8]}...')")
+        return https_fn.Response(
+            json.dumps({"ok": False, "error": "Secret invalide — verifiez gdtf_config.py"}),
+            status=403,
+            headers={"Content-Type": "application/json"},
+        )
 
     try:
         body     = json.loads(req.get_data() or b"{}")
