@@ -1460,7 +1460,7 @@ def _do_upload_fixture_async(fixture_data: dict, id_token: str):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "X-Sync-Secret": _GDTF_SYNC_SECRET,
+            "Authorization": f"Bearer {id_token}",
         },
         method="POST",
     )

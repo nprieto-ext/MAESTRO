@@ -738,22 +738,24 @@ def gdtf_upload(req: https_fn.Request) -> https_fn.Response:
     Endpoint HTTPS : POST /gdtf_upload
     Recoit des fixtures deja parsees (depuis admin panel) et les ecrit dans
     Firestore gdtf_fixtures avec leur profil complet (modes[].profile).
-    Protege par X-Sync-Secret.
+    Protege par Firebase ID token (Authorization: Bearer <token>).
     Body: {"fixtures": [{name, manufacturer, fixture_type, source, uuid, modes: [{name, channelCount, profile: [...]}]}]}
     """
-    _server_secret = GDTF_SYNC_SECRET
-    secret = req.headers.get("X-Sync-Secret", "")
-    if not _server_secret:
-        print("[gdtf_upload] ERREUR : variable GDTF_SYNC_SECRET non configuree dans Firebase")
+    auth_header = req.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "GDTF_SYNC_SECRET non configuree sur le serveur — verifiez functions/.env"}),
+            json.dumps({"ok": False, "error": "Token manquant — reconnectez-vous à l'admin panel"}),
             status=403,
             headers={"Content-Type": "application/json"},
         )
-    if secret != _server_secret:
-        print(f"[gdtf_upload] Secret invalide (recu: '{secret[:8]}...')")
+    id_token = auth_header[len("Bearer "):]
+    try:
+        decoded = auth.verify_id_token(id_token)
+        print(f"[gdtf_upload] Accès autorisé pour {decoded.get('email', decoded.get('uid'))}")
+    except Exception as e:
+        print(f"[gdtf_upload] Token invalide : {e}")
         return https_fn.Response(
-            json.dumps({"ok": False, "error": "Secret invalide — verifiez gdtf_config.py"}),
+            json.dumps({"ok": False, "error": "Token invalide ou expiré — reconnectez-vous"}),
             status=403,
             headers={"Content-Type": "application/json"},
         )
