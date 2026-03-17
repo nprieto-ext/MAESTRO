@@ -1452,30 +1452,46 @@ class GdtfUploadDialog(QDialog):
         self._append_log(f"❌ Erreur : {msg}", RED)
 
 
-def _do_upload_fixture_async(fixture_data: dict, id_token: str):
-    """Upload d'une fixture vers Firestore via gdtf_upload (appelé dans un QThread)."""
-    payload = json.dumps({"fixtures": [fixture_data]}).encode("utf-8")
-    req = urllib.request.Request(
-        _GDTF_UPLOAD_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {id_token}",
-        },
-        method="POST",
-    )
-    try:
+def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: str = "") -> str:
+    """Upload d'une fixture vers Firestore via gdtf_upload (appelé dans un QThread).
+    Retourne le id_token (potentiellement rafraîchi)."""
+    from firebase_client import refresh_id_token as _refresh
+
+    def _post(token):
+        payload = json.dumps({"fixtures": [fixture_data]}).encode("utf-8")
+        req = urllib.request.Request(
+            _GDTF_UPLOAD_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
-            r = json.loads(resp.read().decode())
+            return json.loads(resp.read().decode())
+
+    try:
+        r = _post(id_token)
     except urllib.error.HTTPError as e:
         body = ""
         try:
             body = json.loads(e.read().decode()).get("error", "")
         except Exception:
             pass
-        raise Exception(f"HTTP {e.code} — {body or e.reason}")
+        # Token expiré → on rafraîchit et on réessaie une fois
+        if e.code == 403 and refresh_token:
+            try:
+                new_auth = _refresh(refresh_token)
+                id_token = new_auth["id_token"]
+                r = _post(id_token)
+            except Exception as e2:
+                raise Exception(f"Token expiré et rafraîchissement impossible : {e2}")
+        else:
+            raise Exception(f"HTTP {e.code} — {body or e.reason}")
     if not r.get("ok"):
         raise Exception(r.get("error", "Upload échoué"))
+    return id_token
 
 
 # ---------------------------------------------------------------
@@ -2658,12 +2674,14 @@ class AdminPanel(QMainWindow):
     def _upload_fixture(self, fixture_data: dict):
         self._pending_fixture_name = fixture_data.get("name", "")
         _run_async(
-            self, _do_upload_fixture_async, fixture_data, self._id_token,
+            self, _do_upload_fixture_async, fixture_data, self._id_token, self._refresh_token,
             on_success=self._on_fixture_saved,
             on_error=self._on_fixture_save_error,
         )
 
-    def _on_fixture_saved(self, _):
+    def _on_fixture_saved(self, new_token: str):
+        if new_token and new_token != self._id_token:
+            self._id_token = new_token  # token rafraîchi silencieusement
         self._load_fixtures()
         QMessageBox.information(self, "Fixture enregistrée",
                                 f"« {self._pending_fixture_name} » a été sauvegardée.")

@@ -16,6 +16,7 @@ gdtf_config.py
 dist/
 build/
 *.spec
+!MyStrow.spec
 
 # Python
 __pycache__/
