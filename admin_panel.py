@@ -1499,20 +1499,6 @@ class AdminPanel(QMainWindow):
 
         h_lay.addSpacing(10)
 
-        self.btn_refresh = QPushButton("↻")
-        self.btn_refresh.setStyleSheet(_BTN_SECONDARY)
-        self.btn_refresh.setFixedSize(32, 32)
-        self.btn_refresh.setToolTip("Actualiser la liste")
-        self.btn_refresh.clicked.connect(self._load_clients)
-        h_lay.addWidget(self.btn_refresh)
-
-        btn_restart = QPushButton("⟳")
-        btn_restart.setStyleSheet(_BTN_SECONDARY)
-        btn_restart.setFixedSize(32, 32)
-        btn_restart.setToolTip("Relancer admin_panel.py")
-        btn_restart.clicked.connect(self._on_restart)
-        h_lay.addWidget(btn_restart)
-
         btn_logout = QPushButton("Déconnexion")
         btn_logout.setStyleSheet(_BTN_RED)
         btn_logout.setFixedHeight(32)
@@ -2130,7 +2116,6 @@ class AdminPanel(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_clients(self):
-        self.btn_refresh.setEnabled(False)
         self.loading_lbl.setText("Chargement…")
         self.loading_lbl.show()
         self.table.hide()
@@ -2147,12 +2132,10 @@ class AdminPanel(QMainWindow):
         self._populate_table(clients)
         self.loading_lbl.hide()
         self.table.show()
-        self.btn_refresh.setEnabled(True)
 
     def _on_load_error(self, msg: str):
         self.loading_lbl.setText(f"Erreur de chargement : {msg}")
         self.table.show()
-        self.btn_refresh.setEnabled(True)
 
     def _on_search(self, text: str):
         """Filtre le tableau en temps réel selon le texte saisi."""

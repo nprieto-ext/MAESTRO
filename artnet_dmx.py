@@ -152,7 +152,9 @@ class ArtNetDMX:
                 self.product_id   = cfg.get("product_id", "artnet")
                 self.product_name = cfg.get("product_name", "Art-Net (réseau)")
                 self.com_port     = cfg.get("com_port")
-                self.target_ip    = cfg.get("target_ip", "2.0.0.15")
+                _stored_ip = cfg.get("target_ip", "2.0.0.15")
+                # Corriger une éventuelle IP non-Art-Net stockée par erreur
+                self.target_ip = _stored_ip if _stored_ip.startswith("2.") else "2.0.0.15"
                 self.target_port  = int(cfg.get("target_port", 6454))
                 self.universe     = int(cfg.get("universe", 0))
         except Exception:

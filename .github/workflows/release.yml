@@ -211,6 +211,8 @@ jobs:
   release:
     needs: [build-windows, build-mac]  # build-mac a continue-on-error, ne bloque pas
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
@@ -228,6 +230,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           name: "MyStrow ${{ github.ref_name }}"
           body: "Release ${{ github.ref_name }}\n\n**Downloads:**\n- Windows: `MyStrow_Setup.exe`\n- Mac: `MyStrow_Installer.dmg` (si disponible)"
           fail_on_unmatched_files: false  # Ignore le DMG s'il n'est pas disponible

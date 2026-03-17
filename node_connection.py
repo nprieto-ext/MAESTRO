@@ -70,7 +70,7 @@ def _get_all_local_ips() -> set:
 
 
 def _get_ethernet_adapters():
-    """Retourne [(nom, ip)] pour les adaptateurs Ethernet physiques."""
+    """Retourne [(nom, ip, description, connected)] pour les adaptateurs Ethernet physiques."""
     try:
         r = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True,
                            encoding="cp1252", errors="replace",
@@ -81,6 +81,8 @@ def _get_ethernet_adapters():
     adapters = []
     current_name = None
     current_ip = ""
+    current_desc = ""
+    current_connected = False
     skip_current = False
 
     for line in r.stdout.splitlines():
@@ -89,7 +91,7 @@ def _get_ethernet_adapters():
                       and stripped.endswith(":"))
         if is_section:
             if current_name and not skip_current:
-                adapters.append((current_name, current_ip))
+                adapters.append((current_name, current_ip, current_desc, current_connected))
             raw = stripped.rstrip(":").strip()
             for prefix in ("Carte Ethernet ", "Ethernet adapter ",
                            "Carte réseau sans fil ", "Wireless LAN adapter ",
@@ -99,6 +101,8 @@ def _get_ethernet_adapters():
                     break
             current_name = raw.strip()
             current_ip = ""
+            current_desc = ""
+            current_connected = False
             skip_current = any(kw in current_name.lower() for kw in _SKIP_ADAPTERS)
             continue
         if not current_name or skip_current:
@@ -107,9 +111,16 @@ def _get_ethernet_adapters():
             m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", stripped)
             if m and not m.group(1).startswith("127."):
                 current_ip = m.group(1)
+                current_connected = True
+        elif "description" in stripped.lower() or "description" in line.lower():
+            parts = stripped.split(":", 1)
+            if len(parts) == 2:
+                current_desc = parts[1].strip()
+        elif "media disconnected" in stripped.lower() or "média déconnecté" in stripped.lower():
+            current_connected = False
 
     if current_name and not skip_current:
-        adapters.append((current_name, current_ip))
+        adapters.append((current_name, current_ip, current_desc, current_connected))
     return adapters
 
 
@@ -157,15 +168,44 @@ def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
 
 
 def _set_static_ip(adapter_name: str) -> bool:
+    """Configure l'IP statique 2.0.0.1/8 sur l'adaptateur.
+    Essaie PowerShell (plus fiable), puis netsh en fallback."""
+
+    # ── Méthode 1 : PowerShell New-NetIPAddress ────────────────────────
+    try:
+        ps_cmd = (
+            f"$iface = Get-NetAdapter | Where-Object {{ $_.Name -eq '{adapter_name}' }};"
+            f"if ($iface) {{"
+            f"  $iface | Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue"
+            f"    | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue;"
+            f"  $iface | New-NetIPAddress -AddressFamily IPv4"
+            f"    -IPAddress '2.0.0.1' -PrefixLength 8 -ErrorAction Stop | Out-Null;"
+            f"}}"
+        )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=15
+        )
+        if r.returncode == 0:
+            return True
+        print(f"[SetIP] PowerShell rc={r.returncode}: {r.stderr.decode(errors='replace').strip()}")
+    except Exception as e:
+        print(f"[SetIP] PowerShell exception: {e}")
+
+    # ── Méthode 2 : netsh (fallback) ─────────────────────────────────
     try:
         r = subprocess.run(
             ["netsh", "interface", "ip", "set", "address",
              f"name={adapter_name}", "static", "2.0.0.1", "255.0.0.0", "none"],
-            capture_output=True, creationflags=CREATE_NO_WINDOW
+            capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=10
         )
-        return r.returncode == 0
-    except Exception:
-        return False
+        if r.returncode == 0:
+            return True
+        print(f"[SetIP] netsh rc={r.returncode}: {r.stderr.decode(errors='replace').strip()}")
+    except Exception as e:
+        print(f"[SetIP] netsh exception: {e}")
+
+    return False
 
 
 def _open_network_connections():
@@ -213,8 +253,8 @@ class _DiagWorker(QThread):
 
         # ── 2. Carte Ethernet sur 2.x.x.x ───────────────────────────────
         adapters = _get_ethernet_adapters()
-        eth_ok = any(ip.startswith("2.") for _, ip in adapters)
-        eth_name = next((n for n, ip in adapters if ip.startswith("2.")), None)
+        eth_ok = any(ip.startswith("2.") for n, ip, d, c in adapters)
+        eth_name = next((n for n, ip, d, c in adapters if ip.startswith("2.")), None)
         if not adapters:
             eth_detail = "Aucune carte Ethernet détectée — vérifiez le câble RJ45"
             eth_fix = "fix_cable"
@@ -482,7 +522,7 @@ class NodeConnectionDialog(QDialog):
             self._msg_lbl.setText(f"Le boîtier {TARGET_IP} ne répond pas.\nVérifiez qu'il est allumé et que le câble est branché.")
             self._msg_lbl.setStyleSheet(f"color: {_C_ERR};")
         else:
-            self._msg_lbl.setText(f"{len(errors)} problème(s) détecté(s) — l'assistant BRAD peut vous aider")
+            self._msg_lbl.setText(f"{len(errors)} problème(s) détecté(s)")
             self._msg_lbl.setStyleSheet(f"color: {_C_WARN};")
 
         self._fix_btn.setVisible(bool(fixable))
@@ -585,7 +625,7 @@ class _NodeSearcher(QThread):
         time.sleep(0.5)
         try:
             adapters = _get_ethernet_adapters()
-            if not any(ip.startswith("2.") for _, ip in adapters):
+            if not any(ip.startswith("2.") for n, ip, d, c in adapters):
                 self.finished.emit(False); return
             if _artpoll_probe(TARGET_IP, timeout=2.0):
                 self.finished.emit(True); return
@@ -947,24 +987,51 @@ class NodeSetupWizard(QDialog):
             lbl.setWordWrap(True); lbl.setAlignment(Qt.AlignCenter)
             self._adapters_layout.insertWidget(0, lbl)
         else:
-            for i, (name, ip) in enumerate(adapters):
+            # Trouver la carte recommandée : déjà ok > connectée > premier
+            recommended = next((name for name, ip, d, c in adapters if ip.startswith("2.0.0.")), None)
+            if not recommended:
+                recommended = next((name for name, ip, d, c in adapters if c and ip), None)
+            if not recommended and adapters:
+                recommended = adapters[0][0]
+
+            for i, (name, ip, desc, connected) in enumerate(adapters):
                 already_ok = ip.startswith("2.0.0.")
-                ip_display = ip if ip else "IP non configurée"
-                txt = (f"  {name}\n  {ip_display}   ✓  déjà configurée" if already_ok
-                       else f"  {name}\n  IP actuelle : {ip_display}")
+                is_recommended = (name == recommended)
+                ip_display = ip if ip else "Pas d'adresse IP"
+                state = "✓  IP Art-Net déjà configurée" if already_ok else (
+                    f"IP actuelle : {ip_display}" if ip else "Câble débranché ou IP non configurée"
+                )
+                badge = "  ★ Recommandée" if is_recommended and not already_ok else ""
+                desc_line = f"\n  {desc}" if desc and desc.lower() != name.lower() else ""
+                txt = f"  {name}{badge}{desc_line}\n  {state}"
+                style = _BTN_ADAPTER_OK if already_ok else _BTN_ADAPTER
                 btn = QPushButton(txt)
-                btn.setStyleSheet(_BTN_ADAPTER_OK if already_ok else _BTN_ADAPTER)
-                btn.setFixedHeight(58); btn.setCursor(QCursor(Qt.PointingHandCursor))
+                btn.setStyleSheet(style)
+                btn.setFixedHeight(68 if desc_line else 58)
+                btn.setCursor(QCursor(Qt.PointingHandCursor))
                 btn.clicked.connect(lambda _, n=name, curr_ip=ip: self._select_adapter(n, curr_ip))
                 self._adapters_layout.insertWidget(i, btn)
                 self._adapter_buttons.append((btn, name, ip))
+
+            # Auto-sélection si une seule carte ou si une seule est ok
+            ok_adapters = [(n, ip) for n, ip, d, c in adapters if ip.startswith("2.0.0.")]
+            if len(adapters) == 1 or ok_adapters:
+                auto_name = ok_adapters[0][0] if ok_adapters else adapters[0][0]
+                auto_ip   = ok_adapters[0][1] if ok_adapters else adapters[0][1]
+                self._select_adapter(auto_name, auto_ip)
+            elif recommended:
+                rec_ip = next((ip for n, ip, d, c in adapters if n == recommended), "")
+                self._select_adapter(recommended, rec_ip)
 
         self._stop_spinner(); self._go_to(P_W_ADAPTERS)
 
     def _select_adapter(self, name, ip):
         self._selected_adapter_name = name; self._selected_adapter_ip = ip
         for btn, n, _ in self._adapter_buttons:
-            btn.setStyleSheet(_BTN_ADAPTER_SEL if n == name else _BTN_ADAPTER)
+            already_ok = n == name and ip.startswith("2.0.0.")
+            btn.setStyleSheet(_BTN_ADAPTER_SEL if n == name else
+                              (_BTN_ADAPTER_OK if any(i.startswith("2.0.0.") and nm == n
+                                                      for btn2, nm, i in self._adapter_buttons) else _BTN_ADAPTER))
         self._btn_net_suivant.setEnabled(True)
 
     def _on_net_suivant(self):
@@ -1050,12 +1117,20 @@ class NodeSetupWizard(QDialog):
         import sys, ctypes
         try:
             exe = sys.executable
-            args = " ".join(f'"{a}"' for a in sys.argv)
+            extra = f' "--node-config-ip" "{self._adapter_name}"' if self._adapter_name else ""
+            args = " ".join(f'"{a}"' for a in sys.argv) + extra
             ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, None, 1)
             from PySide6.QtWidgets import QApplication
             QApplication.quit()
         except Exception:
             pass
+
+    def jump_to_ip_manual(self, adapter_name: str):
+        """Navigue directement à la page de configuration manuelle pour un adaptateur donné.
+        Utilisé après un redémarrage en mode administrateur."""
+        self._adapter_name = adapter_name
+        self._net_came_from_method = True
+        self._show_net_manual(adapter_name, "manual")
 
     def closeEvent(self, event):
         self._spin_timer.stop()
@@ -1214,12 +1289,12 @@ class DmxOutputDialog(QDialog):
         root.addLayout(btn_row)
 
     def _page_node(self):
-        """Page Art-Net : IP, Port, Univers + bouton Diagnostic."""
+        """Page Art-Net : statut de connexion (lecture seule) + bouton de configuration."""
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
         info = QLabel("Boîtier réseau Art-Net (ElectroConcept, MA Lighting, etc.)")
         info.setStyleSheet("color: #555; font-size: 10px;")
@@ -1230,64 +1305,97 @@ class DmxOutputDialog(QDialog):
             "QFrame { background: #1a1a1a; border: 1px solid #252525; border-radius: 10px; }"
         )
         card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(18, 14, 18, 14)
-        card_lay.setSpacing(12)
+        card_lay.setContentsMargins(18, 16, 18, 16)
+        card_lay.setSpacing(10)
 
-        dmx = self._dmx
+        # Statut connexion
+        status_row = QHBoxLayout()
+        status_row.setSpacing(10)
+        self._node_status_dot = QLabel("◌")
+        self._node_status_dot.setStyleSheet(
+            "color: #555; font-size: 20px; background: transparent; border: none;")
+        status_row.addWidget(self._node_status_dot)
+        self._node_status_lbl = QLabel("Vérification en cours…")
+        self._node_status_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self._node_status_lbl.setStyleSheet("color: #aaa; background: transparent; border: none;")
+        status_row.addWidget(self._node_status_lbl, 1)
+        card_lay.addLayout(status_row)
 
-        # IP
-        row = QHBoxLayout()
-        lbl = QLabel("Adresse IP du boîtier")
-        lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        row.addWidget(lbl)
-        row.addStretch()
-        self._ip_edit = QLineEdit(dmx.target_ip if dmx else "2.0.0.15")
-        self._ip_edit.setFixedWidth(150)
-        self._ip_edit.setPlaceholderText("2.0.0.15")
-        row.addWidget(self._ip_edit)
-        card_lay.addLayout(row)
+        def _sep():
+            s = QFrame(); s.setFrameShape(QFrame.HLine)
+            s.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
+            return s
 
-        _h = QFrame(); _h.setFrameShape(QFrame.HLine)
-        _h.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
-        card_lay.addWidget(_h)
+        card_lay.addWidget(_sep())
 
-        # Port
-        row2 = QHBoxLayout()
-        lbl2 = QLabel("Port Art-Net")
-        lbl2.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        row2.addWidget(lbl2)
-        row2.addStretch()
-        self._port_edit = QLineEdit(str(dmx.target_port) if dmx else "6454")
-        self._port_edit.setFixedWidth(80)
-        row2.addWidget(self._port_edit)
-        card_lay.addLayout(row2)
-
-        _h2 = QFrame(); _h2.setFrameShape(QFrame.HLine)
-        _h2.setStyleSheet("QFrame { border: none; border-top: 1px solid #252525; }")
-        card_lay.addWidget(_h2)
-
-        # Univers
-        row3 = QHBoxLayout()
-        lbl3 = QLabel("Univers Art-Net")
-        lbl3.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        row3.addWidget(lbl3)
-        row3.addStretch()
-        self._uni_edit = QLineEdit(str(dmx.universe) if dmx else "0")
-        self._uni_edit.setFixedWidth(80)
-        row3.addWidget(self._uni_edit)
-        card_lay.addLayout(row3)
+        # Carte réseau (lecture seule)
+        net_row = QHBoxLayout()
+        net_key = QLabel("Carte réseau")
+        net_key.setFont(QFont("Segoe UI", 9))
+        net_key.setStyleSheet("color: #666; background: transparent; border: none;")
+        net_row.addWidget(net_key)
+        net_row.addStretch()
+        self._node_net_lbl = QLabel("Détection…")
+        self._node_net_lbl.setFont(QFont("Segoe UI", 9))
+        self._node_net_lbl.setStyleSheet("color: #888; background: transparent; border: none;")
+        self._node_net_lbl.setAlignment(Qt.AlignRight)
+        net_row.addWidget(self._node_net_lbl)
+        card_lay.addLayout(net_row)
 
         lay.addWidget(card)
 
-        diag_btn = QPushButton("🔍  Diagnostic réseau")
-        diag_btn.setFixedHeight(36)
-        diag_btn.setStyleSheet(_BTN_DIAG)
-        diag_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        diag_btn.clicked.connect(self._open_diag)
-        lay.addWidget(diag_btn)
+        cfg_btn = QPushButton("⚙️  Configurer la connexion réseau")
+        cfg_btn.setFixedHeight(36)
+        cfg_btn.setStyleSheet(_BTN_DIAG)
+        cfg_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        cfg_btn.clicked.connect(self._open_node_wizard)
+        lay.addWidget(cfg_btn)
 
         lay.addStretch()
+
+        QTimer.singleShot(120, self._check_node_status)
         return w
+
+    # ── détection Node asynchrone ────────────────────────────────────────
+
+    def _check_node_status(self):
+        self._node_qt = _QuickDetector()
+        self._node_qt.finished.connect(self._on_node_checked)
+        self._node_scanner = _AdapterScanner()
+        self._node_scanner.done.connect(self._on_adapters_for_status)
+        self._node_qt.start()
+        self._node_scanner.start()
+
+    def _on_node_checked(self, found: bool):
+        if found:
+            self._node_status_dot.setStyleSheet(
+                "color: #4ade80; font-size: 20px; background: transparent; border: none;")
+            self._node_status_lbl.setText("Boîtier connecté  ✓")
+            self._node_status_lbl.setStyleSheet(
+                "color: #4ade80; font-weight: 700; background: transparent; border: none;")
+        else:
+            self._node_status_dot.setStyleSheet(
+                "color: #f87171; font-size: 20px; background: transparent; border: none;")
+            self._node_status_lbl.setText("Boîtier non détecté")
+            self._node_status_lbl.setStyleSheet(
+                "color: #f87171; font-weight: 700; background: transparent; border: none;")
+
+    def _on_adapters_for_status(self, adapters: list):
+        for name, ip, desc, connected in adapters:
+            if ip.startswith("2."):
+                self._node_net_lbl.setText(name)
+                self._node_net_lbl.setStyleSheet(
+                    "color: #aaa; background: transparent; border: none;")
+                return
+        self._node_net_lbl.setText("Non configurée")
+        self._node_net_lbl.setStyleSheet(
+            "color: #f87171; background: transparent; border: none;")
+
+    def _open_node_wizard(self):
+        self.accept()
+        if self._main_win:
+            dlg = NodeSetupWizard(self._main_win)
+            dlg.exec()
 
     def _page_usb(self):
         """Page ENTTEC : sélection du port COM."""
@@ -1357,10 +1465,6 @@ class DmxOutputDialog(QDialog):
 
         lay.addWidget(card)
 
-        note = QLabel("Nécessite pyserial  —  pip install pyserial")
-        note.setStyleSheet("color: #333; font-size: 9px; font-style: italic;")
-        lay.addWidget(note)
-
         lay.addStretch()
         return w
 
@@ -1390,7 +1494,7 @@ class DmxOutputDialog(QDialog):
             if not ports:
                 self._port_combo.addItem("Aucun port détecté", None)
         except ImportError:
-            self._port_combo.addItem("pyserial non installé  —  pip install pyserial", None)
+            self._port_combo.addItem("Module série non disponible", None)
 
     def _test_usb(self):
         """Teste si le port COM sélectionné est accessible."""
@@ -1409,15 +1513,10 @@ class DmxOutputDialog(QDialog):
             self._usb_status_lbl.setText(f"Port {com} accessible ✓")
         except ImportError:
             self._usb_indicator.setStyleSheet("color: #f87171;")
-            self._usb_status_lbl.setText("pyserial non installé — pip install pyserial")
+            self._usb_status_lbl.setText("Module série non disponible — relancez l'application")
         except Exception as e:
             self._usb_indicator.setStyleSheet("color: #f87171;")
             self._usb_status_lbl.setText(f"Erreur : {e}")
-
-    def _open_diag(self):
-        """Ouvre le dialogue de diagnostic réseau Node."""
-        dlg = NodeConnectionDialog(self._main_win)
-        dlg.exec()
 
     def _apply(self):
         """Sauvegarde le transport actif et reconnecte."""
@@ -1426,25 +1525,16 @@ class DmxOutputDialog(QDialog):
             return
 
         if self._transport == TRANSPORT_ARTNET:
-            ip   = self._ip_edit.text().strip() or "2.0.0.15"
-            try:
-                port = int(self._port_edit.text().strip())
-            except ValueError:
-                port = 6454
-            try:
-                uni = int(self._uni_edit.text().strip())
-            except ValueError:
-                uni = 0
             self._dmx.connect(
                 transport=TRANSPORT_ARTNET,
-                target_ip=ip,
-                target_port=port,
-                universe=uni,
+                target_ip=TARGET_IP,
+                target_port=TARGET_PORT,
+                universe=0,
                 product_id="artnet",
                 product_name="Art-Net (réseau)",
             )
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
-            self._status_lbl.setText(f"Sortie Node appliquée — {ip}:{port}")
+            self._status_lbl.setText(f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}")
         else:
             com = self._port_combo.currentData()
             if not com:

@@ -157,8 +157,36 @@ def main():
     splash.set_status("Chargement...")
     app.processEvents()
 
-    from license_manager import verify_license, check_exe_integrity, LicenseState, _result_not_activated
-    from main_window import MainWindow
+    try:
+        from license_manager import verify_license, check_exe_integrity, LicenseState, _result_not_activated
+        from main_window import MainWindow
+    except Exception as _import_err:
+        import traceback as _tb
+        _err_msg = _tb.format_exc()
+        # Ecrire dans le log
+        try:
+            from pathlib import Path as _Path
+            _log = _Path.home() / "MyStrow_crash.log"
+            _log.write_text(_err_msg, encoding="utf-8")
+        except Exception:
+            pass
+        # Afficher une boite d'erreur visible
+        from PySide6.QtWidgets import QMessageBox as _QMB, QTextEdit as _QTE, QDialog as _QDlg, QVBoxLayout as _QVL, QPushButton as _QPB
+        _dlg = _QDlg()
+        _dlg.setWindowTitle("MyStrow — Erreur au démarrage")
+        _dlg.setMinimumSize(600, 400)
+        _vl = _QVL(_dlg)
+        _te = _QTE()
+        _te.setReadOnly(True)
+        _te.setPlainText(_err_msg)
+        _te.setStyleSheet("background:#111;color:#f44;font-family:monospace;font-size:11px;")
+        _vl.addWidget(_te)
+        _pb = _QPB("Fermer")
+        _pb.clicked.connect(_dlg.accept)
+        _vl.addWidget(_pb)
+        splash.close()
+        _dlg.exec()
+        sys.exit(1)
 
     # Lancer la verification des mises a jour en arriere-plan
     update_checker = UpdateChecker()
@@ -352,6 +380,16 @@ def main():
     # Afficher le dialogue d'avertissement licence si necessaire
     # (apres que la fenetre soit visible)
     QTimer.singleShot(500, window.show_license_warning_if_needed)
+
+    # Ré-ouvrir le wizard Node à la page IP si on a été relancé en admin
+    _node_config_ip = None
+    _argv = sys.argv[1:]
+    for _i, _arg in enumerate(_argv):
+        if _arg == "--node-config-ip" and _i + 1 < len(_argv):
+            _node_config_ip = _argv[_i + 1]
+            break
+    if _node_config_ip:
+        QTimer.singleShot(800, lambda: window.open_node_wizard_at_ip_manual(_node_config_ip))
 
     sys.exit(app.exec())
 

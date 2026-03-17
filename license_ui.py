@@ -310,7 +310,10 @@ class LicenseBanner(QWidget):
 
         if result.action_label:
             self.action_btn.setText(result.action_label)
-            self.action_btn.clicked.disconnect() if self.action_btn.receivers(self.action_btn.clicked) > 0 else None
+            try:
+                self.action_btn.clicked.disconnect()
+            except RuntimeError:
+                pass
             self.action_btn.clicked.connect(self.activate_clicked)
             self.action_btn.show()
         else:

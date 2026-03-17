@@ -7,6 +7,7 @@ import os
 import json
 import random
 import ctypes
+import platform as _platform
 import time
 from pathlib import Path
 
@@ -23,7 +24,40 @@ from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPixmap, QIcon, QFont,
     QPalette, QPolygon
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
+try:
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
+except ImportError:
+    # Stubs pour Mac sans backend multimedia — l'app démarre sans lecture audio/vidéo
+    class QMediaPlayer:  # type: ignore
+        PlayingState = 1; StoppedState = 0; PausedState = 2; EndOfMedia = 7
+        def __init__(self): self._src = None
+        def setAudioOutput(self, *a): pass
+        def setVideoOutput(self, *a): pass
+        def setSource(self, *a): pass
+        def play(self): pass
+        def pause(self): pass
+        def stop(self): pass
+        def position(self): return 0
+        def duration(self): return 0
+        def setPosition(self, *a): pass
+        def setPlaybackRate(self, *a): pass
+        def playbackState(self): return QMediaPlayer.StoppedState
+        def mediaStatus(self): return 0
+        def source(self): return None
+        playbackStateChanged = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        mediaStatusChanged   = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        positionChanged      = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        durationChanged      = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+        errorOccurred        = type('S', (), {'connect': lambda *a: None, 'disconnect': lambda *a: None})()
+    class QAudioOutput:  # type: ignore
+        def __init__(self): pass
+        def setVolume(self, *a): pass
+        def setDevice(self, *a): pass
+    class QMediaDevices:  # type: ignore
+        @staticmethod
+        def audioOutputs(): return []
+        audioOutputsChanged = type('S', (), {'connect': lambda *a: None})()
+
 try:
     from PySide6.QtMultimediaWidgets import QVideoWidget
 except ImportError:
@@ -698,21 +732,23 @@ class MainWindow(QMainWindow):
     def _prevent_sleep(self):
         """Empeche Windows de se mettre en veille tant que l'application tourne"""
         try:
-            ES_CONTINUOUS = 0x80000000
-            ES_SYSTEM_REQUIRED = 0x00000001
-            ES_DISPLAY_REQUIRED = 0x00000002
-            ctypes.windll.kernel32.SetThreadExecutionState(
-                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-            )
-            print("Anti-veille active")
+            if _platform.system() == "Windows":
+                ES_CONTINUOUS = 0x80000000
+                ES_SYSTEM_REQUIRED = 0x00000001
+                ES_DISPLAY_REQUIRED = 0x00000002
+                ctypes.windll.kernel32.SetThreadExecutionState(
+                    ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+                )
+                print("Anti-veille active")
         except Exception as e:
             print(f"Anti-veille: {e}")
 
     def _allow_sleep(self):
         """Restaure le comportement de veille normal"""
         try:
-            ES_CONTINUOUS = 0x80000000
-            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+            if _platform.system() == "Windows":
+                ES_CONTINUOUS = 0x80000000
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
         except Exception:
             pass
 
@@ -843,12 +879,9 @@ class MainWindow(QMainWindow):
         akai_menu.addAction("🔍 Tester la connexion", self.test_akai_connection)
         akai_menu.addAction("🔄 Reinitialiser AKAI", self.reset_akai)
         akai_menu.addSeparator()
-        akai_menu.addAction("🛠️ Diagnostique MIDI", self.show_midi_diagnostic)
 
-        self.node_menu = conn_menu.addMenu("🌐 Sortie Node")
+        self.node_menu = conn_menu.addMenu("🌐 Sortie DMX")
         self.node_menu.addAction("⚙️ Paramétrer la sortie", self.open_node_connection)
-        self.node_menu.addSeparator()
-        self.node_menu.addAction("🤖 Assistant BRAD", self.open_brad_diagnostic)
         self._refresh_dmx_menu_title()
 
         audio_menu = conn_menu.addMenu("🔊 Sortie Audio")
@@ -8183,41 +8216,88 @@ class MainWindow(QMainWindow):
     # ==================== MENU CONNEXION ====================
 
     def test_akai_connection(self):
-        """Teste la connexion AKAI APC mini, tente la reconnexion si deconnecte"""
+        """Teste la connexion AKAI. Si OK : message de confirmation. Sinon : diagnostic complet."""
         if not MIDI_AVAILABLE:
-            QMessageBox.warning(self, "AKAI",
-                "Module MIDI non installe.\n\nInstallez avec: py -m pip install rtmidi2")
+            self.show_midi_diagnostic()
             return
 
+        # Vérifier si déjà connecté
         connected = False
         if self.midi_handler.midi_in and self.midi_handler.midi_out:
             try:
-                connected = self.midi_handler.midi_in.is_port_open() and self.midi_handler.midi_out.is_port_open()
-            except:
+                connected = (self.midi_handler.midi_in.is_port_open() and
+                             self.midi_handler.midi_out.is_port_open())
+            except Exception:
                 pass
 
         if connected:
-            QMessageBox.information(self, "AKAI", "AKAI APC mini connecte et operationnel !")
-        else:
-            # Tenter la reconnexion automatique
-            self.midi_handler.connect_akai()
-            reconnected = False
-            if self.midi_handler.midi_in and self.midi_handler.midi_out:
-                try:
-                    reconnected = self.midi_handler.midi_in.is_port_open() and self.midi_handler.midi_out.is_port_open()
-                except:
-                    pass
+            _dlg = QDialog(self)
+            _dlg.setWindowTitle("AKAI APC mini")
+            _dlg.setFixedSize(320, 140)
+            _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
+                               "QLabel{background:transparent;}")
+            _lay = QVBoxLayout(_dlg)
+            _lay.setContentsMargins(24, 20, 24, 20)
+            _lay.setSpacing(12)
+            _ico = QLabel("🎹")
+            _ico.setAlignment(Qt.AlignCenter)
+            _ico.setStyleSheet("font-size:32px;")
+            _lay.addWidget(_ico)
+            _msg = QLabel("AKAI APC mini connecté et opérationnel")
+            _msg.setAlignment(Qt.AlignCenter)
+            _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
+            _lay.addWidget(_msg)
+            _btn = QPushButton("OK")
+            _btn.setFixedHeight(32)
+            _btn.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;"
+                               "border-radius:5px;font-size:12px;}"
+                               "QPushButton:hover{background:#3a7a3a;}")
+            _btn.clicked.connect(_dlg.accept)
+            _lay.addWidget(_btn)
+            _dlg.exec()
+            return
 
-            if reconnected:
-                QTimer.singleShot(200, self.activate_default_white_pads)
-                QTimer.singleShot(300, self.turn_off_all_effects)
-                QTimer.singleShot(400, self._sync_faders_to_projectors)
-                QMessageBox.information(self, "AKAI",
-                    "AKAI APC mini detecte et reconnecte avec succes !")
-            else:
-                QMessageBox.warning(self, "AKAI",
-                    "AKAI APC mini non detecte.\n\n"
-                    "Verifiez que le controleur est branche en USB.")
+        # Pas connecté — tenter reconnexion automatique d'abord
+        self.midi_handler.connect_akai()
+        reconnected = False
+        if self.midi_handler.midi_in and self.midi_handler.midi_out:
+            try:
+                reconnected = (self.midi_handler.midi_in.is_port_open() and
+                               self.midi_handler.midi_out.is_port_open())
+            except Exception:
+                pass
+
+        if reconnected:
+            QTimer.singleShot(200, self.activate_default_white_pads)
+            QTimer.singleShot(300, self.turn_off_all_effects)
+            QTimer.singleShot(400, self._sync_faders_to_projectors)
+            _dlg = QDialog(self)
+            _dlg.setWindowTitle("AKAI APC mini")
+            _dlg.setFixedSize(320, 140)
+            _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
+                               "QLabel{background:transparent;}")
+            _lay = QVBoxLayout(_dlg)
+            _lay.setContentsMargins(24, 20, 24, 20)
+            _lay.setSpacing(12)
+            _ico = QLabel("🎹")
+            _ico.setAlignment(Qt.AlignCenter)
+            _ico.setStyleSheet("font-size:32px;")
+            _lay.addWidget(_ico)
+            _msg = QLabel("AKAI APC mini reconnecté avec succès !")
+            _msg.setAlignment(Qt.AlignCenter)
+            _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
+            _lay.addWidget(_msg)
+            _btn = QPushButton("OK")
+            _btn.setFixedHeight(32)
+            _btn.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;"
+                               "border-radius:5px;font-size:12px;}"
+                               "QPushButton:hover{background:#3a7a3a;}")
+            _btn.clicked.connect(_dlg.accept)
+            _lay.addWidget(_btn)
+            _dlg.exec()
+        else:
+            # Échec — ouvrir le diagnostic complet avec rapport copiable
+            self.show_midi_diagnostic()
 
     def reset_akai(self):
         """Reinitialise la connexion, les LEDs et les faders de l'AKAI"""
@@ -8242,57 +8322,19 @@ class MainWindow(QMainWindow):
 
     def show_midi_diagnostic(self):
         """Affiche tous les ports MIDI disponibles pour diagnostiquer la detection AKAI."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget as _QW
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Diagnostique MIDI")
-        dlg.setFixedSize(520, 420)
-        dlg.setStyleSheet("QDialog, QWidget { background: #1a1a1a; color: #e0e0e0; }"
-                          "QLabel { background: transparent; }")
-
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
-
-        title = QLabel("Ports MIDI detectes par le systeme")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #00d4ff;")
-        layout.addWidget(title)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: 1px solid #333; border-radius: 4px; }")
-        content = _QW()
-        content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(6)
-        content_layout.setContentsMargins(10, 10, 10, 10)
-
-        def _add_section(titre, ports, is_akai_fn):
-            lbl = QLabel(f"<b>{titre}</b>")
-            lbl.setStyleSheet("color: #aaa; font-size: 11px;")
-            content_layout.addWidget(lbl)
-            if not ports:
-                row = QLabel("   (aucun port detecte)")
-                row.setStyleSheet("color: #555; font-size: 11px;")
-                content_layout.addWidget(row)
-            for i, name in enumerate(ports):
-                is_akai = is_akai_fn(name)
-                icon = "🎹" if is_akai else "•"
-                color = "#4CAF50" if is_akai else "#888"
-                row = QLabel(f"   {icon}  [{i}]  {name}")
-                row.setStyleSheet(f"color: {color}; font-size: 11px;"
-                                  f"{'font-weight:bold;' if is_akai else ''}")
-                content_layout.addWidget(row)
+        # ── Construire le rapport texte ────────────────────────────────────
+        lines = []
 
         def _is_akai(name):
             return 'APC' in name.upper() or 'AKAI' in name.upper()
 
         if not MIDI_AVAILABLE:
-            lbl = QLabel("Module MIDI non installe.\n\nInstallez avec: pip install rtmidi2")
-            lbl.setStyleSheet("color: #f44336; font-size: 12px;")
-            content_layout.addWidget(lbl)
+            lines.append("ERREUR : Module MIDI non installe.")
+            lines.append("Installez avec : pip install rtmidi2")
         else:
             try:
-                _rt = None
                 try:
                     import rtmidi as _rt
                     lib_name = "python-rtmidi"
@@ -8300,10 +8342,8 @@ class MainWindow(QMainWindow):
                     import rtmidi2 as _rt
                     lib_name = "rtmidi2"
 
-                lbl_lib = QLabel(f"Librairie : {lib_name}")
-                lbl_lib.setStyleSheet("color: #666; font-size: 10px;")
-                content_layout.addWidget(lbl_lib)
-                content_layout.addSpacing(4)
+                lines.append(f"Librairie MIDI : {lib_name}")
+                lines.append("")
 
                 mi = _rt.MidiIn()
                 in_ports = mi.get_ports()
@@ -8319,43 +8359,80 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-                _add_section("Ports MIDI ENTREE (IN):", in_ports, _is_akai)
-                content_layout.addSpacing(6)
-                _add_section("Ports MIDI SORTIE (OUT):", out_ports, _is_akai)
+                lines.append("── Ports ENTREE (IN) ──────────────────")
+                if in_ports:
+                    for i, name in enumerate(in_ports):
+                        marker = " ✅ AKAI detecte" if _is_akai(name) else ""
+                        lines.append(f"  [{i}]  {name}{marker}")
+                else:
+                    lines.append("  (aucun port detecte)")
 
-                # Statut connexion actuelle
-                content_layout.addSpacing(8)
+                lines.append("")
+                lines.append("── Ports SORTIE (OUT) ─────────────────")
+                if out_ports:
+                    for i, name in enumerate(out_ports):
+                        marker = " ✅ AKAI detecte" if _is_akai(name) else ""
+                        lines.append(f"  [{i}]  {name}{marker}")
+                else:
+                    lines.append("  (aucun port detecte)")
+
+                lines.append("")
+                lines.append("── Statut connexion actuelle ───────────")
                 akai_connected = (self.midi_handler.midi_in is not None and
                                   self.midi_handler.midi_out is not None)
-                status_color = "#4CAF50" if akai_connected else "#f44336"
-                status_txt = "Connecte" if akai_connected else "Non connecte"
-                lbl_st = QLabel(f"Statut AKAI actuel : {status_txt}")
-                lbl_st.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: bold;")
-                content_layout.addWidget(lbl_st)
+                lines.append(f"  AKAI APC mini : {'Connecte ✅' if akai_connected else 'Non connecte ❌'}")
 
                 if not any(_is_akai(p) for p in in_ports + out_ports):
-                    hint = QLabel(
-                        "\nAucun port AKAI/APC detecte.\n"
-                        "• Verifiez le cable USB\n"
-                        "• Essayez un autre port USB\n"
-                        "• Sur Windows : Gestionnaire de peripheriques > Controleurs audio, video et jeu\n"
-                        "• Sur Mac : Applications > Utilitaires > Configuration MIDI Audio"
-                    )
-                    hint.setStyleSheet("color: #ff9800; font-size: 11px;")
-                    hint.setWordWrap(True)
-                    content_layout.addWidget(hint)
+                    lines.append("")
+                    lines.append("⚠ Aucun port AKAI/APC detecte.")
+                    lines.append("  • Verifiez le cable USB")
+                    lines.append("  • Essayez un autre port USB")
+                    lines.append("  • Windows : Gestionnaire de peripheriques")
+                    lines.append("    > Controleurs audio, video et jeu")
+                    lines.append("  • Mac : Utilitaires > Configuration MIDI Audio")
 
             except Exception as e:
-                lbl = QLabel(f"Erreur lors de l'enumeration MIDI:\n{e}")
-                lbl.setStyleSheet("color: #f44336; font-size: 11px;")
-                lbl.setWordWrap(True)
-                content_layout.addWidget(lbl)
+                lines.append(f"Erreur lors de l'enumeration MIDI :")
+                lines.append(f"  {e}")
 
-        content_layout.addStretch()
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
+        report = "\n".join(lines)
+
+        # ── Dialogue ───────────────────────────────────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnostique AKAI")
+        dlg.setFixedSize(520, 380)
+        dlg.setStyleSheet("QDialog, QWidget { background: #1a1a1a; color: #e0e0e0; }"
+                          "QLabel { background: transparent; }")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Diagnostique AKAI APC mini")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #00d4ff;")
+        layout.addWidget(title)
+
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setPlainText(report)
+        txt.setFont(QFont("Consolas", 10))
+        txt.setStyleSheet(
+            "QTextEdit { background: #111; color: #ddd; border: 1px solid #333;"
+            " border-radius: 4px; padding: 8px; }"
+            "QScrollBar:vertical { background:#1a1a1a; width:8px; border-radius:4px; }"
+            "QScrollBar::handle:vertical { background:#444; border-radius:4px; }"
+        )
+        layout.addWidget(txt)
 
         btn_row = QHBoxLayout()
+
+        btn_copy = QPushButton("Copier le rapport")
+        btn_copy.setFixedHeight(34)
+        btn_copy.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                               "QPushButton:hover{background:#1e4a7a;}")
+        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(report))
+        btn_row.addWidget(btn_copy)
+
         btn_reconnect = QPushButton("Reconnexion")
         btn_reconnect.setFixedHeight(34)
         btn_reconnect.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;border-radius:5px;font-size:12px;}"
@@ -8392,6 +8469,15 @@ class MainWindow(QMainWindow):
         dlg.exec()
         self._refresh_dmx_menu_title()
 
+    def open_node_wizard_at_ip_manual(self, adapter_name: str):
+        """Ouvre directement le wizard Node à la page de configuration IP manuelle.
+        Utilisé après un redémarrage en mode administrateur."""
+        from node_connection import NodeSetupWizard
+        dlg = NodeSetupWizard(self)
+        dlg.jump_to_ip_manual(adapter_name)
+        dlg.exec()
+        self._refresh_dmx_menu_title()
+
     def _refresh_dmx_menu_title(self):
         """Met à jour le titre du menu Sortie selon le transport actif."""
         if not hasattr(self, 'node_menu'):
@@ -8401,7 +8487,7 @@ class MainWindow(QMainWindow):
             if self.dmx.transport == TRANSPORT_ENTTEC:
                 self.node_menu.setTitle("🔌 Sortie DMX USB")
             else:
-                self.node_menu.setTitle("🌐 Sortie Node")
+                self.node_menu.setTitle("🌐 Sortie DMX")
         except Exception:
             pass
 
