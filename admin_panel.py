@@ -273,7 +273,7 @@ def _query_all_fixtures(id_token: str) -> list:
     results = []
     page_token = None
     while True:
-        url = f"{_FS_BASE}/fixtures?pageSize=300"
+        url = f"{_FS_BASE}/gdtf_fixtures?pageSize=300"
         if page_token:
             url += f"&pageToken={page_token}"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
@@ -292,7 +292,7 @@ def _query_all_fixtures(id_token: str) -> list:
 
 
 def _delete_fixture_doc(doc_id: str, id_token: str) -> bool:
-    return _delete_firestore_doc(f"fixtures/{doc_id}", id_token)
+    return _delete_firestore_doc(f"gdtf_fixtures/{doc_id}", id_token)
 
 
 def _fetch_license_doc(uid: str, id_token: str) -> dict:
