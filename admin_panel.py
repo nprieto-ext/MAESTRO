@@ -883,9 +883,10 @@ class OflSyncWorker(QObject):
     finished = Signal(dict)
     error    = Signal(str)
 
-    def __init__(self):
+    def __init__(self, id_token: str = ""):
         super().__init__()
         self._stop = False
+        self._id_token = id_token
 
     def stop(self):
         self._stop = True
@@ -963,7 +964,7 @@ class OflSyncWorker(QObject):
                 data=payload,
                 headers={
                     "Content-Type": "application/json",
-                    "X-Sync-Secret": _GDTF_SYNC_SECRET,
+                    "Authorization": f"Bearer {self._id_token}",
                 },
                 method="POST",
             )
@@ -1021,10 +1022,11 @@ class OflSyncDialog(QDialog):
     uploade les profils complets dans Firestore via gdtf_upload CF.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, id_token: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Open Fixture Library — Sync Firestore")
         self.setMinimumSize(640, 520)
+        self._id_token = id_token
         self._thread = None
         self._worker = None
         self._build_ui()
@@ -1106,8 +1108,8 @@ class OflSyncDialog(QDialog):
             self.log.append(msg)
 
     def _start(self):
-        if not _GDTF_SYNC_SECRET:
-            self._append_log("❌ GDTF_SYNC_SECRET non configuré (gdtf_config.py).", RED)
+        if not self._id_token:
+            self._append_log("❌ Token manquant — relancez l'admin panel.", RED)
             return
 
         self.btn_start.setEnabled(False)
@@ -1117,7 +1119,7 @@ class OflSyncDialog(QDialog):
         self.status_lbl.setText("Démarrage…")
         self._append_log("▶ Démarrage de la sync OFL…")
 
-        self._worker = OflSyncWorker()
+        self._worker = OflSyncWorker(id_token=self._id_token)
         self._thread = QThread()
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1179,10 +1181,11 @@ class GdtfUploadDialog(QDialog):
     Parse les fichiers localement puis les envoie via la CF gdtf_upload.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, id_token: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Importer fixtures vers Firestore")
         self.setMinimumSize(680, 500)
+        self._id_token = id_token
         self._parsed: list = []   # liste de dicts fixture parsés
         self._thread = None
         self._worker = None
@@ -1385,8 +1388,8 @@ class GdtfUploadDialog(QDialog):
     def _on_upload(self):
         if not self._parsed:
             return
-        if not _GDTF_SYNC_SECRET:
-            self._append_log("❌ GDTF_SYNC_SECRET non configuré (gdtf_config.py manquant).", RED)
+        if not self._id_token:
+            self._append_log("❌ Token manquant — relancez l'admin panel.", RED)
             return
 
         n = len(self._parsed)
@@ -1415,7 +1418,7 @@ class GdtfUploadDialog(QDialog):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "X-Sync-Secret": _GDTF_SYNC_SECRET,
+                "Authorization": f"Bearer {self._id_token}",
             },
             method="POST",
         )
@@ -1979,12 +1982,6 @@ class AdminPanel(QMainWindow):
         self._fix_count_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         ft_lay.addWidget(self._fix_count_lbl)
 
-        btn_fix_refresh = QPushButton("↻  Actualiser")
-        btn_fix_refresh.setStyleSheet(_BTN_SECONDARY)
-        btn_fix_refresh.setFixedHeight(30)
-        btn_fix_refresh.clicked.connect(self._load_fixtures)
-        ft_lay.addWidget(btn_fix_refresh)
-
         btn_add_fix = QPushButton("➕  Ajouter")
         btn_add_fix.setStyleSheet(_BTN_PRIMARY)
         btn_add_fix.setFixedHeight(30)
@@ -1997,6 +1994,13 @@ class AdminPanel(QMainWindow):
         btn_fix_import.setToolTip("Importer des fichiers .xml / .mystrow vers Firestore")
         btn_fix_import.clicked.connect(self._on_gdtf_upload)
         ft_lay.addWidget(btn_fix_import)
+
+        btn_fix_refresh = QPushButton("↻  Actualiser")
+        btn_fix_refresh.setStyleSheet(_BTN_SECONDARY)
+        btn_fix_refresh.setFixedHeight(30)
+        btn_fix_refresh.setToolTip("Recharger les fixtures depuis Firestore")
+        btn_fix_refresh.clicked.connect(self._load_fixtures)
+        ft_lay.addWidget(btn_fix_refresh)
 
         fix_lay.addWidget(fix_toolbar)
 
@@ -2752,11 +2756,11 @@ class AdminPanel(QMainWindow):
         dlg.exec()
 
     def _on_gdtf_enrich(self):
-        dlg = OflSyncDialog(self)
+        dlg = OflSyncDialog(self, id_token=self._id_token)
         dlg.exec()
 
     def _on_gdtf_upload(self):
-        dlg = GdtfUploadDialog(self)
+        dlg = GdtfUploadDialog(self, id_token=self._id_token)
         dlg.exec()
 
     def _browse_backup_dest(self):

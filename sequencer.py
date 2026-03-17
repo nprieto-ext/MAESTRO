@@ -1381,11 +1381,14 @@ class Sequencer(QFrame):
         self._timeline_tick += 1
 
         active_clips = {}
+        last_clip_end = 0
 
         for track_name, clips in self.timeline_tracks_data.items():
             for clip_data in clips:
                 start = clip_data['start']
                 end = start + clip_data['duration']
+                if end > last_clip_end:
+                    last_clip_end = end
 
                 if start <= current_time <= end:
                     intensity = self.calculate_clip_intensity(clip_data, current_time)
@@ -1412,6 +1415,14 @@ class Sequencer(QFrame):
 
                     active_clips[track_name] = entry
                     break
+
+        # Auto-stop: si tous les clips sont finis et qu'on depasse la fin du dernier clip
+        if not active_clips and current_time > last_clip_end and last_clip_end > 0:
+            self.timeline_playback_timer.stop()
+            if hasattr(self, 'timeline_playback_row'):
+                del self.timeline_playback_row
+            self.timeline_tracks_data = {}
+            return
 
         self.apply_timeline_to_dmx(active_clips)
 
@@ -1840,3 +1851,4 @@ class Sequencer(QFrame):
             self.timeline_playback_timer.stop()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
+        self.timeline_tracks_data = {}

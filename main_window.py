@@ -1660,6 +1660,10 @@ class MainWindow(QMainWindow):
             if self.blink_timer:
                 self.blink_timer.stop()
             self.pause_mode = False
+            # Arrêt défensif du timeline si le media courant est en mode Manuel
+            current_mode = self.seq.get_dmx_mode(self.seq.current_row)
+            if current_mode == "Manuel":
+                self.seq.stop_sequence_playback()
             self.player.play()
         elif self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
@@ -7513,9 +7517,37 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
             "QPushButton:hover { border-color:#44cc88; color:#66ee99; }"
         )
+        btn_refresh = QPushButton("↻  Actualiser")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.setToolTip("Recharger les fixtures depuis Firestore")
+        btn_refresh.setStyleSheet(
+            "QPushButton { background:#1a2a3a; color:#44aaff; border:1px solid #44aaff44;"
+            " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { border-color:#44aaff; color:#66ccff; }"
+            "QPushButton:disabled { color:#555; border-color:#333; }"
+        )
         search_row.addWidget(search_edit, 1)
         search_row.addWidget(btn_import)
+        search_row.addWidget(btn_refresh)
         layout.addLayout(search_row)
+
+        # ── Barre de progression (masquée par défaut) ─────────────────────────
+        refresh_lbl = QLabel("")
+        refresh_lbl.setAlignment(Qt.AlignCenter)
+        refresh_lbl.setStyleSheet("color: #44aaff; font-size: 11px; padding: 1px 0;")
+        refresh_lbl.hide()
+        layout.addWidget(refresh_lbl)
+
+        refresh_bar = QProgressBar()
+        refresh_bar.setFixedHeight(3)
+        refresh_bar.setTextVisible(False)
+        refresh_bar.setRange(0, 0)
+        refresh_bar.setStyleSheet(
+            "QProgressBar { background: #1a1a1a; border: none; border-radius: 1px; }"
+            "QProgressBar::chunk { background: #44aaff; border-radius: 1px; }"
+        )
+        refresh_bar.hide()
+        layout.addWidget(refresh_bar)
 
         # ── Splitter fabricant / fixture ──────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -7705,7 +7737,159 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.information(dialog, "Import réussi", msg)
 
+        def _do_refresh():
+            import urllib.request as _ur
+            from license_manager import get_current_id_token
+            from core import FIREBASE_PROJECT_ID as _proj_id
+            import firebase_client as _fc
+
+            btn_refresh.setEnabled(False)
+            refresh_lbl.setText("⏳  Étape 1/3 — Obtention du token Firebase…")
+            refresh_lbl.show()
+            refresh_bar.setRange(0, 0)
+            refresh_bar.show()
+            QApplication.processEvents()
+
+            try:
+                import urllib.error as _ue
+                token = get_current_id_token()
+                if token:
+                    refresh_lbl.setText("⏳  Étape 2/3 — Token OK, connexion à Firestore…")
+                else:
+                    refresh_lbl.setText("⏳  Étape 2/3 — Pas de compte connecté, tentative accès public…")
+                QApplication.processEvents()
+
+                _fs_base = (
+                    f"https://firestore.googleapis.com/v1/projects/{_proj_id}"
+                    f"/databases/(default)/documents"
+                )
+                results = []
+                page_token = None
+                page_num = 0
+                while True:
+                    page_num += 1
+                    n = len(results)
+                    refresh_lbl.setText(
+                        f"⏳  Étape 3/3 — Page {page_num} ({n} fixture{'s' if n != 1 else ''} récupérée{'s' if n != 1 else ''} jusqu'ici)…"
+                    )
+                    QApplication.processEvents()
+                    url = f"{_fs_base}/gdtf_fixtures?pageSize=300"
+                    if page_token:
+                        url += f"&pageToken={page_token}"
+                    headers = {}
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                    req = _ur.Request(url, headers=headers)
+                    try:
+                        with _ur.urlopen(req, timeout=15) as resp:
+                            data = json.loads(resp.read().decode())
+                    except _ue.HTTPError as _he:
+                        body = _he.read().decode(errors="replace")
+                        if _he.code in (401, 403):
+                            raise RuntimeError(
+                                f"Accès refusé ({_he.code}) — la collection gdtf_fixtures nécessite un compte connecté.\n"
+                                f"Activez votre licence MyStrow pour accéder aux fixtures Firestore."
+                            )
+                        else:
+                            raise RuntimeError(f"Erreur HTTP {_he.code} : {body[:200]}")
+                    for doc in data.get("documents", []):
+                        fields = {k: _fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
+                        results.append(fields)
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+
+            except Exception as _e:
+                refresh_bar.hide()
+                refresh_lbl.setText(f"❌  {_e}")
+                QTimer.singleShot(8000, refresh_lbl.hide)
+                btn_refresh.setEnabled(True)
+                return
+
+            refresh_bar.hide()
+
+            if not results:
+                refresh_lbl.setText("Aucune fixture trouvée dans Firestore.")
+                QTimer.singleShot(3000, refresh_lbl.hide)
+                btn_refresh.setEnabled(True)
+                return
+
+            # Fusion dans ALL_FIXTURES
+            existing_names = {f["name"] for f in ALL_FIXTURES}
+            added = 0
+            updated = 0
+            for fx in results:
+                if not fx.get("name") or not fx.get("profile"):
+                    continue
+                if fx["name"] not in existing_names:
+                    ALL_FIXTURES.append(fx)
+                    existing_names.add(fx["name"])
+                    added += 1
+                else:
+                    for i, f in enumerate(ALL_FIXTURES):
+                        if f["name"] == fx["name"] and not f.get("builtin"):
+                            ALL_FIXTURES[i] = fx
+                            updated += 1
+                            break
+
+            # Sauvegarde dans le cache local
+            try:
+                _fx_file = Path.home() / ".mystrow_fixtures.json"
+                try:
+                    existing_cache = json.loads(_fx_file.read_text(encoding="utf-8")) if _fx_file.exists() else []
+                    if not isinstance(existing_cache, list):
+                        existing_cache = []
+                except Exception:
+                    existing_cache = []
+                cache_names = {f["name"] for f in existing_cache}
+                for fx in results:
+                    if not fx.get("name") or not fx.get("profile"):
+                        continue
+                    fx_copy = dict(fx)
+                    fx_copy.setdefault("source", "firestore")
+                    if fx["name"] not in cache_names:
+                        existing_cache.append(fx_copy)
+                        cache_names.add(fx["name"])
+                    else:
+                        for i, f in enumerate(existing_cache):
+                            if f["name"] == fx["name"] and not f.get("builtin"):
+                                existing_cache[i] = fx_copy
+                                break
+                _fx_file.write_text(json.dumps(existing_cache, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+            # Reconstruction de la bibliothèque
+            FIXTURE_LIBRARY.clear()
+            for _fx in ALL_FIXTURES:
+                FIXTURE_LIBRARY.setdefault(_fx.get("manufacturer", "Générique"), []).append(_fx)
+            _s = {}
+            if "Générique" in FIXTURE_LIBRARY:
+                _s["Générique"] = FIXTURE_LIBRARY.pop("Générique")
+            for _k in sorted(FIXTURE_LIBRARY):
+                _s[_k] = FIXTURE_LIBRARY[_k]
+            FIXTURE_LIBRARY.update(_s)
+            cat_list.clear()
+            for cat in FIXTURE_LIBRARY.keys():
+                cat_list.addItem(cat)
+            if cat_list.count():
+                cat_list.setCurrentRow(0)
+
+            parts = []
+            if added:
+                parts.append(f"{added} nouvelle{'s' if added != 1 else ''}")
+            if updated:
+                parts.append(f"{updated} mise{'s' if updated != 1 else ''} à jour")
+            detail = f" ({', '.join(parts)})" if parts else " (aucune nouveauté)"
+            total = len(results)
+            summary = f"✅  {total} fixture{'s' if total != 1 else ''} Firestore{detail}"
+            refresh_lbl.setText(summary)
+            count_lbl.setText(summary)
+            btn_refresh.setEnabled(True)
+            QTimer.singleShot(6000, refresh_lbl.hide)
+
         btn_import.clicked.connect(_do_import)
+        btn_refresh.clicked.connect(_do_refresh)
         cat_list.currentItemChanged.connect(on_cat_changed)
         search_edit.textChanged.connect(on_search)
 
