@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+import glob
 from PyInstaller.utils.hooks import collect_all
 
 is_mac = sys.platform == "darwin"
@@ -9,13 +10,17 @@ is_mac = sys.platform == "darwin"
 _ver = "3.0.0"
 try:
     import importlib.util as _ilu
-    _spec = _ilu.spec_from_file_location("core", os.path.join(os.path.dirname(os.path.abspath(SPECPATH)), "core.py"))
+    _spec = _ilu.spec_from_file_location("core", os.path.join(os.path.abspath(SPECPATH), "core.py"))
     _mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
     _ver = _mod.VERSION
 except Exception:
     pass
 
-datas = [('logo.png', '.')]
+# Inclure tous les modules Python locaux comme data files
+# (hiddenimports seul est insuffisant pour les modules locaux sur Mac arm64)
+_local_py = [(f, '.') for f in glob.glob(os.path.join(SPECPATH, '*.py'))]
+
+datas = [('logo.png', '.')] + _local_py
 if is_mac:
     if os.path.exists('mystrow.icns'):
         datas.append(('mystrow.icns', '.'))
