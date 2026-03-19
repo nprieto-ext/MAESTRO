@@ -181,10 +181,21 @@ def main():
         # Afficher une boite d'erreur visible
         from PySide6.QtWidgets import QMessageBox as _QMB, QTextEdit as _QTE, QDialog as _QDlg, QVBoxLayout as _QVL, QPushButton as _QPB, QLabel as _QLbl
         import platform as _plt
+        # Diagnostic bundle PyInstaller
+        _meipass_files = ""
+        if hasattr(sys, '_MEIPASS'):
+            try:
+                _meipass_files = "\nBundle (_MEIPASS): " + sys._MEIPASS + "\n"
+                _meipass_files += "  main_window present: " + str(os.path.exists(os.path.join(sys._MEIPASS, 'main_window.pyc'))) + "\n"
+                _meipass_files += "  .pyc files: " + ", ".join(f for f in os.listdir(sys._MEIPASS) if f.endswith('.pyc') and 'main' in f.lower()) + "\n"
+                _meipass_files += "sys.path: " + str(sys.path[:4]) + "\n"
+            except Exception as _e:
+                _meipass_files = f"\n(diagnostic error: {_e})\n"
         _header = (
             f"MyStrow {VERSION}  |  Python {sys.version.split()[0]}"
             f"  |  {_plt.system()} {_plt.release()} ({_plt.machine()})\n"
-            f"{'─' * 60}\n\n"
+            f"{'─' * 60}\n"
+            f"{_meipass_files}\n"
         )
         _dlg = _QDlg()
         _dlg.setWindowTitle(f"MyStrow {VERSION} — Erreur au démarrage")

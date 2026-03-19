@@ -206,189 +206,211 @@ AKAI_BANK_PRESETS = [
 # ---------------------------------------------------------------------------
 
 # Options disponibles dans le dropdown par colonne
-_AKAI_SLOT_OPTIONS = ["A", "B", "C", "D", "E", "F"] + [f"MEM {i}" for i in range(1, 9)]
+_AKAI_SLOT_OPTIONS = (
+    ["A", "B", "C", "D", "E", "F"]
+    + [f"MEM {i}" for i in range(1, 9)]
+    + ["FX 1", "FX 2", "FX 3", "FX 4"]
+)
 
 
 class AkaiLayoutEditorDialog(QDialog):
-    """Fenetre d'edition des 8 colonnes AKAI — une dropdown par colonne."""
+    """Fenetre d'edition des 8 colonnes AKAI — représentation visuelle du contrôleur."""
 
-    CARD_COLORS = [
-        "#ffffff", "#ff2020", "#ff8800", "#ffdd00",
-        "#00dd44", "#00cccc", "#4488ff", "#dd44ff",
-    ]
+    # ── Couleurs par type d'assignation ──────────────────────────────────────
+    _GROUP_COLORS = {
+        "A": "#cc4400", "B": "#4488cc", "C": "#44aa44",
+        "D": "#aaaa00", "E": "#aa44aa", "F": "#00aaaa",
+    }
+    _MEM_COLOR   = "#1a6688"
+    _FX_COLOR    = "#7722aa"
+    _EMPTY_COLOR = "#2a2a2a"
 
     def __init__(self, slots, last_fader_mode="FX", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Configuration des colonnes AKAI")
-        self.setFixedSize(780, 300)
+        self.setWindowTitle("Configuration AKAI APC mini")
+        self.setMinimumSize(780, 580)
+        self.resize(820, 620)
         self.setModal(True)
         self.setStyleSheet(
-            "QDialog { background: #181818; color: #ddd; } "
-            "QLabel  { background: transparent; border: none; }"
+            "QDialog { background: #161616; color: #ddd; } "
+            "QLabel  { background: transparent; border: none; } "
+            "QComboBox { background: #1e1e1e; color: #ddd; border: 1px solid #3a3a3a; "
+            "border-radius: 4px; padding: 2px 4px; font-size: 10px; } "
+            "QComboBox::drop-down { border: none; width: 16px; } "
+            "QComboBox QAbstractItemView { background: #1e1e1e; color: #ddd; "
+            "selection-background-color: #0077bb; font-size: 10px; }"
         )
 
         self._combos = []
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 12)
-        root.setSpacing(10)
 
-        # ── Header ────────────────────────────────────────────────────────────
-        header = QHBoxLayout()
-        title_lbl = QLabel("Configuration des colonnes AKAI APC mini")
-        title_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        header.addWidget(title_lbl)
-        header.addStretch()
-        preset_btn = QPushButton("Preset...")
-        preset_btn.setFixedWidth(80)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 16, 24, 14)
+        root.setSpacing(14)
+
+        # ── Header ─────────────────────────────────────────────────────────────
+        hdr = QHBoxLayout()
+        title = QLabel("Configuration AKAI APC mini")
+        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        title.setStyleSheet("color:#fff;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        preset_btn = QPushButton("⊞  Preset")
+        preset_btn.setFixedSize(80, 26)
         preset_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #aaa; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; padding: 3px 8px; font-size: 10px; } "
-            "QPushButton:hover { background: #2e2e2e; color: #fff; }"
+            "border-radius: 4px; font-size: 10px; } "
+            "QPushButton:hover { background: #333; color: #fff; }"
         )
         preset_btn.clicked.connect(self._load_preset)
-        header.addWidget(preset_btn)
-        root.addLayout(header)
+        hdr.addWidget(preset_btn)
+        root.addLayout(hdr)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background: #2e2e2e; max-height: 1px; border: none;")
-        root.addWidget(sep)
+        sep_h = QFrame(); sep_h.setFrameShape(QFrame.HLine)
+        sep_h.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
+        root.addWidget(sep_h)
 
-        # ── 8 cartes ──────────────────────────────────────────────────────────
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(6)
-        cards_row.setContentsMargins(0, 0, 0, 0)
+        # ── Ligne des faders (identique à la page principale) ─────────────────
+        faders_row = QHBoxLayout()
+        faders_row.setSpacing(0)
+        faders_row.setContentsMargins(0, 0, 0, 0)
+        faders_row.addStretch()
 
-        for i, slot in enumerate(slots):
-            card = self._make_card(i, slot)
-            self._combos.append(card._combo)
-            cards_row.addWidget(card)
+        _FADER_GAP = 12   # espace entre les 8 premières colonnes
 
-        # Séparateur + carte spéciale fader 9
-        sep_v = QFrame()
-        sep_v.setFrameShape(QFrame.VLine)
-        sep_v.setStyleSheet("background:#444; max-width:1px; border:none;")
-        cards_row.addSpacing(4)
-        cards_row.addWidget(sep_v)
-        cards_row.addSpacing(4)
-        fader9_card = self._make_fader9_card(last_fader_mode)
-        cards_row.addWidget(fader9_card)
+        for col in range(8):
+            slot = slots[col] if col < len(slots) else {"type": "group", "group": "A"}
+            current_val = self._slot_to_option(slot)
+            color = self._col_color(current_val)
 
-        root.addLayout(cards_row)
-        root.addStretch()
+            col_w = QWidget()
+            col_l = QVBoxLayout(col_w)
+            col_l.setContentsMargins(0, 0, 0, 0)
+            col_l.setSpacing(6)
+            col_l.setAlignment(Qt.AlignHCenter)
 
-        # ── Boutons ───────────────────────────────────────────────────────────
+            # Fader visuel non-interactif (même widget qu'en page principale)
+            fader = ApcFader(col, lambda *_: None, vertical=False)
+            fader.set_value(65)
+            fader.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            col_l.addWidget(fader, alignment=Qt.AlignHCenter)
+
+            # Combo d'assignation
+            combo = QComboBox()
+            combo.addItems(_AKAI_SLOT_OPTIONS)
+            combo.setCurrentText(current_val)
+            combo.setFixedWidth(72)
+            combo.currentTextChanged.connect(lambda txt, c=col: self._on_col_changed(c, txt))
+            self._combos.append(combo)
+            col_l.addWidget(combo, alignment=Qt.AlignHCenter)
+
+            faders_row.addWidget(col_w)
+            if col < 7:
+                faders_row.addSpacing(_FADER_GAP)
+
+            self._on_col_changed(col, current_val)
+
+        # ── Fader 9 — Vitesse FX ─────────────────────────────────────────────
+        sep9 = QFrame(); sep9.setFrameShape(QFrame.VLine)
+        sep9.setStyleSheet("background:#333; max-width:1px; border:none;")
+        faders_row.addSpacing(16)
+        faders_row.addWidget(sep9)
+        faders_row.addSpacing(16)
+
+        f9_col = QWidget()
+        f9_l = QVBoxLayout(f9_col)
+        f9_l.setContentsMargins(0, 0, 0, 0)
+        f9_l.setSpacing(6)
+        f9_l.setAlignment(Qt.AlignHCenter)
+
+        fader9 = ApcFader(8, lambda *_: None, vertical=False)
+        fader9.set_value(65)
+        fader9.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        fader9.setStyleSheet("opacity: 0.7;")
+        f9_l.addWidget(fader9, alignment=Qt.AlignHCenter)
+
+        lbl9 = QLabel("Amplitude FX")
+        lbl9.setAlignment(Qt.AlignCenter)
+        lbl9.setFixedWidth(80)
+        lbl9.setStyleSheet(
+            "color:#0088cc; font-size:9px; font-weight:bold; background:transparent; border:none;"
+        )
+        f9_l.addWidget(lbl9, alignment=Qt.AlignHCenter)
+
+        faders_row.addWidget(f9_col)
+        faders_row.addStretch()
+
+        root.addLayout(faders_row)
+
+        # ── Légende ───────────────────────────────────────────────────────────
+        leg_row = QHBoxLayout()
+        leg_row.setSpacing(16)
+        _LEGEND = [
+            ("A–F",      self._GROUP_COLORS["A"], "Groupes projecteurs"),
+            ("MEM 1–8",  self._MEM_COLOR,         "Colonne mémoire"),
+            ("FX 1–4",   self._FX_COLOR,          "Colonne effets FX"),
+        ]
+        for ltxt, lcolor, ldesc in _LEGEND:
+            sw = QFrame()
+            sw.setFixedSize(14, 10)
+            sw.setStyleSheet(f"QFrame {{ background:{lcolor}; border-radius:2px; }}")
+            leg_row.addWidget(sw)
+            ll = QLabel(f"<b>{ltxt}</b> — {ldesc}")
+            ll.setStyleSheet("font-size:9px; color:#666;")
+            leg_row.addWidget(ll)
+        leg_row.addStretch()
+        root.addLayout(leg_row)
+
+        # ── Boutons ────────────────────────────────────────────────────────────
+        btn_sep = QFrame(); btn_sep.setFrameShape(QFrame.HLine)
+        btn_sep.setStyleSheet("background:#2a2a2a; max-height:1px; border:none;")
+        root.addWidget(btn_sep)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         cancel_btn = QPushButton("Annuler")
-        cancel_btn.setFixedWidth(90)
+        cancel_btn.setFixedSize(90, 30)
         cancel_btn.setStyleSheet(
             "QPushButton { background: #252525; color: #ccc; border: 1px solid #3a3a3a; "
-            "border-radius: 4px; padding: 5px; } QPushButton:hover { background: #2e2e2e; }"
+            "border-radius: 4px; font-size: 11px; } QPushButton:hover { background: #333; }"
         )
         cancel_btn.clicked.connect(self.reject)
-        ok_btn = QPushButton("Appliquer")
-        ok_btn.setFixedWidth(90)
+        ok_btn = QPushButton("✔  Appliquer")
+        ok_btn.setFixedSize(110, 30)
         ok_btn.setStyleSheet(
             "QPushButton { background: #007a45; color: white; border: none; "
-            "border-radius: 4px; padding: 5px; font-weight: bold; } "
+            "border-radius: 4px; font-size: 11px; font-weight: bold; } "
             "QPushButton:hover { background: #009950; }"
         )
         ok_btn.clicked.connect(self.accept)
         btn_row.addWidget(cancel_btn)
-        btn_row.addSpacing(6)
+        btn_row.addSpacing(8)
         btn_row.addWidget(ok_btn)
         root.addLayout(btn_row)
 
-    # ── Carte individuelle ────────────────────────────────────────────────────
-    def _make_card(self, idx, slot):
-        """Crée une carte colonne : mini fader + label + dropdown."""
-        card = QFrame()
-        card.setFixedWidth(74)
-        card.setStyleSheet(
-            "QFrame { background: #222; border: 1px solid #333; border-radius: 6px; }"
-        )
-        v = QVBoxLayout(card)
-        v.setContentsMargins(6, 8, 6, 8)
-        v.setSpacing(6)
+    # ── Mise à jour couleur colonne ───────────────────────────────────────────
+    def _col_color(self, option):
+        if option in self._GROUP_COLORS:
+            return self._GROUP_COLORS[option]
+        if option.startswith("MEM "):
+            return self._MEM_COLOR
+        if option.startswith("FX "):
+            return self._FX_COLOR
+        return self._EMPTY_COLOR
 
-        # ── Mini fader représentation ─────────────────────────────────────────
-        fader_frame = QFrame()
-        fader_frame.setFixedSize(12, 60)
-        fader_frame.setStyleSheet(
-            "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            "stop:0 #444, stop:1 #111); border: 1px solid #3a3a3a; border-radius: 3px; }"
-        )
-        # Curseur blanc au milieu
-        handle = QFrame(fader_frame)
-        handle.setFixedSize(12, 5)
-        handle.move(0, 27)
-        handle.setStyleSheet(
-            "QFrame { background: #ddd; border-radius: 2px; border: none; }"
-        )
-
-        fader_wrapper = QHBoxLayout()
-        fader_wrapper.setContentsMargins(0, 0, 0, 0)
-        fader_wrapper.addStretch()
-        fader_wrapper.addWidget(fader_frame)
-        fader_wrapper.addStretch()
-        v.addLayout(fader_wrapper)
-
-        # ── Label courant (se met à jour avec la combo) ───────────────────────
-        current_val = self._slot_to_option(slot)
-        lbl = QLabel(current_val)
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        lbl.setStyleSheet("color: #fff;")
-        v.addWidget(lbl)
-
-        # ── Dropdown ─────────────────────────────────────────────────────────
-        combo = QComboBox()
-        combo.addItems(_AKAI_SLOT_OPTIONS)
-        combo.setCurrentText(current_val)
-        combo.setFixedHeight(22)
-        combo.setStyleSheet(
-            "QComboBox { background: #151515; color: #ccc; border: 1px solid #3a3a3a; "
-            "border-radius: 3px; font-size: 9px; padding: 1px 2px; } "
-            "QComboBox::drop-down { border: none; width: 14px; } "
-            "QComboBox QAbstractItemView { background: #1e1e1e; color: #ccc; "
-            "selection-background-color: #0077bb; font-size: 10px; }"
-        )
-        combo.currentTextChanged.connect(lbl.setText)
-        combo.currentTextChanged.connect(lambda txt: self._update_fader_color(fader_frame, txt))
-        self._update_fader_color(fader_frame, current_val)
-        v.addWidget(combo)
-
-        card._combo = combo
-        return card
-
-    @staticmethod
-    def _slot_to_option(slot):
-        """Convertit un slot dict en option dropdown (ex: 'A', 'MEM 3')."""
-        if slot.get("type") == "memory":
-            return f"MEM {slot.get('mem_col', 0) + 1}"
-        return slot.get("group", slot.get("label", "A"))
-
-    @staticmethod
-    def _update_fader_color(fader_frame, option):
-        """Colore le mini fader selon le groupe ou mémoire sélectionné."""
-        group_colors = {
-            "A": "#cc4400", "B": "#4488cc", "C": "#44aa44",
-            "D": "#aaaa00", "E": "#aa44aa", "F": "#00aaaa",
-        }
-        if option in group_colors:
-            c = group_colors[option]
-            fader_frame.setStyleSheet(
-                f"QFrame {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                f"stop:0 {c}, stop:1 #111); border: 1px solid #3a3a3a; border-radius: 3px; }}"
-            )
-        else:
-            fader_frame.setStyleSheet(
-                "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-                "stop:0 #334, stop:1 #111); border: 1px solid #3a3a3a; border-radius: 3px; }"
+    def _on_col_changed(self, col, option):
+        """Colore le combo selon le type d'assignation."""
+        color = self._col_color(option)
+        if col < len(self._combos):
+            self._combos[col].setStyleSheet(
+                f"QComboBox {{ background: #1e1e1e; color: #ddd; "
+                f"border: 2px solid {color}; border-radius: 3px; "
+                f"font-size: 9px; padding: 1px 4px; }} "
+                "QComboBox::drop-down { border: none; width: 14px; } "
+                "QComboBox QAbstractItemView { background: #1e1e1e; color: #ddd; "
+                "selection-background-color: #0077bb; font-size: 10px; }"
             )
 
-    # ── Chargement preset ─────────────────────────────────────────────────────
+    # ── Preset ────────────────────────────────────────────────────────────────
     def _load_preset(self):
         menu = QMenu(self)
         menu.setStyleSheet(
@@ -402,63 +424,36 @@ class AkaiLayoutEditorDialog(QDialog):
         btn = self.sender()
         chosen = menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
         if chosen:
-            slots = chosen.data()
+            preset_slots = chosen.data()
             for i, combo in enumerate(self._combos):
-                slot = slots[i] if i < len(slots) else {"type": "group", "group": "A"}
+                slot = preset_slots[i] if i < len(preset_slots) else {"type": "group", "group": "A"}
                 combo.setCurrentText(self._slot_to_option(slot))
 
-    # ── Carte fader 9 (FX / Master) ──────────────────────────────────────────
-    def _make_fader9_card(self, current_mode):
-        card = QFrame()
-        card.setFixedWidth(88)
-        card.setStyleSheet(
-            "QFrame { background: #1e1e2a; border: 1px solid #444; border-radius: 6px; }"
-        )
-        v = QVBoxLayout(card)
-        v.setContentsMargins(6, 8, 6, 8)
-        v.setSpacing(6)
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _slot_to_option(slot):
+        if slot.get("type") == "memory":
+            return f"MEM {slot.get('mem_col', 0) + 1}"
+        if slot.get("type") == "fx":
+            return f"FX {slot.get('fx_col', 0) + 1}"
+        return slot.get("group", slot.get("label", "A"))
 
-        fader_frame = QFrame()
-        fader_frame.setFixedSize(12, 60)
-        fader_frame.setStyleSheet(
-            "QFrame { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            "stop:0 #00aaff, stop:1 #111); border: 1px solid #3a3a3a; border-radius: 3px; }"
-        )
-        handle = QFrame(fader_frame)
-        handle.setFixedSize(12, 5)
-        handle.move(0, 27)
-        handle.setStyleSheet("QFrame { background: #ddd; border-radius: 2px; border: none; }")
-        fw = QHBoxLayout()
-        fw.setContentsMargins(0, 0, 0, 0)
-        fw.addStretch(); fw.addWidget(fader_frame); fw.addStretch()
-        v.addLayout(fw)
-
-        lbl9 = QLabel("FADER 9")
-        lbl9.setAlignment(Qt.AlignCenter)
-        lbl9.setStyleSheet("color:#888; font-size:8px; font-weight:bold; letter-spacing:0.5px;")
-        v.addWidget(lbl9)
-
-        lbl_fx = QLabel("Vitesse FX")
-        lbl_fx.setAlignment(Qt.AlignCenter)
-        lbl_fx.setStyleSheet("color:#00aaff; font-size:9px; font-weight:bold;")
-        v.addWidget(lbl_fx)
-        return card
-
-    # ── Lecture résultat ─────────────────────────────────────────────────────
+    # ── Résultat ─────────────────────────────────────────────────────────────
     def get_slots(self):
-        """Retourne la liste des 8 slots depuis les dropdowns."""
         slots = []
         for combo in self._combos:
             val = combo.currentText()
             if val.startswith("MEM "):
                 mem_col = int(val.split()[1]) - 1
                 slots.append({"type": "memory", "mem_col": mem_col, "label": val})
+            elif val.startswith("FX "):
+                fx_col = int(val.split()[1]) - 1
+                slots.append({"type": "fx", "fx_col": fx_col, "label": val})
             else:
                 slots.append({"type": "group", "group": val, "label": val})
         return slots
 
     def get_last_fader_mode(self):
-        """Fader 9 toujours en mode Vitesse FX."""
         return "FX"
 
 
@@ -612,6 +607,7 @@ class MainWindow(QMainWindow):
         self.effect_buttons = []
         self.active_effect = None
         self.effect_speed = 0
+        self.effect_amplitude = 100   # amplitude globale effets (fader 9), 0-100
         self.effect_state = 0
         self.effect_saved_colors = {}
         self._button_effect_configs = self._load_effect_assignments()  # {btn_idx: config_dict from editor}
@@ -625,6 +621,9 @@ class MainWindow(QMainWindow):
         self.memories = [[None]*8 for _ in range(8)]          # 8 cols × 8 rows
         self.memory_custom_colors = [[None]*8 for _ in range(8)]
         self.active_memory_pads = {}  # {fader_idx: row} pad actif par colonne memoire
+        self.fx_pads = [[None]*8 for _ in range(4)]            # 4 FX cols × 8 rows (config dict or None)
+        self.active_fx_pads = {}       # {(fx_col, row): True}
+        self.fx_amplitudes = [100] * 4  # amplitude 0-100 par colonne FX
 
         # Configuration AKAI
         self.akai_active_brightness = 100
@@ -1402,10 +1401,11 @@ class MainWindow(QMainWindow):
                 _btn.setToolTip(_cfg["name"])
 
         effect_fader = ApcFader(8, self._fader8_dispatch, vertical=False)
+        effect_fader.set_value(100)
         self.faders[8] = effect_fader
         effect_col.addWidget(effect_fader)
 
-        self._lbl_fader8 = QLabel("FX")
+        self._lbl_fader8 = QLabel("Amp FX")
         self._lbl_fader8.setFixedHeight(12)
         self._lbl_fader8.setAlignment(Qt.AlignCenter)
         self._lbl_fader8.setStyleSheet("color:#666;font-size:9px;")
@@ -1471,6 +1471,28 @@ class MainWindow(QMainWindow):
                     b.setProperty("color2", None)
                     b.setProperty("dim_color", dim_color)
                     b.clicked.connect(lambda _, btn=b, fc=c: self.activate_pad(btn, fc))
+                elif slot["type"] == "fx":
+                    fx_col = slot.get("fx_col", 0)
+                    b = QPushButton()
+                    b.setFixedSize(28, 28)
+                    cfg = self.fx_pads[fx_col][r] if fx_col < 4 else None
+                    active = self.active_fx_pads.get((fx_col, r))
+                    if active and cfg:
+                        b.setStyleSheet("QPushButton { background: #33ff33; border: 2px solid #ffffff; border-radius: 4px; }")
+                    elif cfg:
+                        b.setStyleSheet("QPushButton { background: #116611; border: 1px solid #114411; border-radius: 4px; }")
+                        b.setToolTip(cfg.get("name", ""))
+                    else:
+                        b.setStyleSheet("QPushButton { background: #0a1a0a; border: 1px solid #1a2a1a; border-radius: 4px; }")
+                    b.setProperty("base_color", QColor("#33ff33"))
+                    b.setProperty("color2", None)
+                    b.setProperty("fx_col", fx_col)
+                    b.setProperty("fx_row", r)
+                    b.clicked.connect(lambda _, fc=fx_col, fr=r: self._toggle_fx_pad(fc, fr))
+                    b.setContextMenuPolicy(Qt.CustomContextMenu)
+                    b.customContextMenuRequested.connect(
+                        lambda pos, fc=fx_col, fr=r, btn=b: self._show_fx_context_menu(pos, fc, fr, btn)
+                    )
                 else:  # memory
                     mem_col = slot["mem_col"]
                     b = QPushButton()
@@ -1973,6 +1995,19 @@ class MainWindow(QMainWindow):
                 "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
             )
             self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+        # Mettre à jour les tooltips des pads non-mémoire
+        self._update_non_mem_pad_tooltips()
+
+    def _update_non_mem_pad_tooltips(self):
+        """En mode REC, affiche 🚫 sur les pads groupe et FX (non enregistrables)."""
+        tip = "🚫" if self._mem_rec_mode else ""
+        for (row, col), pad in self.pads.items():
+            if col >= len(self._fader_map):
+                continue
+            slot = self._fader_map[col]
+            if slot["type"] in ("group", "fx"):
+                pad.setToolTip(tip)
+                pad.setToolTipDuration(800 if self._mem_rec_mode else -1)
 
     def _show_mem_toast(self, text):
         """Affiche un message ephemere en bas a gauche de la fenetre."""
@@ -2406,110 +2441,6 @@ class MainWindow(QMainWindow):
                 action = color_menu.addAction(QIcon(px), name)
                 action.triggered.connect(lambda _, c=col: self._set_memory_custom_color(mem_col, row, c))
 
-            # Sous-menu effet (liste plate + recherche, même style que boutons AKAI)
-            mem = self.memories[mem_col][row]
-            cur_effect_name = (mem.get("effect") or {}).get("name") if mem else None
-
-            _all_effects = []
-            try:
-                from effect_editor import BUILTIN_EFFECTS
-                _all_effects = list(BUILTIN_EFFECTS)
-                lib = getattr(self, '_effect_library_configs', {})
-                _existing = {e["name"] for e in _all_effects}
-                for lib_cfg in lib.values():
-                    if isinstance(lib_cfg, dict) and lib_cfg.get("name") not in _existing:
-                        _all_effects.append(lib_cfg)
-            except Exception:
-                pass
-
-            eff_submenu_style = """
-                QMenu {
-                    background: #1a1a1a;
-                    border: 1px solid #3a3a3a;
-                    padding: 4px;
-                    font-size: 12px;
-                }
-                QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
-                QMenu::item:selected { background: #2a3a3a; color: #fff; }
-                QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
-                QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
-            """
-            eff_label = f"✨  {cur_effect_name}" if cur_effect_name else "➕  Ajouter un effet"
-            effect_menu = menu.addMenu(eff_label)
-            effect_menu.setStyleSheet(eff_submenu_style)
-
-            # Barre de recherche
-            from PySide6.QtWidgets import QLineEdit, QWidgetAction
-            search_container = QWidget()
-            search_container.setStyleSheet("background: transparent;")
-            search_layout = QHBoxLayout(search_container)
-            search_layout.setContentsMargins(6, 4, 6, 4)
-            search_input = QLineEdit()
-            search_input.setPlaceholderText("  Rechercher un effet…")
-            search_input.setClearButtonEnabled(True)
-            search_input.setStyleSheet("""
-                QLineEdit {
-                    background: #111; color: #e0e0e0;
-                    border: 1px solid #444; border-radius: 4px;
-                    padding: 4px 8px; font-size: 12px;
-                }
-                QLineEdit:focus { border-color: #00d4ff; }
-            """)
-            def _search_key(event, _si=search_input):
-                from PySide6.QtCore import Qt as _Qt
-                if event.key() in (_Qt.Key_Up, _Qt.Key_Down, _Qt.Key_Return, _Qt.Key_Enter):
-                    event.accept(); return
-                QLineEdit.keyPressEvent(_si, event)
-            search_input.keyPressEvent = _search_key
-            search_layout.addWidget(search_input)
-            search_wa = QWidgetAction(effect_menu)
-            search_wa.setDefaultWidget(search_container)
-            effect_menu.addAction(search_wa)
-            effect_menu.addSeparator()
-
-            no_eff_act = effect_menu.addAction("⭕  Aucun")
-            no_eff_act.setCheckable(True)
-            no_eff_act.setChecked(not cur_effect_name)
-            no_eff_act.triggered.connect(lambda: self._set_memory_effect(mem_col, row, None))
-            sep_top = effect_menu.addSeparator()
-
-            _CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
-            cat_groups = []
-            for cat in _CATS:
-                cat_effs = [e for e in _all_effects if e.get("category") == cat]
-                if not cat_effs:
-                    continue
-                hdr = effect_menu.addAction(f"  {cat.upper()}")
-                hdr.setEnabled(False)
-                eff_actions = []
-                for eff in cat_effs:
-                    eff_name = eff.get("name", "")
-                    act = effect_menu.addAction(f"  {eff_name}")
-                    act.setCheckable(True)
-                    act.setChecked(cur_effect_name == eff_name)
-                    act.triggered.connect(
-                        lambda checked=False, e=dict(eff), mc=mem_col, r=row:
-                            self._set_memory_effect(mc, r, e)
-                    )
-                    eff_actions.append((act, eff_name))
-                cat_groups.append((hdr, eff_actions))
-
-            # Filtrage dynamique
-            def _apply_filter(text, _none=no_eff_act, _sep=sep_top, _cg=cat_groups):
-                q = text.strip().lower()
-                _none.setVisible(not q)
-                _sep.setVisible(not q)
-                for hdr_act, eff_acts in _cg:
-                    any_vis = False
-                    for act, name in eff_acts:
-                        vis = not q or q in name.lower()
-                        act.setVisible(vis)
-                        if vis: any_vis = True
-                    hdr_act.setVisible(any_vis)
-
-            search_input.textChanged.connect(_apply_filter)
-            QTimer.singleShot(0, search_input.setFocus)
-
         menu.exec(btn.mapToGlobal(pos))
 
     def _set_memory_effect(self, mem_col, row, eff_dict_or_none):
@@ -2587,6 +2518,12 @@ class MainWindow(QMainWindow):
                         # Appliquer avec value directement (evite le lag MIDI de fader.value)
                         self._apply_memory_to_projectors(mem_col, active_row, fader_value=value)
             self.send_dmx_update()
+            return
+
+        if slot["type"] == "fx":
+            fx_col = slot.get("fx_col", 0)
+            if 0 <= fx_col < 4:
+                self.fx_amplitudes[fx_col] = value
             return
 
         groups = self._slot_groups(slot)
@@ -2670,8 +2607,20 @@ class MainWindow(QMainWindow):
                 btn.active = False
                 btn.update_style()
                 return
+
+            # Sauvegarder l'état précédent pour pouvoir le restaurer au toggle-off
+            self._prev_effect_state = {
+                "effect":      self.active_effect,
+                "config":      dict(self.active_effect_config) if self.active_effect_config else {},
+                "fx_pads":     dict(self.active_fx_pads),   # {(fc,fr): True}
+            }
+            # Désactiver visuellement les pads FX actifs sans stopper l'effet
+            # (stop_effect sera appelé par start_effect)
+            for k in list(self.active_fx_pads.keys()):
+                self.active_fx_pads.pop(k)
+                self._style_fx_pad(k[0], k[1])
+
             self.active_effect = effect_name
-            # Config depuis l'éditeur d'effets (si assigné)
             self.active_effect_config = self._button_effect_configs.get(effect_idx, {})
             self.start_effect(effect_name)
             for j, other_btn in enumerate(self.effect_buttons):
@@ -2681,14 +2630,317 @@ class MainWindow(QMainWindow):
                     if MIDI_AVAILABLE and self.midi_handler.midi_out:
                         self.midi_handler.set_pad_led(j, 8, 0)
         else:
-            self.active_effect = None
-            self.active_effect_config = {}
+            # Restaurer l'état précédent s'il existait
+            prev = getattr(self, '_prev_effect_state', None)
+            self._prev_effect_state = None
             self.stop_effect()
+
+            restored = False
+            if prev:
+                # Restaurer les pads FX actifs
+                for (fc, fr) in prev.get("fx_pads", {}).keys():
+                    cfg = self.fx_pads[fc][fr] if fc < 4 else None
+                    if cfg:
+                        self.active_fx_pads[(fc, fr)] = True
+                        self._style_fx_pad(fc, fr)
+                        self.active_effect = cfg.get("name", "")
+                        self.active_effect_config = cfg
+                        self.start_effect(self.active_effect)
+                        restored = True
+                        break  # un seul FX actif à la fois
+                # Restaurer un effet non-FX s'il n'y avait pas de pad FX
+                if not restored and prev.get("effect"):
+                    self.active_effect = prev["effect"]
+                    self.active_effect_config = prev["config"]
+                    self.start_effect(self.active_effect)
+                    restored = True
+
+            if not restored:
+                self.active_effect = None
+                self.active_effect_config = {}
+
         btn.update_style()
         # Mise a jour LED AKAI (utile quand l'effet est toggle depuis l'UI)
         if MIDI_AVAILABLE and self.midi_handler.midi_out and effect_idx < 8:
             velocity = 1 if btn.active else 0
             self.midi_handler.set_pad_led(effect_idx, 8, velocity, brightness_percent=100)
+
+    # ── FX pad columns (standalone, right of AKAI) ───────────────────────────
+
+    def _style_fx_pad(self, fx_col, row):
+        """Rafraîchit le style des pads AKAI mappés sur ce slot FX."""
+        cfg = self.fx_pads[fx_col][row] if fx_col < 4 else None
+        active = self.active_fx_pads.get((fx_col, row))
+        for col_idx, slot in enumerate(self._fader_map):
+            if slot.get("type") == "fx" and slot.get("fx_col") == fx_col:
+                pad = self.pads.get((row, col_idx))
+                if not pad:
+                    continue
+                if active and cfg:
+                    pad.setStyleSheet("QPushButton { background: #33ff33; border: 2px solid #ffffff; border-radius: 4px; }")
+                    pad.setToolTip(cfg.get("name", ""))
+                elif cfg:
+                    pad.setStyleSheet("QPushButton { background: #116611; border: 1px solid #114411; border-radius: 4px; }")
+                    pad.setToolTip(cfg.get("name", ""))
+                else:
+                    pad.setStyleSheet("QPushButton { background: #0a1a0a; border: 1px solid #1a2a1a; border-radius: 4px; }")
+                    pad.setToolTip("")
+
+    def _open_effect_editor_for_fx_pad(self, fx_col, row):
+        """Ouvre l'éditeur d'effets pour un pad FX."""
+        from effect_editor import EffectEditorDialog
+        current = self.fx_pads[fx_col][row]
+        initial = current.get("name") if current else None
+        dlg = EffectEditorDialog(clips=[], main_window=self, parent=self, initial_effect=initial)
+        dlg.exec()
+
+    def _toggle_fx_pad(self, fx_col, row):
+        """Toggle an FX pad on/off."""
+        # Mode REC actif : impossible d'enregistrer sur un pad FX
+        if self._mem_rec_mode:
+            self._mem_rec_mode = False
+            if self._rec_mem_btn:
+                self._rec_mem_btn.setStyleSheet(
+                    "QPushButton { background: #1e1e1e; color: #cc3333; border: 1px solid #3a3a3a; "
+                    "border-radius: 4px; font-size: 13px; } "
+                    "QPushButton:hover { background: #2a2a2a; color: #ff4444; border-color: #cc3333; }"
+                )
+                self._rec_mem_btn.setToolTip("REC Mémoire — cliquez pour activer, puis cliquez sur un pad")
+            self._update_non_mem_pad_tooltips()
+            self._show_error_toast("✖ Impossible d'enregistrer sur un FX — Pour ajouter un effet, cliquez droit sur le pad")
+            return
+        cfg = self.fx_pads[fx_col][row] if fx_col < 4 else None
+        if not cfg:
+            return
+        key = (fx_col, row)
+        if self.active_fx_pads.get(key):
+            # Turn off
+            self.active_fx_pads.pop(key, None)
+            self.active_effect = None
+            self.active_effect_config = {}
+            self.stop_effect()
+        else:
+            # Deactivate all other FX pads
+            for k in list(self.active_fx_pads.keys()):
+                self.active_fx_pads.pop(k, None)
+                self._style_fx_pad(k[0], k[1])
+            # Deactivate EffectButton column too
+            for btn in self.effect_buttons:
+                if btn.active:
+                    btn.active = False
+                    btn.update_style()
+            # Turn on
+            self.active_fx_pads[key] = True
+            eff_name = cfg.get("name", "")
+            self.active_effect = eff_name
+            self.active_effect_config = cfg
+            self.start_effect(eff_name)
+        # Rafraîchir tous les pads FX dans la grille AKAI
+        for fc in range(4):
+            for r in range(8):
+                self._style_fx_pad(fc, r)
+
+    def _show_fx_context_menu(self, pos, fx_col, row, btn):
+        """Menu clic droit sur un pad FX — identique aux petits carrés verts."""
+        from PySide6.QtWidgets import (QMenu, QWidgetAction, QLineEdit,
+                                        QDoubleSpinBox, QHBoxLayout, QLabel)
+        from pathlib import Path as _Path
+
+        # Charger tous les effets : builtin + custom (même logique que EffectButton)
+        all_effects = []
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            all_effects = list(BUILTIN_EFFECTS)
+            effects_file = _Path.home() / ".mystrow_effects.json"
+            if effects_file.exists():
+                import json as _json
+                custom = _json.loads(effects_file.read_text(encoding="utf-8"))
+                if isinstance(custom, list):
+                    existing_names = {e["name"] for e in all_effects}
+                    for e in custom:
+                        if e.get("name") not in existing_names:
+                            all_effects.append(e)
+        except Exception:
+            pass
+
+        current_cfg = self.fx_pads[fx_col][row] if fx_col < 4 else None
+        cur = current_cfg.get("name") if current_cfg else None
+        trigger_mode = (current_cfg or {}).get("trigger_mode", "toggle")
+        trigger_duration = (current_cfg or {}).get("trigger_duration", 2000)
+
+        menu = QMenu(btn)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #1a1a1a;
+                border: 1px solid #3a3a3a;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+            QMenu::item:selected { background: #2a3a3a; color: #fff; }
+            QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
+            QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
+        """)
+
+        # ── Barre de recherche ────────────────────────────────────────────────
+        search_container = QWidget()
+        search_container.setStyleSheet("background: transparent;")
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(6, 4, 6, 4)
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setStyleSheet("""
+            QLineEdit {
+                background: #111; color: #e0e0e0;
+                border: 1px solid #444; border-radius: 4px;
+                padding: 4px 8px; font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #00d4ff; }
+        """)
+        def _search_key(event):
+            if event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter):
+                event.accept(); return
+            QLineEdit.keyPressEvent(search_input, event)
+        search_input.keyPressEvent = _search_key
+        search_layout.addWidget(search_input)
+        search_wa = QWidgetAction(menu)
+        search_wa.setDefaultWidget(search_container)
+        menu.addAction(search_wa)
+        menu.addSeparator()
+
+        name_is_full_match = cur and any(e.get("name") == cur for e in all_effects)
+        def _is_checked(eff):
+            name = eff.get("name", "")
+            if name == cur: return True
+            if not name_is_full_match and cur and eff.get("type") == cur:
+                first = next((e for e in all_effects if e.get("type") == cur), None)
+                return first is not None and first.get("name") == name
+            return False
+
+        def _select(cfg_or_none):
+            if cfg_or_none is None:
+                self.fx_pads[fx_col][row] = None
+                self.active_fx_pads.pop((fx_col, row), None)
+                # Stopper l'effet si c'est lui qui tourne actuellement
+                if cur and self.active_effect == cur:
+                    self.active_effect = None
+                    self.active_effect_config = {}
+                    self.stop_effect()
+                    for btn in self.effect_buttons:
+                        if btn.active and btn.current_effect == cur:
+                            btn.active = False
+                            btn.update_style()
+            else:
+                entry = dict(cfg_or_none)
+                entry["trigger_mode"] = trigger_mode
+                entry["trigger_duration"] = trigger_duration
+                self.fx_pads[fx_col][row] = entry
+            self._style_fx_pad(fx_col, row)
+            self._save_akai_config_auto()
+
+        act_none = menu.addAction("⭕  Aucun")
+        act_none.setCheckable(True)
+        act_none.setChecked(not cur)
+        act_none.triggered.connect(lambda: _select(None))
+        sep_top = menu.addSeparator()
+
+        CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
+        cat_groups = []
+        for cat in CATS:
+            cat_effs = [e for e in all_effects if e.get("category") == cat]
+            if not cat_effs: continue
+            hdr = menu.addAction(f"  {cat.upper()}")
+            hdr.setEnabled(False)
+            eff_actions = []
+            for eff in cat_effs:
+                name = eff.get("name", "")
+                act = menu.addAction(f"  {name}")
+                act.setCheckable(True)
+                act.setChecked(_is_checked(eff))
+                act.triggered.connect(lambda checked=False, e=dict(eff): _select(e))
+                eff_actions.append((act, name))
+            cat_groups.append((hdr, eff_actions))
+
+        other = [e for e in all_effects if e.get("category", "") not in CATS]
+        if other:
+            sep_other = menu.addSeparator()
+            other_actions = []
+            for eff in other:
+                name = eff.get("name", "")
+                act = menu.addAction(f"  {name}")
+                act.setCheckable(True)
+                act.setChecked(_is_checked(eff))
+                act.triggered.connect(lambda checked=False, e=dict(eff): _select(e))
+                other_actions.append((act, name))
+            cat_groups.append((sep_other, other_actions))
+
+        def _apply_filter(text):
+            q = text.strip().lower()
+            act_none.setVisible(not q)
+            sep_top.setVisible(not q)
+            for hdr_act, eff_acts in cat_groups:
+                any_vis = False
+                for act, name in eff_acts:
+                    v = not q or q in name.lower()
+                    act.setVisible(v)
+                    if v: any_vis = True
+                hdr_act.setVisible(any_vis)
+        search_input.textChanged.connect(_apply_filter)
+        QTimer.singleShot(0, search_input.setFocus)
+
+        # ── Mode de déclenchement ─────────────────────────────────────────────
+        menu.addSeparator()
+        trig_menu = menu.addMenu("  ⏱  Mode de déclenchement")
+        trig_menu.setStyleSheet(menu.styleSheet())
+
+        def _set_trig(mode):
+            nonlocal trigger_mode
+            trigger_mode = mode
+            if self.fx_pads[fx_col][row]:
+                self.fx_pads[fx_col][row]["trigger_mode"] = mode
+
+        act_tog = trig_menu.addAction("↕  Toggle (appui/relâche)")
+        act_tog.setCheckable(True); act_tog.setChecked(trigger_mode == "toggle")
+        act_tog.triggered.connect(lambda: _set_trig("toggle"))
+        act_fla = trig_menu.addAction("⚡  Flash (maintenir enfoncé)")
+        act_fla.setCheckable(True); act_fla.setChecked(trigger_mode == "flash")
+        act_fla.triggered.connect(lambda: _set_trig("flash"))
+        act_tim = trig_menu.addAction("⏳  Timer (durée automatique)")
+        act_tim.setCheckable(True); act_tim.setChecked(trigger_mode == "timer")
+        act_tim.triggered.connect(lambda: _set_trig("timer"))
+
+        trig_menu.addSeparator()
+        dur_widget = QWidget()
+        dur_layout = QHBoxLayout(dur_widget)
+        dur_layout.setContentsMargins(16, 4, 16, 4); dur_layout.setSpacing(6)
+        dur_lbl = QLabel("Durée :")
+        dur_lbl.setStyleSheet("color:#aaa; font-size:11px; background:transparent;")
+        dur_spin = QDoubleSpinBox()
+        dur_spin.setRange(0.1, 60.0); dur_spin.setSingleStep(0.5)
+        dur_spin.setValue(trigger_duration / 1000.0); dur_spin.setSuffix(" s")
+        dur_spin.setFixedWidth(80)
+        dur_spin.setStyleSheet(
+            "QDoubleSpinBox { background:#222; color:#fff; border:1px solid #444;"
+            " border-radius:3px; padding:2px 4px; font-size:11px; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width:16px; background:#333; border:none; }"
+        )
+        def _set_dur(v):
+            nonlocal trigger_duration
+            trigger_duration = int(v * 1000)
+            if self.fx_pads[fx_col][row]:
+                self.fx_pads[fx_col][row]["trigger_duration"] = trigger_duration
+        dur_spin.valueChanged.connect(_set_dur)
+        dur_layout.addWidget(dur_lbl); dur_layout.addWidget(dur_spin); dur_layout.addStretch()
+        dur_wa = QWidgetAction(trig_menu)
+        dur_wa.setDefaultWidget(dur_widget)
+        trig_menu.addAction(dur_wa)
+
+        menu.addSeparator()
+        act_editor = menu.addAction("🎨  Éditeur d'effets")
+        act_editor.triggered.connect(lambda: self._open_effect_editor_for_fx_pad(fx_col, row))
+
+        menu.exec(btn.mapToGlobal(pos))
 
     def start_effect(self, effect_name):
         """Demarre l'effet selectionne par nom"""
@@ -2814,6 +3066,26 @@ class MainWindow(QMainWindow):
                     _apply(p, p.base_color)
             self._bascule_phase = phase + 1
 
+    def _apply_fx_amplitude(self):
+        """Applique l'amplitude globale (fader 9) × amplitude colonne FX sur les couleurs."""
+        global_amp = self.effect_amplitude / 100.0
+
+        # Amplitude de la colonne FX active (si un pad FX déclenche l'effet)
+        col_amp = 1.0
+        if self.active_fx_pads:
+            fx_col = next(iter(self.active_fx_pads))[0]
+            col_amp = self.fx_amplitudes[fx_col] / 100.0 if 0 <= fx_col < 4 else 1.0
+
+        amp = global_amp * col_amp
+        if amp >= 1.0:
+            return
+        for p in self.projectors:
+            p.color = QColor(
+                int(p.color.red()   * amp),
+                int(p.color.green() * amp),
+                int(p.color.blue()  * amp),
+            )
+
     def update_effect(self):
         """Met a jour l'effet en cours"""
         if self.active_effect is None:
@@ -2826,6 +3098,7 @@ class MainWindow(QMainWindow):
                 self._update_effect_from_layers(cfg)
             else:
                 self._update_effect_from_config(cfg)
+            self._apply_fx_amplitude()
             return
 
         # speed_factor : fader 0 = lent (1.0), fader 100 = rapide (0.05)
@@ -3024,6 +3297,9 @@ class MainWindow(QMainWindow):
                         int(base.blue() * brightness)
                     )
 
+        # Appliquer l'amplitude du fader FX si actif
+        self._apply_fx_amplitude()
+
     # ------------------------------------------------------------------ #
     #  EDITEUR D'EFFETS                                                    #
     # ------------------------------------------------------------------ #
@@ -3068,6 +3344,7 @@ class MainWindow(QMainWindow):
                 encoding="utf-8")
         except Exception:
             pass
+        self._refresh_active_effect_config()
 
     def _load_effect_assignments(self) -> dict:
         """Charge les assignations bouton→effet depuis le disque."""
@@ -3088,6 +3365,49 @@ class MainWindow(QMainWindow):
                 encoding="utf-8")
         except Exception:
             pass
+        # Si l'effet actif fait partie des configs mises à jour, relancer immédiatement
+        self._refresh_active_effect_config()
+
+    def _refresh_active_effect_config(self):
+        """Recharge la config de l'effet actif depuis les sources à jour et le relance."""
+        active_name = self.active_effect
+        if not active_name:
+            return
+
+        # Vérifier qu'un bouton OU un pad FX est vraiment actif — pas juste un effet fantôme
+        btn_is_active = any(
+            btn.active and btn.current_effect == active_name
+            for btn in self.effect_buttons
+        )
+        fx_is_active = bool(self.active_fx_pads)
+
+        def _find_new_cfg():
+            """Cherche la config mise à jour dans : boutons → pads FX → bibliothèque."""
+            for cfg in self._button_effect_configs.values():
+                if isinstance(cfg, dict) and cfg.get("name") == active_name:
+                    return cfg
+            for col in self.fx_pads:
+                for cfg in col:
+                    if isinstance(cfg, dict) and cfg.get("name") == active_name:
+                        return cfg
+            return self._effect_library_configs.get(active_name)
+
+        if not btn_is_active and not fx_is_active:
+            # Juste mettre à jour la config en mémoire, sans relancer
+            new_cfg = _find_new_cfg()
+            if new_cfg:
+                self.active_effect_config = new_cfg
+            return
+
+        # Chercher la nouvelle config et relancer l'effet
+        new_cfg = _find_new_cfg()
+        if new_cfg:
+            self.active_effect_config = new_cfg
+            self.start_effect(active_name)
+            # Mettre à jour _prev_effect_state si il référence le même effet
+            prev = getattr(self, '_prev_effect_state', None)
+            if prev and prev.get("effect") == active_name:
+                prev["config"] = new_cfg
 
     def _on_effect_assigned(self, btn_idx: int, cfg: dict):
         """Reçoit l'assignation depuis l'éditeur ou le menu clic-droit et met à jour le bouton"""
@@ -3099,8 +3419,13 @@ class MainWindow(QMainWindow):
         if btn_idx < len(self.effect_buttons):
             name = cfg.get("name", "") if cfg else ""
             self.effect_buttons[btn_idx].setToolTip(name or "Aucun effet")
-            # Sync current_effect pour que le menu clic-droit affiche le bon check
             self.effect_buttons[btn_idx].current_effect = name or None
+
+        # Si cet effet est actuellement actif, appliquer la nouvelle config immédiatement
+        if cfg and self.effect_buttons[btn_idx].active:
+            self.active_effect_config = cfg
+            self.active_effect = cfg.get("name", self.active_effect)
+            self.start_effect(self.active_effect)
 
     def _update_effect_from_layers(self, cfg: dict):
         """Exécute un effet défini par ses couches (format nouvel éditeur)."""
@@ -3220,8 +3545,8 @@ class MainWindow(QMainWindow):
             elif has_rgb_layer:
                 proj.color = QColor(0, 0, 0)
             elif has_dim:
-                bc = proj.base_color
-                proj.color = QColor(int(bc.red() * bv), int(bc.green() * bv), int(bc.blue() * bv))
+                # Pas de couche couleur : flash blanc (identique au preview de l'éditeur)
+                proj.color = QColor(int(255 * bv), int(255 * bv), int(255 * bv))
 
     def _update_effect_from_config(self, cfg: dict):
         """Exécute l'algorithme paramétré depuis une config éditeur."""
@@ -3387,11 +3712,11 @@ class MainWindow(QMainWindow):
             self.active_effect_config = {}  # one-shot
 
     def _fader8_dispatch(self, index, value):
-        """Fader 9 : contrôle de la vitesse FX."""
-        self.set_effect_speed(index, value)
+        """Fader 9 : contrôle de l'amplitude globale des effets."""
+        self.effect_amplitude = value
 
     def set_effect_speed(self, index, value):
-        """Definit la vitesse de l'effet"""
+        """Definit la vitesse de l'effet (conservé pour compatibilité)"""
         self.effect_speed = value
 
     def _tap_tempo(self):
@@ -3604,6 +3929,9 @@ class MainWindow(QMainWindow):
     def update_audio_ai(self):
         """IA Lumiere - Met a jour les projecteurs selon l'analyse audio avec effets creatifs"""
         try:
+            # Ne pas interférer avec un effet en cours — l'effet a la priorité
+            if getattr(self, 'active_effect', None) is not None:
+                return
             # Ne pas interférer avec le fade-out de fin de média
             if self._ia_fadeout_timer and self._ia_fadeout_timer.isActive():
                 return
@@ -4308,6 +4636,7 @@ class MainWindow(QMainWindow):
             "active_memory_pads": active_pads_serial,
             "custom_bank_slots": [dict(s) for s in self._custom_bank_slots],
             "last_fader_mode": "FX",
+            "fx_pads": self.fx_pads,
         }
 
     def _apply_akai_config(self, config):
@@ -4351,6 +4680,14 @@ class MainWindow(QMainWindow):
                     c = custom_colors_data[mc][mr]
                     self.memory_custom_colors[mc][mr] = QColor(c) if c else None
 
+        # Restore FX pads assignments
+        fx_pads_data = config.get("fx_pads")
+        if fx_pads_data and isinstance(fx_pads_data, list):
+            for fc in range(min(4, len(fx_pads_data))):
+                if isinstance(fx_pads_data[fc], list):
+                    for fr in range(min(8, len(fx_pads_data[fc]))):
+                        self.fx_pads[fc][fr] = fx_pads_data[fc][fr]
+
         # Fader 9 toujours en mode FX
         self._last_fader_mode = "FX"
 
@@ -4362,6 +4699,8 @@ class MainWindow(QMainWindow):
             for mr in range(8):
                 is_active = self.active_memory_pads.get(fi) == mr
                 self._style_memory_pad(mc, mr, active=is_active)
+
+        # Les pads FX seront rafraîchis lors du prochain _rebuild_akai_pads()
 
     def _save_akai_config_auto(self):
         """Sauvegarde automatique de la config AKAI a la fermeture"""

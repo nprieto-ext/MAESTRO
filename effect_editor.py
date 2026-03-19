@@ -2845,11 +2845,25 @@ class EffectEditorDialog(QDialog):
                 if eff_dict:
                     cfg["type"] = eff_dict.get("type", cfg.get("type", ""))
                 saved = True
+        # Mettre à jour les pads FX qui ont cet effet assigné
+        fx_pads = getattr(self._main_window, 'fx_pads', None)
+        if fx_pads:
+            for col in fx_pads:
+                for i, cfg in enumerate(col):
+                    if isinstance(cfg, dict) and cfg.get("name") == cur_name:
+                        cfg["layers"]    = layers_data
+                        cfg["play_mode"] = self._play_mode
+                        cfg["duration"]  = cur_duration
+                        if eff_dict:
+                            cfg["type"] = eff_dict.get("type", cfg.get("type", ""))
+                        saved = True
         if saved:
             if hasattr(self._main_window, '_save_effect_assignments'):
-                self._main_window._save_effect_assignments()
+                self._main_window._save_effect_assignments()  # also calls _refresh_active_effect_config
+            if hasattr(self._main_window, '_save_akai_config_auto'):
+                self._main_window._save_akai_config_auto()
         else:
-            # Effet non assigné à un bouton → sauvegarder dans la bibliothèque d'effets
+            # Effet non assigné à un bouton ni FX pad → sauvegarder dans la bibliothèque d'effets
             lib = getattr(self._main_window, '_effect_library_configs', None)
             if lib is not None:
                 lib[cur_name] = {
@@ -2860,7 +2874,7 @@ class EffectEditorDialog(QDialog):
                     "duration":  cur_duration,
                 }
                 if hasattr(self._main_window, '_save_effect_library'):
-                    self._main_window._save_effect_library()
+                    self._main_window._save_effect_library()  # also calls _refresh_active_effect_config
 
     def _on_assign(self, btn_idx: int):
         if not self._main_window or not self._selected_card:
@@ -2940,27 +2954,35 @@ class EffectEditorDialog(QDialog):
         pass  # Layer rows replaced by SimpleEffectPanel
 
     def _get_saved_layers_for(self, name: str) -> list:
-        """Retourne les EffectLayer sauvegardés pour cet effet (si assigné à un bouton)."""
-        if not self._main_window or not name:
-            return []
-        cfg_map = getattr(self._main_window, '_button_effect_configs', {})
-        for cfg in cfg_map.values():
-            if isinstance(cfg, dict) and cfg.get("name") == name:
-                layers_data = cfg.get("layers", [])
-                if layers_data:
-                    return [EffectLayer.from_dict(d) for d in layers_data]
+        """Retourne les EffectLayer sauvegardés pour cet effet (priorité : config active > FX pads > boutons)."""
+        saved_cfg = self._get_saved_cfg_for(name)
+        layers_data = saved_cfg.get("layers", []) if saved_cfg else []
+        if layers_data:
+            return [EffectLayer.from_dict(d) for d in layers_data]
         return []
 
     def _get_saved_cfg_for(self, name: str) -> dict:
         """Retourne le dict de config complet sauvegardé pour cet effet (play_mode, duration, layers).
-        Cherche d'abord dans les boutons assignés, puis dans la bibliothèque d'effets."""
+        Priorité : config active en cours > pads FX > boutons assignés > bibliothèque d'effets."""
         if not self._main_window or not name:
             return {}
+        # Priorité 1 : config en cours d'exécution (ce qui joue vraiment)
+        active_cfg = getattr(self._main_window, 'active_effect_config', None)
+        if isinstance(active_cfg, dict) and active_cfg.get("name") == name:
+            return active_cfg
+        # Priorité 2 : pads FX (assignation directe)
+        fx_pads = getattr(self._main_window, 'fx_pads', None)
+        if fx_pads:
+            for col in fx_pads:
+                for cfg in col:
+                    if isinstance(cfg, dict) and cfg.get("name") == name:
+                        return cfg
+        # Priorité 3 : boutons AKAI assignés
         cfg_map = getattr(self._main_window, '_button_effect_configs', {})
         for cfg in cfg_map.values():
             if isinstance(cfg, dict) and cfg.get("name") == name:
                 return cfg
-        # Fallback : config sauvegardée dans la bibliothèque (effet édité mais non assigné)
+        # Priorité 4 : bibliothèque d'effets (édités mais non assignés)
         lib = getattr(self._main_window, '_effect_library_configs', {})
         if name in lib:
             return lib[name]

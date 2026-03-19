@@ -1588,6 +1588,7 @@ class PlanDeFeu(QFrame):
         self._canvas_editable = False  # Vue principale : lecture seule (edition dans Patch DMX)
         self._effects = {}            # id(proj) -> _EffectState
         self._custom_groups = {}      # nom → frozenset of (group, local_idx)
+        self._load_custom_groups()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -1865,16 +1866,17 @@ class PlanDeFeu(QFrame):
         for g in sorted(unlisted):
             menu.addAction(g.capitalize(), lambda grp=g: self._select_group(grp))
 
-        # Groupes de sélection rapide personnalisés
+        # Groupes de sélection rapide personnalisés — 1 clic direct
         if self._custom_groups:
             menu.addSeparator()
             for gname, members in self._custom_groups.items():
-                sub = menu.addMenu(f"★  {gname}  ({len(members)})")
-                sub.addAction("Sélectionner", lambda m=members: self._select_custom_group(m))
-                sub.addAction("Supprimer ce groupe", lambda n=gname: self._delete_custom_group(n))
+                act = menu.addAction(f"★  {gname}  ({len(members)})")
+                act.triggered.connect(lambda checked, m=members: self._select_custom_group(m))
 
         menu.addSeparator()
         menu.addAction("➕  Ajouter un groupe depuis la sélection...", self._open_add_group_dialog)
+        if self._custom_groups:
+            menu.addAction("⚙  Gérer les groupes...", self._open_group_manager)
 
         # Trouver le bouton SELEC pour positionner le menu
         sender = self.sender()
@@ -1945,6 +1947,7 @@ class PlanDeFeu(QFrame):
 
         # Sauvegarder la selection courante comme groupe rapide
         self._custom_groups[group_name] = frozenset(self.selected_lamps)
+        self._save_custom_groups()
 
     def _select_custom_group(self, members):
         """Restaure la sélection d'un groupe personnalisé."""
@@ -1952,9 +1955,227 @@ class PlanDeFeu(QFrame):
         self.selected_lamps.update(members)
         self.refresh()
 
+    @staticmethod
+    def _groups_file_path():
+        import pathlib
+        return pathlib.Path.home() / ".mystrow_selection_groups.json"
+
+    def _save_custom_groups(self):
+        """Persiste les groupes personnalisés sur disque."""
+        try:
+            data = {}
+            for name, members in self._custom_groups.items():
+                data[name] = [[str(g), int(i)] for g, i in members]
+            path = self._groups_file_path()
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"[PlanDeFeu] Groupes sauvegardés ({len(data)}) → {path}")
+        except Exception:
+            import traceback
+            print(f"[PlanDeFeu] Erreur sauvegarde groupes:")
+            traceback.print_exc()
+
+    def _load_custom_groups(self):
+        """Charge les groupes personnalisés depuis le disque."""
+        try:
+            import pathlib
+            path = self._groups_file_path()
+            if not path.exists():
+                print(f"[PlanDeFeu] Pas de fichier groupes: {path}")
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for name, members in data.items():
+                self._custom_groups[name] = frozenset((str(g), int(i)) for g, i in members)
+            print(f"[PlanDeFeu] Groupes chargés ({len(data)}) ← {path}")
+        except Exception:
+            import traceback
+            print(f"[PlanDeFeu] Erreur chargement groupes:")
+            traceback.print_exc()
+
     def _delete_custom_group(self, name):
         """Supprime un groupe de sélection rapide personnalisé."""
         self._custom_groups.pop(name, None)
+        self._save_custom_groups()
+
+    def _open_group_manager(self):
+        """Dialog de gestion des groupes personnalisés : réordonner, renommer, supprimer."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+            QListWidget, QListWidgetItem, QLineEdit, QMessageBox,
+        )
+        from PySide6.QtCore import Qt
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Gérer les groupes")
+        dlg.setMinimumSize(380, 420)
+        dlg.setStyleSheet(
+            "QDialog { background: #1a1a1a; color: #ddd; }"
+            "QListWidget { background: #111; color: #ddd; border: 1px solid #333;"
+            " border-radius: 4px; font-size: 13px; outline: none; }"
+            "QListWidget::item { padding: 8px 12px; border-radius: 3px; }"
+            "QListWidget::item:selected { background: #0077bb; color: #fff; }"
+            "QListWidget::item:hover:!selected { background: #222; }"
+            "QPushButton { background: #2a2a2a; color: #ccc; border: 1px solid #3a3a3a;"
+            " border-radius: 4px; font-size: 12px; padding: 4px 12px; }"
+            "QPushButton:hover { background: #333; color: #fff; }"
+            "QPushButton:disabled { color: #444; border-color: #222; }"
+            "QLineEdit { background: #111; color: #fff; border: 1px solid #444;"
+            " border-radius: 4px; padding: 4px 8px; font-size: 13px; }"
+            "QLineEdit:focus { border-color: #0077bb; }"
+        )
+
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(16, 14, 16, 14)
+        vl.setSpacing(10)
+
+        title = QLabel("Groupes enregistrés")
+        title.setStyleSheet("font-size: 13px; font-weight: bold; color: #fff;")
+        vl.addWidget(title)
+
+        sub = QLabel("Glissez ou utilisez ▲▼ pour réordonner. Double-cliquez pour renommer.")
+        sub.setStyleSheet("font-size: 10px; color: #666;")
+        sub.setWordWrap(True)
+        vl.addWidget(sub)
+
+        lw = QListWidget()
+        lw.setDragDropMode(QListWidget.InternalMove)
+        lw.setSelectionMode(QListWidget.SingleSelection)
+        for gname, members in self._custom_groups.items():
+            item = QListWidgetItem(f"★  {gname}  —  {len(members)} projecteur{'s' if len(members) > 1 else ''}")
+            item.setData(Qt.UserRole, gname)
+            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            lw.addItem(item)
+        vl.addWidget(lw, 1)
+
+        # ── Barre de renommage ─────────────────────────────────────────────────
+        rename_row = QHBoxLayout()
+        rename_edit = QLineEdit()
+        rename_edit.setPlaceholderText("Nouveau nom...")
+        rename_edit.setFixedHeight(30)
+        btn_rename = QPushButton("Renommer")
+        btn_rename.setFixedHeight(30)
+        btn_rename.setEnabled(False)
+        rename_row.addWidget(rename_edit, 1)
+        rename_row.addWidget(btn_rename)
+        vl.addLayout(rename_row)
+
+        # ── Boutons ───────────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_up  = QPushButton("▲")
+        btn_dn  = QPushButton("▼")
+        btn_del = QPushButton("🗑  Supprimer")
+        btn_del.setStyleSheet(
+            "QPushButton { background: #2a0000; color: #cc4444; border: 1px solid #3a1111;"
+            " border-radius: 4px; font-size: 12px; padding: 4px 12px; }"
+            "QPushButton:hover { background: #440000; color: #ff6666; }"
+            "QPushButton:disabled { color: #444; border-color: #222; }"
+        )
+        for b in (btn_up, btn_dn, btn_del):
+            b.setFixedHeight(30)
+            b.setEnabled(False)
+        btn_row.addWidget(btn_up)
+        btn_row.addWidget(btn_dn)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_del)
+        vl.addLayout(btn_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("border: none; border-top: 1px solid #2a2a2a;")
+        vl.addWidget(sep)
+
+        close_row = QHBoxLayout()
+        btn_close = QPushButton("Fermer")
+        btn_close.setFixedHeight(32)
+        btn_close.clicked.connect(dlg.accept)
+        close_row.addStretch()
+        close_row.addWidget(btn_close)
+        vl.addLayout(close_row)
+
+        # ── Logique ────────────────────────────────────────────────────────────
+        def _on_selection():
+            has = lw.currentRow() >= 0
+            btn_up.setEnabled(has and lw.currentRow() > 0)
+            btn_dn.setEnabled(has and lw.currentRow() < lw.count() - 1)
+            btn_del.setEnabled(has)
+            btn_rename.setEnabled(has)
+            if has:
+                name = lw.currentItem().data(Qt.UserRole)
+                rename_edit.setText(name)
+
+        def _move(delta):
+            row = lw.currentRow()
+            if row < 0:
+                return
+            new_row = row + delta
+            if new_row < 0 or new_row >= lw.count():
+                return
+            item = lw.takeItem(row)
+            lw.insertItem(new_row, item)
+            lw.setCurrentRow(new_row)
+            _apply_order()
+
+        def _apply_order():
+            new_groups = {}
+            for i in range(lw.count()):
+                name = lw.item(i).data(Qt.UserRole)
+                if name in self._custom_groups:
+                    new_groups[name] = self._custom_groups[name]
+            self._custom_groups.clear()
+            self._custom_groups.update(new_groups)
+            self._save_custom_groups()
+
+        def _do_rename():
+            row = lw.currentRow()
+            if row < 0:
+                return
+            old_name = lw.item(row).data(Qt.UserRole)
+            new_name = rename_edit.text().strip()
+            if not new_name or new_name == old_name:
+                return
+            if new_name in self._custom_groups:
+                QMessageBox.warning(dlg, "Nom existant", f"Un groupe « {new_name} » existe déjà.")
+                return
+            members = self._custom_groups.pop(old_name)
+            # Reconstruire le dict en conservant l'ordre
+            new_groups = {}
+            for i in range(lw.count()):
+                n = lw.item(i).data(Qt.UserRole)
+                new_groups[new_name if n == old_name else n] = (
+                    members if n == old_name else self._custom_groups.get(n)
+                )
+            self._custom_groups.clear()
+            self._custom_groups.update(new_groups)
+            self._save_custom_groups()
+            item = lw.item(row)
+            item.setData(Qt.UserRole, new_name)
+            item.setText(f"★  {new_name}  —  {len(members)} projecteur{'s' if len(members) > 1 else ''}")
+
+        def _do_delete():
+            row = lw.currentRow()
+            if row < 0:
+                return
+            name = lw.item(row).data(Qt.UserRole)
+            rep = QMessageBox.question(
+                dlg, "Supprimer le groupe",
+                f"Supprimer le groupe « {name} » ?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if rep != QMessageBox.Yes:
+                return
+            self._custom_groups.pop(name, None)
+            self._save_custom_groups()
+            lw.takeItem(row)
+            _on_selection()
+
+        lw.currentRowChanged.connect(lambda _: _on_selection())
+        lw.model().rowsMoved.connect(lambda *_: _apply_order())
+        btn_up.clicked.connect(lambda: _move(-1))
+        btn_dn.clicked.connect(lambda: _move(1))
+        btn_del.clicked.connect(_do_delete)
+        btn_rename.clicked.connect(_do_rename)
+        rename_edit.returnPressed.connect(_do_rename)
+
+        dlg.exec()
 
     # ── Couleur / dimmer ─────────────────────────────────────────────
 
@@ -2298,6 +2519,13 @@ class PlanDeFeu(QFrame):
                 label = gd.get(g, g)
                 act = sel_menu.addAction(label)
                 act.triggered.connect(lambda checked, grp=g: self._select_group(grp))
+
+            # Groupes personnalisés créés via le bouton SELEC
+            if self._custom_groups:
+                sel_menu.addSeparator()
+                for gname, members in self._custom_groups.items():
+                    act = sel_menu.addAction(f"★  {gname}  ({len(members)})")
+                    act.triggered.connect(lambda checked, m=members: self._select_custom_group(m))
 
         menu.exec(self._pos_outside(menu))
 

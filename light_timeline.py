@@ -14,13 +14,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QMenu, QComboBox, QDialog, QMessageBox, QInputDialog, QSlider, QApplication,
     QGridLayout, QCheckBox, QTabWidget, QSpinBox, QFrame, QSizePolicy, QToolTip,
-    QLineEdit, QWidgetAction
+    QLineEdit, QWidgetAction, QScrollArea
 )
 from PySide6.QtCore import Qt, QPoint, QSize, QRect, QMimeData, QTimer
 
 from PySide6.QtGui import (
     QColor, QPainter, QPen, QBrush, QPolygon, QCursor,
-    QPixmap, QIcon, QLinearGradient, QDrag, QPainterPath
+    QPixmap, QIcon, QLinearGradient, QDrag, QPainterPath, QFont, QFontMetrics
 )
 
 import wave
@@ -311,6 +311,377 @@ class ColorPalette(QWidget):
         drag.exec(Qt.CopyAction)
 
 
+class MemoryDragButton(QPushButton):
+    """Bouton draggable représentant une mémoire AKAI enregistrée."""
+
+    def __init__(self, label, color, mem_col, row, parent=None):
+        super().__init__(label, parent)
+        self.mem_col = mem_col
+        self.mem_row = row
+        self.mem_color = color
+        self.setFixedSize(50, 46)
+        lum = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
+        txt = "#000" if lum > 140 else "#fff"
+        bg = color.name()
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg};
+                color: {txt};
+                border: 2px solid #333;
+                border-radius: 5px;
+                font-size: 9px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ border-color: #00d4ff; border-width: 2px; }}
+        """)
+        self.setToolTip(f"Séquence {label}")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            drag = QDrag(self)
+            mime = QMimeData()
+            data = f"{self.mem_col},{self.mem_row},{self.text()},{self.mem_color.name()}"
+            mime.setData('application/x-sequence', data.encode())
+            drag.setMimeData(mime)
+            pix = QPixmap(50, 46)
+            pix.fill(self.mem_color)
+            p = QPainter(pix)
+            lum = self.mem_color.red() * 0.299 + self.mem_color.green() * 0.587 + self.mem_color.blue() * 0.114
+            p.setPen(QColor("#000" if lum > 140 else "#fff"))
+            p.drawText(pix.rect(), Qt.AlignCenter, self.text())
+            p.end()
+            drag.setPixmap(pix)
+            drag.setHotSpot(QPoint(25, 23))
+            drag.exec(Qt.CopyAction)
+
+
+class _EffectChip(QWidget):
+    """Chip draggable représentant un effet — pour la ligne Effets de la palette."""
+
+    H = 46
+
+    def __init__(self, eff_dict, parent=None):
+        super().__init__(parent)
+        self._eff = eff_dict
+        name  = eff_dict.get("name", "")
+        emoji = eff_dict.get("emoji", "✨")
+        self._label = f"{emoji}  {name}"
+        self.setFixedHeight(self.H)
+        fm = QFontMetrics(QFont())
+        w  = max(80, fm.horizontalAdvance(self._label) + 28)
+        self.setFixedWidth(w)
+        self.setToolTip(name)
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        self._hovered = False
+
+    def enterEvent(self, e):  self._hovered = True;  self.update()
+    def leaveEvent(self, e):  self._hovered = False; self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        W, H = self.width(), self.H
+        r = 7
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, W, H, r, r)
+        bg = QColor("#3a1060") if self._hovered else QColor("#22083a")
+        p.fillPath(path, QBrush(bg))
+        # Accent line top
+        p.setPen(QPen(QColor("#cc44ff"), 2))
+        p.drawLine(r, 1, W - r, 1)
+        # Text
+        p.setPen(QColor("#d09aff"))
+        f = p.font(); f.setPixelSize(11); f.setBold(True); p.setFont(f)
+        p.drawText(QRect(0, 0, W, H), Qt.AlignCenter, self._label)
+        # Border
+        border = QColor("#aa33ee") if self._hovered else QColor("#3d1266")
+        p.setPen(QPen(border, 1)); p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        p.end()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            import json as _json
+            drag = QDrag(self)
+            mime = QMimeData()
+            data = {
+                "name":   self._eff.get("name", ""),
+                "type":   self._eff.get("type", ""),
+                "layers": self._eff.get("layers", []),
+            }
+            mime.setData('application/x-effect', _json.dumps(data).encode())
+            drag.setMimeData(mime)
+            pix = QPixmap(self.width(), self.H)
+            pix.fill(QColor("#22083a"))
+            drag.setPixmap(pix)
+            drag.setHotSpot(QPoint(self.width() // 2, self.H // 2))
+            drag.exec(Qt.CopyAction)
+
+
+class PalettePanel(QWidget):
+    """Palette 4 lignes : Couleurs / Bicoleurs / Mémoires / Effets — scrollables horizontalement."""
+
+    _ROW_H   = 56
+    _SCROLL_SS = """
+        QScrollArea { background: transparent; border: none; }
+        QScrollBar:horizontal {
+            height: 4px; background: #181818; margin: 0;
+        }
+        QScrollBar::handle:horizontal {
+            background: #444; border-radius: 2px; min-width: 20px;
+        }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+    """
+    _LABEL_SS  = (
+        "color: #606060; font-size: 7px; font-weight: bold; "
+        "letter-spacing: 1px; background: transparent;"
+    )
+
+    COLORS = [
+        ("Rouge",          QColor(255,  45,  45)),
+        ("Rouge vif",      QColor(255,   0,   0)),
+        ("Orange",         QColor(255, 140,  20)),
+        ("Jaune",          QColor(255, 230,   0)),
+        ("Lime",           QColor(140, 255,   0)),
+        ("Vert",           QColor( 30, 210,  60)),
+        ("Turquoise",      QColor(  0, 200, 140)),
+        ("Cyan",           QColor(  0, 220, 255)),
+        ("Bleu ciel",      QColor( 80, 170, 255)),
+        ("Bleu",           QColor( 50, 110, 255)),
+        ("Bleu marine",    QColor( 20,  50, 200)),
+        ("Violet",         QColor(160,  30, 255)),
+        ("Indigo",         QColor( 90,   0, 200)),
+        ("Magenta",        QColor(255,  20, 210)),
+        ("Rose",           QColor(255,  80, 160)),
+        ("Blanc",          QColor(255, 255, 255)),
+        ("Blanc chaud",    QColor(255, 220, 160)),
+        ("Ambre",          QColor(255, 180,  30)),
+    ]
+
+    BICOLORS = [
+        ("Rouge + Bleu",       QColor(255,  45,  45), QColor( 50, 110, 255)),
+        ("Rouge + Cyan",       QColor(255,  45,  45), QColor(  0, 220, 255)),
+        ("Rouge + Violet",     QColor(255,  45,  45), QColor(160,  30, 255)),
+        ("Rouge + Orange",     QColor(255,  45,  45), QColor(255, 140,  20)),
+        ("Rouge + Rose",       QColor(255,  45,  45), QColor(255,  80, 160)),
+        ("Rouge + Blanc",      QColor(255,  45,  45), QColor(255, 255, 255)),
+        ("Orange + Bleu",      QColor(255, 140,  20), QColor( 50, 110, 255)),
+        ("Orange + Violet",    QColor(255, 140,  20), QColor(160,  30, 255)),
+        ("Jaune + Violet",     QColor(255, 230,   0), QColor(160,  30, 255)),
+        ("Jaune + Bleu",       QColor(255, 230,   0), QColor( 50, 110, 255)),
+        ("Vert + Rouge",       QColor( 30, 210,  60), QColor(255,  45,  45)),
+        ("Vert + Jaune",       QColor( 30, 210,  60), QColor(255, 230,   0)),
+        ("Vert + Violet",      QColor( 30, 210,  60), QColor(160,  30, 255)),
+        ("Vert + Orange",      QColor( 30, 210,  60), QColor(255, 140,  20)),
+        ("Cyan + Magenta",     QColor(  0, 220, 255), QColor(255,  20, 210)),
+        ("Cyan + Rouge",       QColor(  0, 220, 255), QColor(255,  45,  45)),
+        ("Cyan + Violet",      QColor(  0, 220, 255), QColor(160,  30, 255)),
+        ("Bleu + Violet",      QColor( 50, 110, 255), QColor(160,  30, 255)),
+        ("Bleu + Cyan",        QColor( 50, 110, 255), QColor(  0, 220, 255)),
+        ("Bleu + Rose",        QColor( 50, 110, 255), QColor(255,  80, 160)),
+        ("Violet + Rose",      QColor(160,  30, 255), QColor(255,  80, 160)),
+        ("Magenta + Jaune",    QColor(255,  20, 210), QColor(255, 230,   0)),
+        ("Magenta + Cyan",     QColor(255,  20, 210), QColor(  0, 220, 255)),
+        ("Rose + Blanc",       QColor(255,  80, 160), QColor(255, 255, 255)),
+        ("Blanc + Bleu",       QColor(255, 255, 255), QColor( 50, 110, 255)),
+        ("Blanc chaud + Bleu", QColor(255, 220, 160), QColor( 50, 110, 255)),
+    ]
+
+    def __init__(self, parent_editor):
+        super().__init__()
+        self.parent_editor = parent_editor
+        self.setStyleSheet("background: #111111; border-top: 1px solid #252525;")
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # ── Couleurs ──────────────────────────────────────────────────────
+        color_items = []
+        for name, c in self.COLORS:
+            sw = _ColorSwatch(c, label=name)
+            sw.mousePressEvent = lambda e, col=c: self._drag_color(e, col)
+            color_items.append(sw)
+        v.addWidget(self._make_row("COULEURS", color_items))
+        v.addWidget(self._sep())
+
+        # ── Bicoleurs ─────────────────────────────────────────────────────
+        bi_items = []
+        for name, c1, c2 in self.BICOLORS:
+            sw = _ColorSwatch(c1, c2, label=name)
+            sw.mousePressEvent = lambda e, a=c1, b=c2: self._drag_bicolor(e, a, b)
+            bi_items.append(sw)
+        v.addWidget(self._make_row("BICOLEURS", bi_items))
+        v.addWidget(self._sep())
+
+        # ── Mémoires ─────────────────────────────────────────────────────
+        mem_row_widget, self._mem_inner = self._make_row_dynamic("MÉMOIRES")
+        v.addWidget(mem_row_widget)
+        v.addWidget(self._sep())
+
+        # ── Effets ───────────────────────────────────────────────────────
+        eff_items = self._build_effect_chips()
+        v.addWidget(self._make_row("EFFETS", eff_items))
+
+        self.refresh()
+
+    # ── Helpers layout ────────────────────────────────────────────────────
+
+    def _sep(self):
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: #1e1e1e; border: none;")
+        return sep
+
+    def _make_scroll(self):
+        sc = QScrollArea()
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        sc.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setWidgetResizable(True)
+        sc.setStyleSheet(self._SCROLL_SS)
+        return sc
+
+    def _make_row(self, label_text, widgets):
+        row = QWidget()
+        row.setFixedHeight(self._ROW_H)
+        row.setStyleSheet("background: transparent;")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(8, 5, 6, 5)
+        hl.setSpacing(6)
+
+        lbl = QLabel(label_text)
+        lbl.setFixedWidth(62)
+        lbl.setStyleSheet(self._LABEL_SS)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        hl.addWidget(lbl)
+
+        sc = self._make_scroll()
+        cnt = QWidget(); cnt.setStyleSheet("background: transparent;")
+        inner = QHBoxLayout(cnt)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        for w in widgets:
+            inner.addWidget(w)
+        inner.addStretch()
+        sc.setWidget(cnt)
+        hl.addWidget(sc, 1)
+        return row
+
+    def _make_row_dynamic(self, label_text):
+        """Retourne (row_widget, inner_layout) pour remplissage dynamique."""
+        row = QWidget()
+        row.setFixedHeight(self._ROW_H)
+        row.setStyleSheet("background: transparent;")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(8, 5, 6, 5)
+        hl.setSpacing(6)
+
+        lbl = QLabel(label_text)
+        lbl.setFixedWidth(62)
+        lbl.setStyleSheet(self._LABEL_SS)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        hl.addWidget(lbl)
+
+        sc = self._make_scroll()
+        cnt = QWidget(); cnt.setStyleSheet("background: transparent;")
+        inner = QHBoxLayout(cnt)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        inner.addStretch()
+        sc.setWidget(cnt)
+        hl.addWidget(sc, 1)
+        return row, inner
+
+    # ── Drag couleurs ──────────────────────────────────────────────────────
+
+    def _drag_color(self, event, color):
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(color.name())
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46); pix.fill(color)
+        drag.setPixmap(pix)
+        drag.exec(Qt.CopyAction)
+
+    def _drag_bicolor(self, event, c1, c2):
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(f"{c1.name()}#{c2.name()}")
+        drag.setMimeData(mime)
+        pix = QPixmap(46, 46)
+        p = QPainter(pix)
+        p.fillRect(0, 0, 23, 46, c1)
+        p.fillRect(23, 0, 23, 46, c2)
+        p.end()
+        drag.setPixmap(pix)
+        drag.exec(Qt.CopyAction)
+
+    # ── Effets ─────────────────────────────────────────────────────────────
+
+    def _build_effect_chips(self):
+        chips = []
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            for eff in BUILTIN_EFFECTS:
+                chips.append(_EffectChip(eff))
+        except Exception:
+            pass
+        return chips
+
+    # ── Mémoires ───────────────────────────────────────────────────────────
+
+    def refresh(self):
+        """Rafraîchit la ligne Mémoires."""
+        inner = self._mem_inner
+        while inner.count():
+            item = inner.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        mw = getattr(self.parent_editor, 'main_window', None)
+        memories = getattr(mw, 'memories', None) if mw else None
+        count = 0
+
+        if memories:
+            for mem_col, col_mems in enumerate(memories):
+                for row_idx, mem in enumerate(col_mems):
+                    if mem is None:
+                        continue
+                    color = self._dominant_color(mem, mw, mem_col, row_idx)
+                    label = f"MEM {mem_col + 1}.{row_idx + 1}"
+                    btn = MemoryDragButton(label, color, mem_col, row_idx)
+                    inner.addWidget(btn)
+                    count += 1
+
+        if count == 0:
+            empty = QLabel("Aucune mémoire")
+            empty.setStyleSheet("color: #444; font-size: 10px; font-style: italic; background: transparent;")
+            inner.addWidget(empty)
+
+        inner.addStretch()
+
+    @staticmethod
+    def _dominant_color(mem, mw, mem_col, row):
+        custom = getattr(mw, 'memory_custom_colors', None)
+        if custom and custom[mem_col][row]:
+            return QColor(custom[mem_col][row])
+        counts = {}
+        for ps in mem.get("projectors", []):
+            if ps.get("level", 0) > 0:
+                c = ps.get("base_color", "#000")
+                counts[c] = counts.get(c, 0) + 1
+        if counts:
+            return QColor(max(counts, key=counts.get))
+        return QColor("#444444")
+
+
 class LightTrack(QWidget):
     """Une piste de lumiere (une ligne dans la timeline)"""
 
@@ -323,6 +694,7 @@ class LightTrack(QWidget):
         self.clips = []
         self.pixels_per_ms = 0.05
         self.is_sequence_track = False   # piste dédiée aux clips de séquence AKAI
+        self.is_effect_track   = False   # piste dédiée aux effets lumière
 
         self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
@@ -1158,15 +1530,215 @@ print(json.dumps(waveform))
 
         result = self.get_clip_at_pos(event.pos().x(), event.pos().y())
 
-        if result:
+        if self.is_effect_track:
+            if result:
+                clip, clip_x, _ = result
+                click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
+                self.show_effect_clip_menu(clip, event.globalPos(), click_pos_in_clip)
+        elif self.is_sequence_track:
+            if result:
+                clip, clip_x, _ = result
+                self.show_sequence_clip_menu(clip, event.globalPos())
+        elif result:
             clip, clip_x, _ = result
-            # Calculer la position relative dans le clip
             click_pos_in_clip = (event.pos().x() - clip_x) / self.pixels_per_ms
             self.show_clip_menu(clip, event.globalPos(), click_pos_in_clip)
         else:
             self.show_empty_menu(event.pos(), event.globalPos())
 
         super().contextMenuEvent(event)
+
+    # ── Menus piste Effet ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_all_effects():
+        """Charge BUILTIN_EFFECTS + effets custom (fichiers .mystrow_custom_effects.json)."""
+        try:
+            from effect_editor import BUILTIN_EFFECTS
+            effects = list(BUILTIN_EFFECTS)
+        except Exception:
+            effects = []
+        try:
+            import json as _j
+            from pathlib import Path as _P
+            f = _P.home() / ".mystrow_custom_effects.json"
+            if f.exists():
+                custom = _j.loads(f.read_text(encoding="utf-8"))
+                existing = {e.get("name") for e in effects}
+                for e in custom:
+                    if e.get("name") not in existing:
+                        effects.append(e)
+        except Exception:
+            pass
+        return effects
+
+    _EFFECT_MENU_STYLE = """
+        QMenu {
+            background: #1a1a1a; border: 1px solid #3a3a3a;
+            padding: 4px; font-size: 12px;
+        }
+        QMenu::item { padding: 6px 16px; border-radius: 3px; color: #e0e0e0; }
+        QMenu::item:selected { background: #2a2a4a; color: #fff; }
+        QMenu::item:disabled { color: #555; font-size: 10px; letter-spacing: 1px; }
+        QMenu::separator { background: #333; height: 1px; margin: 3px 8px; }
+    """
+
+    def _build_effect_picker_menu(self, on_select):
+        """Construit un QMenu de sélection d'effet avec barre de recherche."""
+        from PySide6.QtWidgets import QWidgetAction, QLineEdit
+
+        all_effects = self._load_all_effects()
+        menu = QMenu(self)
+        menu.setStyleSheet(self._EFFECT_MENU_STYLE)
+
+        # ── Barre de recherche ────────────────────────────────────────────
+        search_w = QWidget()
+        search_w.setStyleSheet("background: transparent;")
+        sl = QHBoxLayout(search_w)
+        sl.setContentsMargins(6, 4, 6, 4)
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("  Rechercher un effet…")
+        search_input.setClearButtonEnabled(True)
+        search_input.setStyleSheet("""
+            QLineEdit {
+                background: #111; color: #e0e0e0;
+                border: 1px solid #444; border-radius: 4px;
+                padding: 4px 8px; font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #cc44ff; }
+        """)
+        sl.addWidget(search_input)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(search_w)
+        menu.addAction(wa)
+        menu.addSeparator()
+
+        # ── Effets par catégorie ──────────────────────────────────────────
+        categories = {}
+        for eff in all_effects:
+            cat = eff.get("category", "Autres")
+            categories.setdefault(cat, []).append(eff)
+
+        actions_by_name = {}  # name -> QAction
+
+        for cat, effs in categories.items():
+            hdr = menu.addAction(cat.upper())
+            hdr.setEnabled(False)
+            for eff in effs:
+                nm = eff.get("name", "")
+                act = menu.addAction(f"   {eff.get('emoji', '✨')}  {nm}")
+                act.triggered.connect(lambda _, e=eff: on_select(e))
+                actions_by_name[nm.lower()] = act
+            menu.addSeparator()
+
+        # ── Filtrage par recherche ────────────────────────────────────────
+        def _filter(text):
+            txt = text.strip().lower()
+            for nm_lower, act in actions_by_name.items():
+                act.setVisible(not txt or txt in nm_lower)
+
+        search_input.textChanged.connect(_filter)
+        return menu
+
+    def show_effect_empty_menu(self, local_pos, global_pos):
+        """Menu clic droit sur zone vide de la piste Effet."""
+        def _select(eff):
+            self._fill_effect_at_pos(eff, local_pos)
+
+        menu = self._build_effect_picker_menu(_select)
+        menu.exec(global_pos)
+
+    def show_effect_clip_menu(self, clip, global_pos, click_pos_in_clip):
+        """Menu clic droit sur un clip d'effet existant."""
+        menu = QMenu(self)
+        menu.setStyleSheet(self._EFFECT_MENU_STYLE)
+
+        # Changer l'effet → sous-menu picker identique à la page d'accueil
+        cur_name = getattr(clip, 'effect_name', '') or ''
+        changer_label = f"🔀  Changer : {cur_name}" if cur_name else "🔀  Changer l'effet"
+        act_change = menu.addAction(changer_label)
+        def _open_picker():
+            def _select(eff):
+                clip.effect_name   = eff.get("name", "")
+                clip.effect_layers = eff.get("layers", [])
+                clip.effect_type   = eff.get("type", "")
+                self.update()
+                if hasattr(self.parent_editor, 'save_state'):
+                    self.parent_editor.save_state()
+            m = self._build_effect_picker_menu(_select)
+            m.exec(global_pos)
+        act_change.triggered.connect(_open_picker)
+
+        menu.addSeparator()
+
+        # Couper ici (si le clic est à plus de 200ms des bords)
+        if click_pos_in_clip is not None and 200 < click_pos_in_clip < clip.duration - 200:
+            act_cut = menu.addAction("✂️  Couper ici")
+            act_cut.triggered.connect(lambda: self.cut_clip_at_position(clip, click_pos_in_clip))
+            menu.addSeparator()
+
+        act_del = menu.addAction("🗑  Supprimer")
+        act_del.triggered.connect(lambda: self._delete_effect_clip(clip))
+        menu.exec(global_pos)
+
+    def show_sequence_clip_menu(self, clip, global_pos):
+        """Menu clic droit minimal sur un clip de séquence AKAI."""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background: #2a2a2a; color: white; border: 2px solid #00d4ff;
+                    padding: 5px; font-size: 13px; }
+            QMenu::item { padding: 8px 30px; border-radius: 4px; }
+            QMenu::item:selected { background: #00d4ff; color: black; }
+        """)
+        act_del = menu.addAction("🗑  Supprimer")
+        act_del.triggered.connect(lambda: self._delete_clip(clip))
+        menu.exec(global_pos)
+
+    def _delete_clip(self, clip):
+        """Supprime un clip générique."""
+        if clip in self.clips:
+            self.clips.remove(clip)
+            if clip in self.selected_clips:
+                self.selected_clips.remove(clip)
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
+    def _fill_effect_at_pos(self, eff, local_pos):
+        """Crée un clip d'effet dans le vide à la position cliquée."""
+        drop_x = local_pos.x() - 145
+        click_time = max(0, drop_x / self.pixels_per_ms)
+
+        sorted_clips = sorted(self.clips, key=lambda c: c.start_time)
+        gap_start = 0
+        gap_end = self.total_duration
+        for c in sorted_clips:
+            if c.start_time + c.duration <= click_time:
+                gap_start = c.start_time + c.duration
+            elif c.start_time >= click_time:
+                gap_end = c.start_time
+                break
+
+        gap_duration = gap_end - gap_start
+        if gap_duration > 100:
+            clip_duration = min(gap_duration, 10_000)  # 10 secondes max par défaut
+            clip = self.add_clip(gap_start, clip_duration, QColor("#1a0a2e"), 100)
+            clip.effect_name   = eff.get("name", "")
+            clip.effect_layers = eff.get("layers", [])
+            clip.effect_type   = eff.get("type", "")
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
+    def _delete_effect_clip(self, clip):
+        """Supprime un clip d'effet."""
+        if clip in self.clips:
+            self.clips.remove(clip)
+            self.update()
+            if hasattr(self.parent_editor, 'save_state'):
+                self.parent_editor.save_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def show_empty_menu(self, local_pos, global_pos):
         """Menu sur zone vide"""
@@ -1357,105 +1929,6 @@ print(json.dumps(waveform))
             action = color_menu.addAction(icon, name)
             action.triggered.connect(lambda checked=False, c1=col1, c2=col2, cl=clip: self.set_clip_bicolor(cl, c1, c2))
 
-        # === EFFETS ===
-        menu.addSeparator()
-
-        # Charger tous les effets disponibles
-        _all_effects = []
-        try:
-            from effect_editor import BUILTIN_EFFECTS
-            _all_effects = list(BUILTIN_EFFECTS)
-            from pathlib import Path as _Path
-            import json as _json
-            _cust_file = _Path.home() / ".mystrow_effects.json"
-            if _cust_file.exists():
-                _cust = _json.loads(_cust_file.read_text(encoding="utf-8"))
-                if isinstance(_cust, list):
-                    _existing = {e["name"] for e in _all_effects}
-                    for e in _cust:
-                        if e.get("name") not in _existing:
-                            _all_effects.append(e)
-        except Exception:
-            pass
-
-        _CATS = ["Strobe / Flash", "Mouvement", "Ambiance", "Couleur", "Spécial", "Personnalisés", "Mes Effets"]
-
-        _eff_ss = """
-            QMenu { background:#1a1a1a; border:1px solid #3a3a3a; padding:4px; font-size:12px; }
-            QMenu::item { padding:6px 16px; border-radius:3px; color:#e0e0e0; }
-            QMenu::item:selected { background:#2a3a3a; color:#fff; }
-            QMenu::item:disabled { color:#555; font-size:10px; letter-spacing:1px; }
-            QMenu::separator { background:#333; height:1px; margin:3px 8px; }
-        """
-        cur_eff = getattr(clip, 'effect_name', '') or ''
-        eff_label = f"✨  {cur_eff}" if cur_eff else "✨  Effets"
-        effects_menu = menu.addMenu(eff_label)
-        effects_menu.setStyleSheet(_eff_ss)
-
-        # Barre de recherche
-        _sc = QWidget(); _sc.setStyleSheet("background:transparent;")
-        _sl = QHBoxLayout(_sc); _sl.setContentsMargins(6, 4, 6, 4)
-        search_input = QLineEdit()
-        search_input.setPlaceholderText("  Rechercher un effet…")
-        search_input.setClearButtonEnabled(True)
-        search_input.setStyleSheet(
-            "QLineEdit{background:#111;color:#e0e0e0;border:1px solid #444;"
-            "border-radius:4px;padding:4px 8px;font-size:12px;}"
-            "QLineEdit:focus{border-color:#00d4ff;}"
-        )
-        def _sk(ev, _si=search_input):
-            if ev.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter):
-                ev.accept(); return
-            QLineEdit.keyPressEvent(_si, ev)
-        search_input.keyPressEvent = _sk
-        _sl.addWidget(search_input)
-        _swa = QWidgetAction(effects_menu); _swa.setDefaultWidget(_sc)
-        effects_menu.addAction(_swa)
-        effects_menu.addSeparator()
-
-        no_effect_act = effects_menu.addAction("⭕  Aucun")
-        no_effect_act.setCheckable(True)
-        no_effect_act.setChecked(not cur_eff)
-        no_effect_act.triggered.connect(lambda: self._clear_clip_effect(clip))
-        sep_top = effects_menu.addSeparator()
-
-        cat_groups = []
-        for cat in _CATS:
-            cat_effs = [e for e in _all_effects if e.get("category") == cat]
-            if not cat_effs:
-                continue
-            hdr = effects_menu.addAction(f"  {cat.upper()}")
-            hdr.setEnabled(False)
-            eff_acts = []
-            for eff in cat_effs:
-                name = eff.get("name", "")
-                act = effects_menu.addAction(f"  {name}")
-                act.setCheckable(True)
-                act.setChecked(cur_eff == name)
-                act.triggered.connect(
-                    lambda checked=False, e=dict(eff), cl=clip:
-                        self._apply_builtin_effect_to_clip(cl, e)
-                )
-                eff_acts.append((act, name))
-            cat_groups.append((hdr, eff_acts))
-
-        def _apply_filter(text, _n=no_effect_act, _s=sep_top, _cg=cat_groups):
-            q = text.strip().lower()
-            _n.setVisible(not q); _s.setVisible(not q)
-            for hdr_a, acts in _cg:
-                vis = False
-                for a, nm in acts:
-                    v = not q or q in nm.lower(); a.setVisible(v); vis = vis or v
-                hdr_a.setVisible(vis)
-
-        search_input.textChanged.connect(_apply_filter)
-        QTimer.singleShot(0, search_input.setFocus)
-
-        # Éditeur complet
-        effects_menu.addSeparator()
-        editor_act = effects_menu.addAction("🎛️  Éditeur d'effets...")
-        editor_act.triggered.connect(lambda: self._open_effect_editor_for_clip(clip))
-
         # === MOUVEMENT (piste Lyres) ===
         if self.name == "Lyres":
             menu.addSeparator()
@@ -1484,7 +1957,7 @@ print(json.dumps(waveform))
         if hasattr(self.parent_editor, 'tracks'):
             copy_menu = menu.addMenu("📋 Copier vers...")
             for track in self.parent_editor.tracks:
-                if track != self:
+                if track != self and not track.is_sequence_track and not track.is_effect_track:
                     action = copy_menu.addAction(track.name)
                     action.triggered.connect(lambda checked=False, cl=clip, t=track: self.copy_clip_to_track(cl, t))
 
@@ -1795,6 +2268,13 @@ print(json.dumps(waveform))
 
     def dragEnterEvent(self, event):
         is_seq = event.mimeData().hasFormat('application/x-sequence')
+        is_eff = event.mimeData().hasFormat('application/x-effect')
+        if self.is_effect_track:
+            if is_eff:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
         if self.is_sequence_track:
             if is_seq:
                 event.acceptProposedAction()
@@ -1807,7 +2287,40 @@ print(json.dumps(waveform))
                 event.ignore()
 
     def dropEvent(self, event):
-        """Drop d'une couleur ou d'une séquence sur la piste"""
+        """Drop d'une couleur, séquence ou effet sur la piste"""
+        # ── Drop effet sur piste Effet ──────────────────────────────────
+        if self.is_effect_track and event.mimeData().hasFormat('application/x-effect'):
+            import json as _json
+            raw = bytes(event.mimeData().data('application/x-effect')).decode()
+            try:
+                data = _json.loads(raw)
+            except Exception:
+                data = {}
+            eff_name = data.get("name", "")
+            if eff_name:
+                drop_x    = event.position().x() - 145
+                click_time = max(0, drop_x / self.pixels_per_ms)
+                sorted_clips = sorted(self.clips, key=lambda c: c.start_time)
+                gap_start, gap_end = 0, self.total_duration
+                for c in sorted_clips:
+                    if c.start_time + c.duration <= click_time:
+                        gap_start = c.start_time + c.duration
+                    elif c.start_time >= click_time:
+                        gap_end = c.start_time
+                        break
+                gap_duration = gap_end - gap_start
+                if gap_duration > 100:
+                    clip_duration = min(gap_duration, 10_000)
+                    clip = self.add_clip(gap_start, clip_duration, QColor("#1a0a2e"), 100)
+                    clip.effect_name   = eff_name
+                    clip.effect_type   = data.get("type", "")
+                    clip.effect_layers = data.get("layers", [])
+                    self.update()
+                    if hasattr(self.parent_editor, 'save_state'):
+                        self.parent_editor.save_state()
+            event.acceptProposedAction()
+            return
+
         # ── Drop séquence AKAI ──────────────────────────────────────────
         if self.is_sequence_track and event.mimeData().hasFormat('application/x-sequence'):
             raw = bytes(event.mimeData().data('application/x-sequence')).decode()
@@ -2085,7 +2598,50 @@ print(json.dumps(waveform))
 
             clip_rect = QRect(x, y, max(20, width), height)
 
-            if getattr(clip, 'memory_ref', None):
+            if getattr(self, 'is_effect_track', False):
+                # ── Clip d'effet (piste Effet) ─────────────────────────
+                ACCENT = QColor("#cc44ff")
+                path = QPainterPath()
+                path.addRoundedRect(clip_rect.x(), clip_rect.y(), clip_rect.width(), clip_rect.height(), 5, 5)
+                painter.setClipPath(path)
+
+                # Fond sombre violet
+                painter.fillRect(clip_rect, QColor("#1a0a2e"))
+                grad = QLinearGradient(float(clip_rect.left()), 0, float(clip_rect.right()), 0)
+                grad.setColorAt(0.0, QColor(180, 60, 255, 70))
+                grad.setColorAt(1.0, QColor(180, 60, 255, 15))
+                painter.fillRect(clip_rect, QBrush(grad))
+
+                # Barre d'accent gauche
+                painter.fillRect(QRect(clip_rect.left(), clip_rect.top(), 5, clip_rect.height()), ACCENT)
+
+                painter.setClipRect(self.rect())
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(150, 30, 200, 180), 1))
+                painter.drawRoundedRect(clip_rect, 5, 5)
+
+                if width > 30:
+                    # Retrouver l'emoji depuis BUILTIN_EFFECTS
+                    eff_name = getattr(clip, 'effect_name', '') or ''
+                    eff_emoji = '✨'
+                    try:
+                        from effect_editor import BUILTIN_EFFECTS
+                        for _e in BUILTIN_EFFECTS:
+                            if _e.get('name') == eff_name:
+                                eff_emoji = _e.get('emoji', '✨')
+                                break
+                    except Exception:
+                        pass
+                    font = painter.font()
+                    font.setBold(True)
+                    font.setPixelSize(13)
+                    painter.setFont(font)
+                    painter.setPen(QColor(230, 200, 255, 230))
+                    painter.drawText(clip_rect.adjusted(10, 0, -4, 0),
+                                     Qt.AlignVCenter | Qt.AlignLeft,
+                                     f"{eff_emoji}  {eff_name}" if eff_name else "✨  Effet")
+
+            elif getattr(clip, 'memory_ref', None):
                 # ── Clip de séquence AKAI ──────────────────────────────
                 accent = clip.color   # couleur dominante de la mémoire
                 path = QPainterPath()
@@ -2188,7 +2744,7 @@ print(json.dumps(waveform))
                 painter.setPen(QPen(QColor(0, 0, 0, 80), 1))
                 painter.drawRoundedRect(clip_rect, r, r)
 
-            if not getattr(clip, 'memory_ref', None) and width > 40:
+            if not getattr(self, 'is_effect_track', False) and not getattr(clip, 'memory_ref', None) and width > 40:
                 luminance = (clip.color.red() * 0.299 + clip.color.green() * 0.587 + clip.color.blue() * 0.114)
                 txt_color = QColor(0, 0, 0, 200) if luminance > 140 else QColor(255, 255, 255, 220)
                 painter.setPen(txt_color)

@@ -43,7 +43,7 @@ try:
 except ImportError:
     QVideoWidget = None
 
-from light_timeline import LightTrack, LightClip, ColorPalette
+from light_timeline import LightTrack, LightClip, PalettePanel
 from core import media_icon
 from effect_editor import EffectEditorDialog
 from plan_de_feu import PlanDeFeu
@@ -82,146 +82,6 @@ class RubberBandOverlay(QWidget):
             painter.drawRect(self.rect)
 
             painter.end()
-
-
-class MemoryDragButton(QPushButton):
-    """Bouton draggable représentant une mémoire AKAI enregistrée."""
-
-    def __init__(self, label, color, mem_col, row, parent=None):
-        super().__init__(label, parent)
-        self.mem_col = mem_col
-        self.mem_row = row
-        self.mem_color = color
-        self.setFixedSize(50, 50)
-        lum = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
-        txt = "#000" if lum > 140 else "#fff"
-        bg = color.name()
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background: {bg};
-                color: {txt};
-                border: 2px solid #333;
-                border-radius: 5px;
-                font-size: 10px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{ border-color: #00d4ff; border-width: 2px; }}
-        """)
-        self.setToolTip(f"Séquence {label}")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_start = event.position().toPoint()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.LeftButton:
-            drag = QDrag(self)
-            mime = QMimeData()
-            data = f"{self.mem_col},{self.mem_row},{self.text()},{self.mem_color.name()}"
-            mime.setData('application/x-sequence', data.encode())
-            drag.setMimeData(mime)
-            # Aperçu du drag
-            pix = QPixmap(50, 50)
-            pix.fill(self.mem_color)
-            p = QPainter(pix)
-            lum = self.mem_color.red() * 0.299 + self.mem_color.green() * 0.587 + self.mem_color.blue() * 0.114
-            p.setPen(QColor("#000" if lum > 140 else "#fff"))
-            p.drawText(pix.rect(), Qt.AlignCenter, self.text())
-            p.end()
-            drag.setPixmap(pix)
-            drag.setHotSpot(QPoint(25, 25))
-            drag.exec(Qt.CopyAction)
-
-
-class SequencePalette(QWidget):
-    """Palette des séquences AKAI enregistrées — draggables vers la piste Séquence."""
-
-    def __init__(self, parent_editor):
-        super().__init__()
-        self.parent_editor = parent_editor
-        self.setFixedHeight(74)
-        self.setStyleSheet("background: #0f0f0f; border-top: 2px solid #3a3a3a;")
-
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(8, 6, 8, 6)
-        main_layout.setSpacing(6)
-
-        scroll = QScrollArea()
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-
-        self._container = QWidget()
-        self._container.setStyleSheet("background: transparent;")
-        self._row = QHBoxLayout(self._container)
-        self._row.setContentsMargins(0, 0, 0, 0)
-        self._row.setSpacing(6)
-        scroll.setWidget(self._container)
-        main_layout.addWidget(scroll, 1)
-
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setFixedSize(26, 26)
-        refresh_btn.setToolTip("Rafraîchir les séquences")
-        refresh_btn.setStyleSheet(
-            "QPushButton { background: #1e1e1e; color: #888; border: 1px solid #333; border-radius: 4px; }"
-            "QPushButton:hover { color: #fff; border-color: #555; }"
-        )
-        refresh_btn.clicked.connect(self.refresh)
-        main_layout.addWidget(refresh_btn)
-
-        self._empty_lbl = QLabel("Aucune séquence enregistrée")
-        self._empty_lbl.setStyleSheet("color: #444; font-size: 10px; font-style: italic;")
-        self._row.addWidget(self._empty_lbl)
-        self._row.addStretch()
-
-        self.refresh()
-
-    def refresh(self):
-        """Recharge les séquences depuis main_window.memories."""
-        # Supprimer tous les boutons existants
-        while self._row.count():
-            item = self._row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        mw = self.parent_editor.main_window
-        memories = getattr(mw, 'memories', None)
-        count = 0
-
-        if memories:
-            for mem_col, col_mems in enumerate(memories):
-                for row, mem in enumerate(col_mems):
-                    if mem is None:
-                        continue
-                    color = self._dominant_color(mem, mw, mem_col, row)
-                    label = f"MEM {mem_col + 1}.{row + 1}"
-                    btn = MemoryDragButton(label, color, mem_col, row)
-                    self._row.addWidget(btn)
-                    count += 1
-
-        if count == 0:
-            empty = QLabel("Aucune séquence enregistrée")
-            empty.setStyleSheet("color: #444; font-size: 10px; font-style: italic;")
-            self._row.addWidget(empty)
-
-        self._row.addStretch()
-
-    @staticmethod
-    def _dominant_color(mem, mw, mem_col, row):
-        custom = getattr(mw, 'memory_custom_colors', None)
-        if custom and custom[mem_col][row]:
-            return QColor(custom[mem_col][row])
-        counts = {}
-        for ps in mem.get("projectors", []):
-            if ps.get("level", 0) > 0:
-                c = ps.get("base_color", "#000")
-                counts[c] = counts.get(c, 0) + 1
-        if counts:
-            return QColor(max(counts, key=counts.get))
-        return QColor("#444444")
 
 
 class LightTimelineEditor(QDialog):
@@ -312,6 +172,7 @@ class LightTimelineEditor(QDialog):
             self.playback_position = 0
 
         self._seq_clip_active = None   # clip de séquence actuellement actif (pour effets)
+        self._eff_clip_active = None   # clip d'effet (piste Effet) actuellement actif
 
         self.playback_timer = QTimer()
         self.playback_timer.timeout.connect(self.update_playhead)
@@ -489,7 +350,15 @@ class LightTimelineEditor(QDialog):
         self.tracks = []
         self.track_map = {}
 
-        # ── Piste Séquence (en premier, avant les groupes) ────────────
+        # ── Piste Effet (tout en haut — priorité absolue sur les groupes) ─
+        eff_track = LightTrack("Effet", self.media_duration, self, "#cc44ff")
+        eff_track.is_effect_track = True
+        eff_track.setMinimumHeight(50)
+        self.tracks.append(eff_track)
+        self.track_map["Effet"] = eff_track
+        tracks_layout.addWidget(eff_track)
+
+        # ── Piste Séquence (avant les groupes) ────────────────────────────
         seq_track = LightTrack("Séquence", self.media_duration, self, "#aa77ff")
         seq_track.is_sequence_track = True
         seq_track.setMinimumHeight(50)
@@ -1066,11 +935,14 @@ class LightTimelineEditor(QDialog):
             self.main_window.player.pause()
             self.play_pause_btn.setText("▶")
             self.playback_timer.stop()
-            # Arrêter l'effet de séquence actif
-            if self._seq_clip_active is not None:
+            # Arrêter les effets actifs (séquence et effet track)
+            if self._seq_clip_active is not None or self._eff_clip_active is not None:
+                self.main_window.active_effect        = None
+                self.main_window.active_effect_config = {}
                 if hasattr(self.main_window, 'stop_effect'):
                     self.main_window.stop_effect()
                 self._seq_clip_active = None
+                self._eff_clip_active = None
         else:
             # Lancer le preview a la position actuelle du curseur
             pos = int(self.playback_position)
@@ -1317,7 +1189,7 @@ class LightTimelineEditor(QDialog):
             p.base_color = QColor("black")
             p.color = QColor("black")
 
-        # ── Appliquer d'abord le clip de séquence (base globale) ─────
+        # ── Détecter le clip de séquence actif ───────────────────────────────
         seq_track = self.track_map.get("Séquence")
         new_seq_clip = None
         if seq_track:
@@ -1328,12 +1200,12 @@ class LightTimelineEditor(QDialog):
 
         # Changement de clip de séquence → gérer l'effet associé
         if new_seq_clip is not self._seq_clip_active:
-            # Arrêter l'effet du clip précédent
             if self._seq_clip_active is not None:
+                self.main_window.active_effect        = None
+                self.main_window.active_effect_config = {}
                 if hasattr(self.main_window, 'stop_effect'):
                     self.main_window.stop_effect()
             self._seq_clip_active = new_seq_clip
-            # Démarrer l'effet du nouveau clip
             if new_seq_clip:
                 mem_ref = getattr(new_seq_clip, 'memory_ref', None)
                 if mem_ref:
@@ -1348,32 +1220,48 @@ class LightTimelineEditor(QDialog):
                                 self.main_window.active_effect_config = eff_cfg
                                 self.main_window.start_effect(eff_cfg.get("name", ""))
 
-        # Appliquer l'état des projecteurs du clip de séquence actif
-        if new_seq_clip:
-            mem_ref = getattr(new_seq_clip, 'memory_ref', None)
-            if mem_ref:
-                mem_col, row = mem_ref
-                memories = getattr(self.main_window, 'memories', None)
-                if memories and mem_col < len(memories) and row < len(memories[mem_col]):
-                    mem = memories[mem_col][row]
-                    if mem:
-                        brightness = new_seq_clip.intensity / 100.0
-                        for i, ps in enumerate(mem.get("projectors", [])):
-                            if i < len(projectors) and ps.get("level", 0) > 0:
-                                p = projectors[i]
-                                lvl = int(ps["level"] * brightness)
-                                base = QColor(ps["base_color"])
-                                p.level = lvl
-                                p.base_color = base
-                                p.color = QColor(
-                                    int(base.red()   * lvl / 100.0),
-                                    int(base.green() * lvl / 100.0),
-                                    int(base.blue()  * lvl / 100.0),
-                                )
+        # ── Détecter le clip d'effet actif ───────────────────────────────────
+        eff_track = self.track_map.get("Effet")
+        new_eff_clip = None
+        if eff_track:
+            for clip in eff_track.clips:
+                if clip.start_time <= current_time <= clip.start_time + clip.duration:
+                    new_eff_clip = clip
+                    break
 
-        # ── Appliquer les clips de couleur par groupe (priorité sur séquence) ──
+        if new_eff_clip is not self._eff_clip_active:
+            if self._eff_clip_active is not None:
+                prev_name = getattr(self._eff_clip_active, 'effect_name', '')
+                if getattr(self.main_window, 'active_effect', None) == prev_name:
+                    self.main_window.active_effect        = None
+                    self.main_window.active_effect_config = {}
+                    if hasattr(self.main_window, 'stop_effect'):
+                        self.main_window.stop_effect()
+            self._eff_clip_active = new_eff_clip
+            if new_eff_clip:
+                eff_name = getattr(new_eff_clip, 'effect_name', '')
+                if eff_name:
+                    eff_layers = list(getattr(new_eff_clip, 'effect_layers', []))
+                    eff_type   = getattr(new_eff_clip, 'effect_type', '')
+                    if not eff_layers:
+                        try:
+                            from effect_editor import BUILTIN_EFFECTS
+                            for _e in BUILTIN_EFFECTS:
+                                if _e.get('name') == eff_name:
+                                    eff_layers = [dict(l) for l in _e.get('layers', [])]
+                                    eff_type   = _e.get('type', '')
+                                    break
+                        except Exception:
+                            pass
+                    cfg = {'name': eff_name, 'type': eff_type, 'layers': eff_layers, 'play_mode': 'loop'}
+                    self.main_window.active_effect        = eff_name
+                    self.main_window.active_effect_config = cfg
+                    if hasattr(self.main_window, 'start_effect'):
+                        self.main_window.start_effect(eff_name)
+
+        # ── 1) Appliquer les clips de couleur par groupe (priorité basse) ─────
         for track in self.tracks:
-            if getattr(track, 'is_sequence_track', False):
+            if getattr(track, 'is_sequence_track', False) or getattr(track, 'is_effect_track', False):
                 continue
             for clip in track.clips:
                 start = clip.start_time
@@ -1404,8 +1292,38 @@ class LightTimelineEditor(QDialog):
                             p.color = display_color
                     break
 
+        # ── 2) Appliquer la séquence par-dessus les groupes (priorité haute) ──
+        if new_seq_clip:
+            mem_ref = getattr(new_seq_clip, 'memory_ref', None)
+            if mem_ref:
+                mem_col, row = mem_ref
+                memories = getattr(self.main_window, 'memories', None)
+                if memories and mem_col < len(memories) and row < len(memories[mem_col]):
+                    mem = memories[mem_col][row]
+                    if mem:
+                        brightness = new_seq_clip.intensity / 100.0
+                        for i, ps in enumerate(mem.get("projectors", [])):
+                            if i < len(projectors) and ps.get("level", 0) > 0:
+                                p = projectors[i]
+                                lvl = int(ps["level"] * brightness)
+                                base = QColor(ps["base_color"])
+                                p.level = lvl
+                                p.base_color = base
+                                p.color = QColor(
+                                    int(base.red()   * lvl / 100.0),
+                                    int(base.green() * lvl / 100.0),
+                                    int(base.blue()  * lvl / 100.0),
+                                )
+
+        # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
+        # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
+        if getattr(self.main_window, 'active_effect', None) and hasattr(self.main_window, 'update_effect'):
+            self.main_window.update_effect()
+
         if hasattr(self.main_window, 'send_dmx_update'):
             self.main_window.send_dmx_update()
+        if self._live_pdf is not None:
+            self._live_pdf.update()
 
     def load_existing_sequence(self):
         """Charge la sequence existante si elle existe"""
@@ -1434,6 +1352,7 @@ class LightTimelineEditor(QDialog):
                     clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
                     clip.effect_duration  = clip_data.get('effect_duration', 0)
                     clip.effect_name      = clip_data.get('effect_name', '')
+                    clip.effect_type      = clip_data.get('effect_type', '')
                     if clip_data.get('color2'):
                         clip.color2 = QColor(clip_data['color2'])
                     clip.pan_start      = clip_data.get('pan_start', 128)
@@ -1480,6 +1399,7 @@ class LightTimelineEditor(QDialog):
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
                     'effect_name':      getattr(clip, 'effect_name', ''),
+                    'effect_type':      getattr(clip, 'effect_type', ''),
                 }
 
                 if hasattr(clip, 'color2') and clip.color2:
@@ -1558,6 +1478,7 @@ class LightTimelineEditor(QDialog):
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
                     'effect_name':      getattr(clip, 'effect_name', ''),
+                    'effect_type':      getattr(clip, 'effect_type', ''),
                 }
                 if hasattr(clip, 'color2') and clip.color2:
                     clip_data['color2'] = clip.color2.name()
@@ -1647,6 +1568,7 @@ class LightTimelineEditor(QDialog):
             clip.effect_play_mode  = clip_data.get('effect_play_mode', 'loop')
             clip.effect_duration   = clip_data.get('effect_duration', 0)
             clip.effect_name       = clip_data.get('effect_name', '')
+            clip.effect_type       = clip_data.get('effect_type', '')
             if clip_data.get('color2'):
                 clip.color2 = QColor(clip_data['color2'])
 
@@ -1992,17 +1914,8 @@ class LightTimelineEditor(QDialog):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        self.palette = ColorPalette(self)
-        v.addWidget(self.palette)
-
-        sep_h = QFrame()
-        sep_h.setFrameShape(QFrame.HLine)
-        sep_h.setFixedHeight(1)
-        sep_h.setStyleSheet("background: #1e1e1e; border: none;")
-        v.addWidget(sep_h)
-
-        self.seq_palette = SequencePalette(self)
-        v.addWidget(self.seq_palette)
+        self.palette_panel = PalettePanel(self)
+        v.addWidget(self.palette_panel)
 
         h.addWidget(left, 1)
 
@@ -2146,6 +2059,7 @@ class LightTimelineEditor(QDialog):
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
                     'effect_name':      getattr(clip, 'effect_name', ''),
+                    'effect_type':      getattr(clip, 'effect_type', ''),
                 })
         # Stocker les offsets relatifs au premier clip
         if min_start is not None:
@@ -2187,6 +2101,7 @@ class LightTimelineEditor(QDialog):
             clip.effect_play_mode = item.get('effect_play_mode', 'loop')
             clip.effect_duration  = item.get('effect_duration', 0)
             clip.effect_name      = item.get('effect_name', '')
+            clip.effect_type      = item.get('effect_type', '')
             track.selected_clips.append(clip)
             count += 1
 
@@ -2215,6 +2130,7 @@ class LightTimelineEditor(QDialog):
                     'effect_play_mode': getattr(clip, 'effect_play_mode', 'loop'),
                     'effect_duration':  getattr(clip, 'effect_duration', 0),
                     'effect_name':      getattr(clip, 'effect_name', ''),
+                    'effect_type':      getattr(clip, 'effect_type', ''),
                 }
                 state.append(clip_data)
 
@@ -2256,6 +2172,7 @@ class LightTimelineEditor(QDialog):
                 clip.effect_play_mode = clip_data.get('effect_play_mode', 'loop')
                 clip.effect_duration  = clip_data.get('effect_duration', 0)
                 clip.effect_name      = clip_data.get('effect_name', '')
+                clip.effect_type      = clip_data.get('effect_type', '')
 
         for track in self.tracks:
             track.update()

@@ -912,6 +912,7 @@ class Sequencer(QFrame):
         if text != "Play Lumiere":
             if (getattr(self, 'timeline_playback_row', None) == row and
                     self.timeline_playback_timer and self.timeline_playback_timer.isActive()):
+                self._stop_timeline_effect()
                 self.timeline_playback_timer.stop()
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
@@ -1050,6 +1051,7 @@ class Sequencer(QFrame):
 
                 # Arreter le timer timeline du media precedent
                 if self.timeline_playback_timer and self.timeline_playback_timer.isActive():
+                    self._stop_timeline_effect()
                     self.timeline_playback_timer.stop()
                 if hasattr(self, 'timeline_playback_row'):
                     del self.timeline_playback_row
@@ -1265,6 +1267,7 @@ class Sequencer(QFrame):
 
         # Arreter le timer timeline si actif
         if self.timeline_playback_timer and self.timeline_playback_timer.isActive():
+            self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row
@@ -1413,6 +1416,7 @@ class Sequencer(QFrame):
 
         # Garde supplementaire: verifier que la timeline correspond bien au media en cours
         if self.timeline_playback_row != getattr(self, 'current_row', -1):
+            self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
             del self.timeline_playback_row
             self.timeline_tracks_data = {}
@@ -1421,6 +1425,7 @@ class Sequencer(QFrame):
         # Garde supplementaire: verifier que le mode DMX courant est toujours "Play Lumiere"
         current_dmx_mode = self.get_dmx_mode(getattr(self, 'current_row', -1))
         if current_dmx_mode != "Play Lumiere":
+            self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
             if hasattr(self, 'timeline_playback_row'):
                 del self.timeline_playback_row
@@ -1464,6 +1469,11 @@ class Sequencer(QFrame):
                         'intensity': intensity,
                         'effect': clip_data.get('effect', None),
                         'effect_speed': clip_data.get('effect_speed', 50),
+                        'effect_name':   clip_data.get('effect_name', ''),
+                        'effect_type':   clip_data.get('effect_type', ''),
+                        'effect_layers': clip_data.get('effect_layers', []),
+                        'memory_ref':    clip_data.get('memory_ref'),
+                        'seq_intensity': intensity,
                     }
                     # Mouvement Pan/Tilt
                     if clip_data.get('move_effect') or 'pan_start' in clip_data:
@@ -1482,13 +1492,78 @@ class Sequencer(QFrame):
 
         # Auto-stop: si tous les clips sont finis et qu'on depasse la fin du dernier clip
         if not active_clips and current_time > last_clip_end and last_clip_end > 0:
+            self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
             if hasattr(self, 'timeline_playback_row'):
                 del self.timeline_playback_row
             self.timeline_tracks_data = {}
             return
 
+        # ── Gérer la piste Effet (priorité sur tout) ─────────────────────
+        effet_clip = active_clips.pop("Effet", None)
+        self._handle_timeline_effect(effet_clip)
+
         self.apply_timeline_to_dmx(active_clips)
+
+    def _handle_timeline_effect(self, effet_clip):
+        """Démarre / maintient / arrête l'effet de la piste Effet de la timeline."""
+        main_win = self.player_ui
+        if effet_clip is None:
+            # Aucun clip actif → arrêter l'effet timeline s'il était actif
+            self._stop_timeline_effect()
+            return
+
+        eff_name = effet_clip.get('effect_name', '')
+        if not eff_name:
+            self._stop_timeline_effect()
+            return
+
+        # Déjà le bon effet en cours → ne pas redémarrer
+        if getattr(self, '_timeline_effect_name', None) == eff_name:
+            return
+
+        # Charger la config de l'effet (layers depuis BUILTIN_EFFECTS ou custom)
+        eff_layers = effet_clip.get('effect_layers', [])
+        eff_type   = effet_clip.get('effect_type', '')
+        if not eff_layers:
+            # Chercher dans BUILTIN_EFFECTS
+            try:
+                from effect_editor import BUILTIN_EFFECTS
+                for _e in BUILTIN_EFFECTS:
+                    if _e.get('name') == eff_name:
+                        eff_layers = [dict(l) for l in _e.get('layers', [])]
+                        eff_type   = _e.get('type', '')
+                        break
+            except Exception:
+                pass
+
+        cfg = {
+            'name':      eff_name,
+            'type':      eff_type,
+            'layers':    eff_layers,
+            'play_mode': 'loop',
+        }
+
+        # Démarrer l'effet
+        self._timeline_effect_name = eff_name
+        main_win.active_effect        = eff_name
+        main_win.active_effect_config = cfg
+        if hasattr(main_win, 'start_effect'):
+            main_win.start_effect(eff_name)
+
+    def _stop_timeline_effect(self):
+        """Arrête l'effet lancé par la timeline (si c'est bien lui qui tourne)."""
+        main_win = self.player_ui
+        timeline_name = getattr(self, '_timeline_effect_name', None)
+        if timeline_name is None:
+            return
+        self._timeline_effect_name = None
+        # N'arrêter que si c'est encore l'effet de la timeline qui tourne
+        if getattr(main_win, 'active_effect', None) == timeline_name:
+            main_win.active_effect        = None
+            main_win.active_effect_config = {}
+            if hasattr(main_win, 'stop_effect'):
+                main_win.stop_effect()
 
     def calculate_clip_intensity(self, clip_data, current_time):
         """Calcule intensite avec fades"""
@@ -1520,6 +1595,9 @@ class Sequencer(QFrame):
         import random
 
         main_win = self.player_ui
+        # L'effet AKAI a la priorité sur la timeline — ne pas écraser les projecteurs
+        if getattr(main_win, 'active_effect', None) is not None:
+            return
         if hasattr(main_win, 'get_track_to_indices'):
             track_to_indices = main_win.get_track_to_indices()
         else:
@@ -1669,6 +1747,31 @@ class Sequencer(QFrame):
                     if getattr(proj, 'fixture_type', '') == 'Moving Head':
                         proj.pan  = pan_val
                         proj.tilt = tilt_val
+
+        # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
+        seq_clip_info = active_clips.get('Séquence')
+        if seq_clip_info:
+            mem_ref = seq_clip_info.get('memory_ref')
+            if mem_ref:
+                memories = getattr(main_win, 'memories', None)
+                if memories:
+                    mem_col, row_idx = mem_ref[0], mem_ref[1]
+                    if mem_col < len(memories) and row_idx < len(memories[mem_col]):
+                        mem = memories[mem_col][row_idx]
+                        if mem:
+                            brightness = seq_clip_info.get('seq_intensity', 100) / 100.0
+                            for i, ps in enumerate(mem.get("projectors", [])):
+                                if i < len(main_win.projectors) and ps.get("level", 0) > 0:
+                                    proj = main_win.projectors[i]
+                                    lvl  = int(ps["level"] * brightness)
+                                    base = QColor(ps["base_color"])
+                                    proj.level      = lvl
+                                    proj.base_color = base
+                                    proj.color      = QColor(
+                                        int(base.red()   * lvl / 100.0),
+                                        int(base.green() * lvl / 100.0),
+                                        int(base.blue()  * lvl / 100.0),
+                                    )
 
         if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
             self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)
@@ -1918,6 +2021,7 @@ class Sequencer(QFrame):
         self.playback_index = 0
 
         if self.timeline_playback_timer:
+            self._stop_timeline_effect()
             self.timeline_playback_timer.stop()
         if hasattr(self, 'timeline_playback_row'):
             del self.timeline_playback_row

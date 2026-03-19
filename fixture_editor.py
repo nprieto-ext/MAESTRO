@@ -204,12 +204,14 @@ class ChannelRowWidget(QWidget):
             "border-radius:3px;font-size:10px;min-width:0;padding:0;}"
             "QPushButton:hover{background:#3a3a3a;color:#fff;border-color:#555;}"
         )
+        self._action_btns = []
         for text, slot in [("▲", self._on_up), ("▼", self._on_dn)]:
             b = QPushButton(text)
             b.setFixedSize(34, 30)
             b.setStyleSheet(_btn_style)
             b.clicked.connect(slot)
             layout.addWidget(b)
+            self._action_btns.append(b)
 
         btn_rm = QPushButton("✕")
         btn_rm.setFixedSize(34, 30)
@@ -220,6 +222,7 @@ class ChannelRowWidget(QWidget):
         )
         btn_rm.clicked.connect(self._on_rm)
         layout.addWidget(btn_rm)
+        self._action_btns.append(btn_rm)
 
     def _set_num_style(self, color):
         self._num_lbl.setStyleSheet(
@@ -235,6 +238,12 @@ class ChannelRowWidget(QWidget):
         self._set_num_style(CHANNEL_COLORS.get(t, "#666"))
         self._combo.blockSignals(False)
         self._prev_type = t
+
+    def set_read_only(self, read_only: bool):
+        """Verrouille/déverrouille la ligne (lecture seule pour les builtins)."""
+        self._combo.setEnabled(not read_only)
+        for btn in self._action_btns:
+            btn.setVisible(not read_only)
 
     def _on_type_changed(self, ch_type):
         color = CHANNEL_COLORS.get(ch_type, "#666")
@@ -597,6 +606,12 @@ class FixtureEditorDialog(QDialog):
         for ft in FIXTURE_TYPES:
             self._type_combo.addItem(ft)
         form_row.addLayout(_labeled("TYPE", self._type_combo), 1)
+
+        self._group_combo = _NoScrollCombo()
+        self._group_combo.setFixedHeight(36)
+        for g in GROUP_OPTIONS:
+            self._group_combo.addItem(g)
+        form_row.addLayout(_labeled("GROUPE DMX", self._group_combo), 1)
         rv.addLayout(form_row)
 
         rv.addWidget(_sep())
@@ -614,15 +629,15 @@ class FixtureEditorDialog(QDialog):
         for ct in ALL_CHANNEL_TYPES:
             self._add_ch_combo.addItem(ct)
         ch_hdr.addWidget(self._add_ch_combo)
-        btn_add_ch = QPushButton("+ Canal")
-        btn_add_ch.setFixedHeight(30)
-        btn_add_ch.setStyleSheet(
+        self._btn_add_ch = QPushButton("+ Canal")
+        self._btn_add_ch.setFixedHeight(30)
+        self._btn_add_ch.setStyleSheet(
             "QPushButton{background:#1a2a3a;color:#00d4ff;border:1px solid #00d4ff44;"
             "border-radius:6px;font-size:12px;padding:0 12px;}"
             "QPushButton:hover{border-color:#00d4ff;}"
         )
-        btn_add_ch.clicked.connect(self._add_channel)
-        ch_hdr.addWidget(btn_add_ch)
+        self._btn_add_ch.clicked.connect(self._add_channel)
+        ch_hdr.addWidget(self._btn_add_ch)
         rv.addLayout(ch_hdr)
 
         self._ch_scroll = QScrollArea()
@@ -665,8 +680,20 @@ class FixtureEditorDialog(QDialog):
             "border-radius:6px;font-size:12px;padding:0 14px;}"
             "QPushButton:hover{border-color:#8888cc;color:#aaaaee;}"
         )
+        self._btn_duplicate.setToolTip("Créer une copie modifiable de cette fixture")
         self._btn_duplicate.clicked.connect(self._duplicate_fixture)
         btn_row.addWidget(self._btn_duplicate)
+
+        self._btn_duplicate_primary = QPushButton("⎘  Dupliquer pour modifier")
+        self._btn_duplicate_primary.setFixedHeight(36)
+        self._btn_duplicate_primary.setVisible(False)
+        self._btn_duplicate_primary.setStyleSheet(
+            "QPushButton{background:#00d4ff;color:#000;border:none;"
+            "border-radius:6px;font-size:13px;font-weight:bold;padding:0 20px;}"
+            "QPushButton:hover{background:#33ddff;}"
+        )
+        self._btn_duplicate_primary.clicked.connect(self._duplicate_fixture)
+        btn_row.addWidget(self._btn_duplicate_primary)
 
         self._btn_delete = QPushButton("🗑  Supprimer")
         self._btn_delete.setFixedHeight(36)
@@ -698,6 +725,21 @@ class FixtureEditorDialog(QDialog):
         splitter.setSizes([155, 210, 700])
 
         self._list_widget.currentRowChanged.connect(self._on_list_selection)
+
+    def _set_read_only_mode(self, read_only: bool):
+        """Verrouille tous les champs d'édition pour les fixtures intégrées."""
+        self._name_edit.setReadOnly(read_only)
+        self._manufacturer_edit.setReadOnly(read_only)
+        self._type_combo.setEnabled(not read_only)
+        self._group_combo.setEnabled(not read_only)
+        self._add_ch_combo.setEnabled(not read_only)
+        self._btn_add_ch.setEnabled(not read_only)
+        for row in self._channel_rows:
+            row.set_read_only(read_only)
+        # Bouton Dupliquer : version discrète vs version principale
+        self._btn_duplicate.setVisible(not read_only)
+        self._btn_duplicate_primary.setVisible(read_only)
+        self._btn_save.setVisible(not read_only)
 
     def _make_sep(self):
         sep = QFrame()
@@ -892,15 +934,16 @@ class FixtureEditorDialog(QDialog):
         fi = self._type_combo.findText(fx.get("fixture_type", "PAR LED"))
         if fi >= 0:
             self._type_combo.setCurrentIndex(fi)
+        grp = fx.get("group", "face")
+        gi = self._group_combo.findText(grp)
+        if gi >= 0:
+            self._group_combo.setCurrentIndex(gi)
 
         self._set_channels(fx.get("profile", []))
 
         self._builtin_badge.setVisible(True)
         self._btn_delete.setEnabled(False)
-        self._btn_save.setEnabled(False)
-        self._btn_save.setToolTip("Fixture OFL — utilisez « Dupliquer » pour créer votre propre version.")
-        self._btn_save.setCursor(Qt.ForbiddenCursor)
-        self._manufacturer_edit.setReadOnly(True)
+        self._set_read_only_mode(True)
         if self._btn_add_to_patch:
             self._btn_add_to_patch.setEnabled(True)
 
@@ -923,20 +966,16 @@ class FixtureEditorDialog(QDialog):
         if fi >= 0:
             self._type_combo.setCurrentIndex(fi)
 
+        grp = fx.get("group", "face")
+        gi = self._group_combo.findText(grp)
+        if gi >= 0:
+            self._group_combo.setCurrentIndex(gi)
+
         self._set_channels(fx.get("profile", ["R", "G", "B"]))
 
         self._builtin_badge.setVisible(self._is_builtin)
         self._btn_delete.setEnabled(not self._is_builtin)
-        self._btn_save.setEnabled(not self._is_builtin)
-        self._btn_save.setToolTip(
-            "Cette fixture est intégrée et ne peut pas être modifiée.\n"
-            "Utilisez « Dupliquer » pour créer votre propre version."
-            if self._is_builtin else ""
-        )
-        self._btn_save.setCursor(
-            Qt.ForbiddenCursor if self._is_builtin else Qt.ArrowCursor
-        )
-        self._manufacturer_edit.setReadOnly(self._is_builtin)
+        self._set_read_only_mode(self._is_builtin)
         self._select_list_item(idx)
 
     def _select_list_item(self, fx_idx):
@@ -972,6 +1011,10 @@ class FixtureEditorDialog(QDialog):
         self._channel_rows.clear()
         for i, ch in enumerate(channels):
             self._append_channel_row(i + 1, ch)
+        # Propager l'état lecture seule si nécessaire
+        if self._is_builtin:
+            for row in self._channel_rows:
+                row.set_read_only(True)
         self._update_preview()
 
     def _append_channel_row(self, num, ch_type):
@@ -1054,7 +1097,7 @@ class FixtureEditorDialog(QDialog):
             "name":         self._name_edit.text().strip(),
             "manufacturer": self._manufacturer_edit.text().strip() or "Générique",
             "fixture_type": self._type_combo.currentText(),
-            "group":        "face",
+            "group":        self._group_combo.currentText(),
             "profile":      self._get_current_channels(),
         }
 
@@ -1069,12 +1112,11 @@ class FixtureEditorDialog(QDialog):
         self._manufacturer_edit.setText("")
         self._header_lbl.setText("Nouvelle fixture")
         self._type_combo.setCurrentIndex(0)
+        self._group_combo.setCurrentIndex(0)
         self._set_channels(["R", "G", "B"])
         self._builtin_badge.setVisible(False)
         self._btn_delete.setEnabled(False)
-        self._btn_save.setEnabled(True)
-        self._btn_save.setToolTip("")
-        self._btn_save.setCursor(Qt.ArrowCursor)
+        self._set_read_only_mode(False)
         self._list_widget.blockSignals(True)
         self._list_widget.clearSelection()
         self._list_widget.blockSignals(False)

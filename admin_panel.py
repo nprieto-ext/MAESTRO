@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QDialog, QLineEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QComboBox, QAbstractItemView, QFrame, QMessageBox, QTextEdit,
     QProgressBar, QFileDialog, QSizePolicy, QStackedWidget,
+    QScrollArea, QSplitter, QListWidget, QListWidgetItem,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from PySide6.QtGui import QFont, QColor
@@ -1499,101 +1500,363 @@ def _do_upload_fixture_async(fixture_data: dict, id_token: str, refresh_token: s
 
 
 # ---------------------------------------------------------------
+# _AdminChannelRowWidget — ligne de canal avec valeur par défaut
+# ---------------------------------------------------------------
+
+class _AdminChannelRowWidget(QWidget):
+    """Ligne d'un canal DMX : numéro + type + valeur par défaut (0-255) + ↑↓✕"""
+    remove_requested  = Signal(object)
+    move_up_requested = Signal(object)
+    move_dn_requested = Signal(object)
+    changed           = Signal()
+
+    def __init__(self, ch_num: int, ch_type: str, default_val: int = 0, parent=None):
+        super().__init__(parent)
+        from fixture_editor import ALL_CHANNEL_TYPES, CHANNEL_COLORS, _NoScrollCombo
+        self._ALL_CHANNEL_TYPES = ALL_CHANNEL_TYPES
+        self._CHANNEL_COLORS    = CHANNEL_COLORS
+
+        self.setFixedHeight(38)
+        self.setStyleSheet("background:#1e1e1e;border-radius:3px;")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 3, 4, 3)
+        layout.setSpacing(4)
+
+        # ── Numéro de canal ───────────────────────────────────────────────────
+        color = CHANNEL_COLORS.get(ch_type, "#666")
+        self._num_lbl = QLabel(f"{ch_num:02d}")
+        self._num_lbl.setFixedSize(26, 26)
+        self._num_lbl.setAlignment(Qt.AlignCenter)
+        self._set_num_style(color)
+        layout.addWidget(self._num_lbl)
+
+        # ── Combo type ────────────────────────────────────────────────────────
+        self._combo = _NoScrollCombo()
+        self._combo.setFixedHeight(26)
+        self._combo.setStyleSheet(
+            "QComboBox{background:#2a2a2a;color:#e0e0e0;border:1px solid #3a3a3a;"
+            "border-radius:3px;padding:1px 6px;font-size:12px;}"
+            "QComboBox::drop-down{border:none;width:16px;}"
+            "QComboBox QAbstractItemView{background:#222;color:#e0e0e0;}"
+        )
+        for ct in ALL_CHANNEL_TYPES:
+            self._combo.addItem(ct)
+        idx = ALL_CHANNEL_TYPES.index(ch_type) if ch_type in ALL_CHANNEL_TYPES else 0
+        self._combo.setCurrentIndex(idx)
+        self._combo.currentTextChanged.connect(self._on_type_changed)
+        layout.addWidget(self._combo, 1)
+
+        # ── Valeur par défaut (0-255) ─────────────────────────────────────────
+        lbl_def = QLabel("Déf :")
+        lbl_def.setStyleSheet("color:#666;font-size:10px;background:transparent;")
+        lbl_def.setFixedWidth(26)
+        layout.addWidget(lbl_def)
+
+        from PySide6.QtWidgets import QSpinBox
+        self._default_spin = QSpinBox()
+        self._default_spin.setRange(0, 255)
+        self._default_spin.setValue(int(default_val) if isinstance(default_val, (int, float)) else 0)
+        self._default_spin.setFixedSize(52, 26)
+        self._default_spin.setStyleSheet(
+            "QSpinBox{background:#2a2a2a;color:#e0e0e0;border:1px solid #3a3a3a;"
+            "border-radius:3px;padding:1px 4px;font-size:11px;}"
+            "QSpinBox::up-button,QSpinBox::down-button{width:14px;}"
+        )
+        self._default_spin.valueChanged.connect(lambda _: self.changed.emit())
+        layout.addWidget(self._default_spin)
+
+        # ── Boutons ────────────────────────────────────────────────────────────
+        _btn_style = (
+            "QPushButton{background:#2a2a2a;color:#999;border:1px solid #3a3a3a;"
+            "border-radius:3px;font-size:10px;min-width:0;padding:0;}"
+            "QPushButton:hover{background:#3a3a3a;color:#fff;border-color:#555;}"
+        )
+        for text, slot in [("▲", lambda: self.move_up_requested.emit(self)),
+                            ("▼", lambda: self.move_dn_requested.emit(self))]:
+            b = QPushButton(text)
+            b.setFixedSize(28, 26)
+            b.setStyleSheet(_btn_style)
+            b.clicked.connect(slot)
+            layout.addWidget(b)
+
+        btn_rm = QPushButton("✕")
+        btn_rm.setFixedSize(28, 26)
+        btn_rm.setStyleSheet(
+            "QPushButton{background:#2a0000;color:#cc4444;border:1px solid #3a1111;"
+            "border-radius:3px;font-size:11px;font-weight:bold;min-width:0;padding:0;}"
+            "QPushButton:hover{background:#440000;color:#ff6666;border-color:#553333;}"
+        )
+        btn_rm.clicked.connect(lambda: self.remove_requested.emit(self))
+        layout.addWidget(btn_rm)
+
+    def _set_num_style(self, color):
+        self._num_lbl.setStyleSheet(
+            f"QLabel{{background:{color}22;border:1px solid {color};"
+            f"border-radius:3px;color:{color};font-weight:bold;font-size:11px;}}"
+        )
+
+    def _on_type_changed(self, ch_type):
+        color = self._CHANNEL_COLORS.get(ch_type, "#666")
+        self._set_num_style(color)
+        self.changed.emit()
+
+    def get_type(self) -> str:
+        return self._combo.currentText()
+
+    def get_default(self) -> int:
+        return self._default_spin.value()
+
+
+# ---------------------------------------------------------------
 # FixtureEditDialog — formulaire ajout / édition d'une fixture
 # ---------------------------------------------------------------
 
 class _FixtureEditDialog(QDialog):
-    """Formulaire simple pour créer ou modifier une fixture."""
+    """Éditeur complet de fixture DMX avec édition des canaux par mode."""
+
+    # Profils prédéfinis communs
+    _COMMON_PROFILES = {
+        "RGB (3ch)":            ["R", "G", "B"],
+        "RGBD (4ch)":           ["R", "G", "B", "Dim"],
+        "RGBDS (5ch)":          ["R", "G", "B", "Dim", "Strobe"],
+        "DRGB (4ch)":           ["Dim", "R", "G", "B"],
+        "DRGBS (5ch)":          ["Dim", "R", "G", "B", "Strobe"],
+        "RGBW (4ch)":           ["R", "G", "B", "W"],
+        "RGBWD (5ch)":          ["R", "G", "B", "W", "Dim"],
+        "RGBWDS (6ch)":         ["R", "G", "B", "W", "Dim", "Strobe"],
+        "RGBWA (5ch)":          ["R", "G", "B", "W", "Ambre"],
+        "RGBWAUV (6ch)":        ["R", "G", "B", "W", "Ambre", "UV"],
+        "Pan/Tilt Spot (5ch)":  ["Pan", "Tilt", "ColorWheel", "Gobo1", "Shutter"],
+        "Pan/Tilt Wash (8ch)":  ["Pan", "Tilt", "R", "G", "B", "Dim", "Shutter", "Speed"],
+        "Pan/Tilt Full (12ch)": ["Pan", "PanFine", "Tilt", "TiltFine", "Speed",
+                                  "ColorWheel", "Gobo1", "Prism", "Shutter", "Dim", "Focus", "Mode"],
+        "Stroboscope (2ch)":    ["Strobe", "Dim"],
+        "Fumée (2ch)":          ["Smoke", "Fan"],
+        "Gradateur 1ch":        ["Dim"],
+    }
 
     def __init__(self, parent=None, fixture: dict = None):
         super().__init__(parent)
         self._fixture = fixture or {}
         self._is_new  = not bool(fixture)
-        self.setWindowTitle("Nouvelle fixture" if self._is_new else "Modifier la fixture")
-        self.setMinimumWidth(560)
+
+        # Import des composants partagés depuis fixture_editor
+        from fixture_editor import (
+            DmxPreviewWidget,
+            ALL_CHANNEL_TYPES, GROUP_OPTIONS, FIXTURE_TYPES,
+        )
+        self._DmxPreviewWidget  = DmxPreviewWidget
+        self._ALL_CHANNEL_TYPES = ALL_CHANNEL_TYPES
+        self._GROUP_OPTIONS     = GROUP_OPTIONS
+        self._FIXTURE_TYPES     = FIXTURE_TYPES
+
+        # État interne des modes : liste de {"name": str, "profile": [str], "default_values": [int]}
+        self._modes_data: list = []
+        for m in self._fixture.get("modes", []):
+            profile  = list(m.get("profile", []))
+            defaults = list(m.get("default_values", []))
+            # Aligner la longueur des defaults sur le profil
+            defaults = (defaults + [0] * len(profile))[:len(profile)]
+            self._modes_data.append({
+                "name":           m.get("name", ""),
+                "profile":        profile,
+                "default_values": defaults,
+            })
+        if not self._modes_data:
+            self._modes_data.append({"name": "Mode 1", "profile": [], "default_values": []})
+
+        self._current_mode_idx = -1
+        self._channel_rows: list = []
+
+        self.setWindowTitle(
+            "Nouvelle fixture" if self._is_new
+            else f"Modifier — {self._fixture.get('name', '')}"
+        )
+        self.setMinimumSize(900, 640)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self._build_ui()
+        self._select_mode(0)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 16)
-        lay.setSpacing(12)
+        lay.setContentsMargins(20, 16, 20, 14)
+        lay.setSpacing(10)
 
+        # Titre
         title = QLabel("Nouvelle fixture" if self._is_new else "Modifier la fixture")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet(f"color: {ACCENT};")
         lay.addWidget(title)
 
-        form_grid = QHBoxLayout()
-        col1 = QVBoxLayout(); col1.setSpacing(6)
-        col2 = QVBoxLayout(); col2.setSpacing(6)
+        # ── Splitter principal : métadonnées | éditeur de modes ───────────────
+        splitter = QSplitter(Qt.Horizontal)
 
-        def _field(label, key, placeholder=""):
-            lbl = QLabel(label)
-            lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
-            edit = QLineEdit(str(self._fixture.get(key, "")))
-            edit.setPlaceholderText(placeholder)
-            edit.setFixedHeight(32)
-            return lbl, edit
+        # ── Colonne gauche : informations de la fixture ───────────────────────
+        meta_w = QWidget()
+        meta_w.setMinimumWidth(220)
+        meta_w.setMaximumWidth(280)
+        meta_lay = QVBoxLayout(meta_w)
+        meta_lay.setContentsMargins(0, 0, 10, 0)
+        meta_lay.setSpacing(4)
 
-        lbl_name, self._e_name = _field("Nom *", "name", "ex : Par 64 LED RGB")
-        lbl_mfr,  self._e_mfr  = _field("Fabricant *", "manufacturer", "ex : Eurolite")
-        lbl_type, self._e_type = _field("Type", "fixture_type", "ex : LED")
-        lbl_src,  self._e_src  = _field("Source", "source", "ex : OFL")
+        def _lbl(text):
+            l = QLabel(text)
+            l.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+            return l
 
-        lbl_uuid, self._e_uuid = _field("UUID", "uuid", "(généré automatiquement si vide)")
+        meta_lay.addWidget(_lbl("Nom *"))
+        self._e_name = QLineEdit(self._fixture.get("name", ""))
+        self._e_name.setPlaceholderText("ex : Par 64 LED RGB")
+        self._e_name.setFixedHeight(32)
+        meta_lay.addWidget(self._e_name)
+
+        meta_lay.addWidget(_lbl("Fabricant *"))
+        self._e_mfr = QLineEdit(self._fixture.get("manufacturer", ""))
+        self._e_mfr.setPlaceholderText("ex : Eurolite")
+        self._e_mfr.setFixedHeight(32)
+        meta_lay.addWidget(self._e_mfr)
+
+        meta_lay.addWidget(_lbl("Type de fixture"))
+        self._c_type = QComboBox()
+        self._c_type.setFixedHeight(32)
+        for ft in self._FIXTURE_TYPES:
+            self._c_type.addItem(ft)
+        cur_type = self._fixture.get("fixture_type", "")
+        t_idx = self._FIXTURE_TYPES.index(cur_type) if cur_type in self._FIXTURE_TYPES else 0
+        self._c_type.setCurrentIndex(t_idx)
+        meta_lay.addWidget(self._c_type)
+
+        meta_lay.addWidget(_lbl("Groupe DMX par défaut"))
+        self._c_group = QComboBox()
+        self._c_group.setFixedHeight(32)
+        for g in self._GROUP_OPTIONS:
+            self._c_group.addItem(g)
+        cur_group = self._fixture.get("group", "face")
+        g_idx = self._GROUP_OPTIONS.index(cur_group) if cur_group in self._GROUP_OPTIONS else 0
+        self._c_group.setCurrentIndex(g_idx)
+        meta_lay.addWidget(self._c_group)
+
+        meta_lay.addWidget(_lbl("Source"))
+        self._e_src = QLineEdit(self._fixture.get("source", ""))
+        self._e_src.setPlaceholderText("ex : OFL, ma")
+        self._e_src.setFixedHeight(32)
+        meta_lay.addWidget(self._e_src)
+
+        meta_lay.addWidget(_lbl("UUID"))
+        self._e_uuid = QLineEdit(self._fixture.get("uuid", ""))
+        self._e_uuid.setPlaceholderText("(généré automatiquement)")
+        self._e_uuid.setFixedHeight(32)
         if self._is_new:
             import uuid as _uuid
             self._e_uuid.setText(str(_uuid.uuid4()))
+        meta_lay.addWidget(self._e_uuid)
 
-        col1.addWidget(lbl_name); col1.addWidget(self._e_name)
-        col1.addWidget(lbl_mfr);  col1.addWidget(self._e_mfr)
-        col2.addWidget(lbl_type); col2.addWidget(self._e_type)
-        col2.addWidget(lbl_src);  col2.addWidget(self._e_src)
-        form_grid.addLayout(col1, 1); form_grid.addSpacing(12); form_grid.addLayout(col2, 1)
-        lay.addLayout(form_grid)
+        meta_lay.addStretch()
+        splitter.addWidget(meta_w)
 
-        lay.addWidget(lbl_uuid); lay.addWidget(self._e_uuid)
+        # ── Colonne droite : éditeur de modes ─────────────────────────────────
+        modes_w = QWidget()
+        modes_lay = QVBoxLayout(modes_w)
+        modes_lay.setContentsMargins(8, 0, 0, 0)
+        modes_lay.setSpacing(6)
 
-        # ── Modes ─────────────────────────────────────────────────────────────
-        modes_lbl = QLabel("Modes DMX")
-        modes_lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px; margin-top: 6px;")
-        lay.addWidget(modes_lbl)
+        modes_header = QLabel("Modes DMX")
+        modes_header.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        modes_header.setStyleSheet(f"color: {ACCENT};")
+        modes_lay.addWidget(modes_header)
 
-        self._modes_table = QTableWidget()
-        self._modes_table.setColumnCount(2)
-        self._modes_table.setHorizontalHeaderLabels(["Nom du mode", "Nb canaux"])
-        self._modes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._modes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
-        self._modes_table.setColumnWidth(1, 90)
-        self._modes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._modes_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._modes_table.verticalHeader().setVisible(False)
-        self._modes_table.setMinimumHeight(120)
-        self._modes_table.setMaximumHeight(200)
-        for mode in self._fixture.get("modes", []):
-            self._add_mode_row(mode.get("name", ""), mode.get("channelCount", 0))
-        lay.addWidget(self._modes_table)
+        # Ligne des onglets de modes
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(4)
+        self._mode_tab_container = QWidget()
+        self._mode_tab_layout    = QHBoxLayout(self._mode_tab_container)
+        self._mode_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self._mode_tab_layout.setSpacing(4)
+        tab_row.addWidget(self._mode_tab_container, 1)
 
-        modes_btn_row = QHBoxLayout()
         btn_add_mode = QPushButton("+ Mode")
-        btn_add_mode.setFixedHeight(26)
+        btn_add_mode.setFixedHeight(28)
         btn_add_mode.setStyleSheet(_BTN_SECONDARY)
-        btn_add_mode.clicked.connect(lambda: self._add_mode_row("Mode 1", 1))
-        btn_del_mode = QPushButton("– Retirer")
-        btn_del_mode.setFixedHeight(26)
-        btn_del_mode.setStyleSheet(_BTN_SECONDARY)
-        btn_del_mode.clicked.connect(self._del_mode_row)
-        modes_btn_row.addWidget(btn_add_mode)
-        modes_btn_row.addWidget(btn_del_mode)
-        modes_btn_row.addStretch()
-        lay.addLayout(modes_btn_row)
+        btn_add_mode.clicked.connect(self._add_mode)
+        tab_row.addWidget(btn_add_mode)
 
-        # ── Boutons ────────────────────────────────────────────────────────────
-        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("border: none; border-top: 1px solid #2a2a2a; margin-top: 4px;")
+        self._btn_del_mode = QPushButton("✕")
+        self._btn_del_mode.setFixedSize(28, 28)
+        self._btn_del_mode.setStyleSheet(_BTN_RED)
+        self._btn_del_mode.setToolTip("Supprimer ce mode")
+        self._btn_del_mode.clicked.connect(self._del_mode)
+        tab_row.addWidget(self._btn_del_mode)
+        modes_lay.addLayout(tab_row)
+
+        self._mode_btn_group: list = []
+
+        # Nom du mode courant
+        name_row = QHBoxLayout()
+        lbl_mode_name = QLabel("Nom du mode :")
+        lbl_mode_name.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        name_row.addWidget(lbl_mode_name)
+        self._mode_name_edit = QLineEdit()
+        self._mode_name_edit.setFixedHeight(28)
+        self._mode_name_edit.setPlaceholderText("ex : 5CH RGB+Dim+Strobe")
+        self._mode_name_edit.textChanged.connect(self._on_mode_name_changed)
+        name_row.addWidget(self._mode_name_edit, 1)
+        modes_lay.addLayout(name_row)
+
+        # Prévisualisation DMX
+        self._dmx_preview = self._DmxPreviewWidget()
+        modes_lay.addWidget(self._dmx_preview)
+
+        # Zone scrollable des canaux
+        self._ch_scroll = QScrollArea()
+        self._ch_scroll.setWidgetResizable(True)
+        self._ch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._ch_scroll.setStyleSheet(
+            "QScrollArea { border: 1px solid #2a2a2a; border-radius:4px; background:#141414; }"
+        )
+        self._ch_container = QWidget()
+        self._ch_container.setStyleSheet("background:#141414;")
+        self._ch_layout = QVBoxLayout(self._ch_container)
+        self._ch_layout.setContentsMargins(4, 4, 4, 4)
+        self._ch_layout.setSpacing(2)
+        self._ch_layout.addStretch()
+        self._ch_scroll.setWidget(self._ch_container)
+        modes_lay.addWidget(self._ch_scroll, 1)
+
+        # Barre d'actions canaux
+        ch_bar = QHBoxLayout()
+        btn_add_ch = QPushButton("+ Canal")
+        btn_add_ch.setFixedHeight(28)
+        btn_add_ch.setStyleSheet(_BTN_SECONDARY)
+        btn_add_ch.clicked.connect(self._add_channel)
+        ch_bar.addWidget(btn_add_ch)
+
+        btn_profile = QPushButton("Charger un profil…")
+        btn_profile.setFixedHeight(28)
+        btn_profile.setStyleSheet(_BTN_SECONDARY)
+        btn_profile.clicked.connect(self._load_profile)
+        ch_bar.addWidget(btn_profile)
+
+        ch_bar.addStretch()
+
+        lbl_count_prefix = QLabel("Canaux :")
+        lbl_count_prefix.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        ch_bar.addWidget(lbl_count_prefix)
+        self._ch_count_lbl = QLabel("0")
+        self._ch_count_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 11px; font-weight: bold;")
+        ch_bar.addWidget(self._ch_count_lbl)
+
+        modes_lay.addLayout(ch_bar)
+        splitter.addWidget(modes_w)
+        splitter.setSizes([240, 620])
+        lay.addWidget(splitter, 1)
+
+        # ── Boutons bas ────────────────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("border: none; border-top: 1px solid #2a2a2a;")
         lay.addWidget(sep)
 
         btn_row = QHBoxLayout()
@@ -1601,27 +1864,236 @@ class _FixtureEditDialog(QDialog):
         btn_cancel.setFixedHeight(34)
         btn_cancel.setStyleSheet(_BTN_SECONDARY)
         btn_cancel.clicked.connect(self.reject)
-
         self._btn_save = QPushButton("Enregistrer")
         self._btn_save.setFixedHeight(34)
         self._btn_save.setStyleSheet(_BTN_PRIMARY)
         self._btn_save.clicked.connect(self._on_save)
-
         btn_row.addStretch()
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(self._btn_save)
         lay.addLayout(btn_row)
 
-    def _add_mode_row(self, name="", ch=1):
-        row = self._modes_table.rowCount()
-        self._modes_table.insertRow(row)
-        self._modes_table.setItem(row, 0, QTableWidgetItem(str(name)))
-        self._modes_table.setItem(row, 1, QTableWidgetItem(str(ch)))
+        self._rebuild_mode_tabs()
 
-    def _del_mode_row(self):
-        row = self._modes_table.currentRow()
-        if row >= 0:
-            self._modes_table.removeRow(row)
+    # ── Gestion des modes ─────────────────────────────────────────────────────
+
+    def _mode_tab_active_style(self):
+        return (
+            f"QPushButton {{ background: {ACCENT}22; color: {ACCENT};"
+            f" border: 1px solid {ACCENT}66; border-radius: 4px;"
+            f" font-size: 11px; font-weight: bold; padding: 0 10px; }}"
+        )
+
+    def _rebuild_mode_tabs(self):
+        while self._mode_tab_layout.count():
+            item = self._mode_tab_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._mode_btn_group.clear()
+
+        for i, m in enumerate(self._modes_data):
+            btn = QPushButton(m["name"] or f"Mode {i + 1}")
+            btn.setFixedHeight(28)
+            btn.setCheckable(True)
+            btn.setChecked(i == self._current_mode_idx)
+            idx = i
+            btn.clicked.connect(lambda _checked, x=idx: self._select_mode(x))
+            btn.setStyleSheet(
+                self._mode_tab_active_style() if i == self._current_mode_idx
+                else _BTN_SECONDARY
+            )
+            self._mode_btn_group.append(btn)
+            self._mode_tab_layout.addWidget(btn)
+
+        self._btn_del_mode.setEnabled(len(self._modes_data) > 1)
+
+    def _select_mode(self, idx: int):
+        # Sauvegarder le profil + defaults du mode courant avant de changer
+        if 0 <= self._current_mode_idx < len(self._modes_data):
+            self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
+            self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+
+        self._current_mode_idx = max(0, min(idx, len(self._modes_data) - 1))
+
+        for i, btn in enumerate(self._mode_btn_group):
+            active = (i == self._current_mode_idx)
+            btn.setStyleSheet(self._mode_tab_active_style() if active else _BTN_SECONDARY)
+            btn.setChecked(active)
+
+        mode = self._modes_data[self._current_mode_idx]
+        self._mode_name_edit.blockSignals(True)
+        self._mode_name_edit.setText(mode["name"])
+        self._mode_name_edit.blockSignals(False)
+        self._rebuild_channels(mode["profile"], mode.get("default_values", []))
+
+    def _on_mode_name_changed(self, text: str):
+        if 0 <= self._current_mode_idx < len(self._modes_data):
+            self._modes_data[self._current_mode_idx]["name"] = text
+            if self._current_mode_idx < len(self._mode_btn_group):
+                self._mode_btn_group[self._current_mode_idx].setText(
+                    text or f"Mode {self._current_mode_idx + 1}"
+                )
+
+    def _add_mode(self):
+        if 0 <= self._current_mode_idx < len(self._modes_data):
+            self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
+            self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+        n = len(self._modes_data) + 1
+        self._modes_data.append({"name": f"Mode {n}", "profile": [], "default_values": []})
+        self._rebuild_mode_tabs()
+        self._select_mode(len(self._modes_data) - 1)
+
+    def _del_mode(self):
+        if len(self._modes_data) <= 1:
+            return
+        self._modes_data.pop(self._current_mode_idx)
+        new_idx = max(0, self._current_mode_idx - 1)
+        self._current_mode_idx = -1
+        self._rebuild_mode_tabs()
+        self._select_mode(new_idx)
+
+    # ── Gestion des canaux ────────────────────────────────────────────────────
+
+    def _get_current_profile(self) -> list:
+        return [row.get_type() for row in self._channel_rows]
+
+    def _get_current_defaults(self) -> list:
+        return [row.get_default() for row in self._channel_rows]
+
+    def _rebuild_channels(self, profile: list, default_values: list = None):
+        if default_values is None:
+            default_values = []
+        for row in self._channel_rows:
+            row.setParent(None)
+            row.deleteLater()
+        self._channel_rows.clear()
+        while self._ch_layout.count():
+            self._ch_layout.takeAt(0)
+
+        for i, ch_type in enumerate(profile):
+            def_val = default_values[i] if i < len(default_values) else 0
+            row = _AdminChannelRowWidget(i + 1, ch_type, def_val)
+            row.remove_requested.connect(self._on_remove_channel)
+            row.move_up_requested.connect(self._on_move_up)
+            row.move_dn_requested.connect(self._on_move_dn)
+            row.changed.connect(self._on_channel_changed)
+            self._ch_layout.addWidget(row)
+            self._channel_rows.append(row)
+
+        self._ch_layout.addStretch()
+        self._update_preview()
+
+    def _add_channel(self):
+        ch_type = self._ALL_CHANNEL_TYPES[len(self._channel_rows) % len(self._ALL_CHANNEL_TYPES)]
+        row = _AdminChannelRowWidget(len(self._channel_rows) + 1, ch_type, 0)
+        row.remove_requested.connect(self._on_remove_channel)
+        row.move_up_requested.connect(self._on_move_up)
+        row.move_dn_requested.connect(self._on_move_dn)
+        row.changed.connect(self._on_channel_changed)
+        # Insérer avant le stretch
+        self._ch_layout.insertWidget(self._ch_layout.count() - 1, row)
+        self._channel_rows.append(row)
+        self._renumber_channels()
+        self._update_preview()
+
+    def _on_remove_channel(self, row_widget):
+        if row_widget in self._channel_rows:
+            idx = self._channel_rows.index(row_widget)
+            self._ch_layout.removeWidget(row_widget)
+            row_widget.setParent(None)
+            row_widget.deleteLater()
+            self._channel_rows.pop(idx)
+            self._renumber_channels()
+            self._update_preview()
+
+    def _on_move_up(self, row_widget):
+        if row_widget not in self._channel_rows:
+            return
+        idx = self._channel_rows.index(row_widget)
+        if idx == 0:
+            return
+        self._channel_rows[idx], self._channel_rows[idx - 1] = (
+            self._channel_rows[idx - 1], self._channel_rows[idx]
+        )
+        self._reinsert_all_rows()
+
+    def _on_move_dn(self, row_widget):
+        if row_widget not in self._channel_rows:
+            return
+        idx = self._channel_rows.index(row_widget)
+        if idx >= len(self._channel_rows) - 1:
+            return
+        self._channel_rows[idx], self._channel_rows[idx + 1] = (
+            self._channel_rows[idx + 1], self._channel_rows[idx]
+        )
+        self._reinsert_all_rows()
+
+    def _reinsert_all_rows(self):
+        for row in self._channel_rows:
+            self._ch_layout.removeWidget(row)
+        while self._ch_layout.count():
+            self._ch_layout.takeAt(0)
+        for row in self._channel_rows:
+            self._ch_layout.addWidget(row)
+        self._ch_layout.addStretch()
+        self._renumber_channels()
+        self._update_preview()
+
+    def _on_channel_changed(self):
+        self._update_preview()
+
+    def _renumber_channels(self):
+        for i, row in enumerate(self._channel_rows):
+            row._num_lbl.setText(f"{i + 1:02d}")
+        self._ch_count_lbl.setText(str(len(self._channel_rows)))
+
+    def _update_preview(self):
+        self._dmx_preview.set_channels(self._get_current_profile())
+        self._ch_count_lbl.setText(str(len(self._channel_rows)))
+
+    def _load_profile(self):
+        """Ouvre un dialog pour charger un profil prédéfini."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Charger un profil")
+        dlg.setMinimumWidth(320)
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(16, 14, 16, 12)
+        vl.setSpacing(8)
+
+        lbl = QLabel("Choisir un profil prédéfini :")
+        lbl.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        vl.addWidget(lbl)
+
+        lw = QListWidget()
+        for name in self._COMMON_PROFILES:
+            lw.addItem(name)
+        vl.addWidget(lw)
+
+        hl = QHBoxLayout()
+        btn_cancel = QPushButton("Annuler")
+        btn_cancel.setStyleSheet(_BTN_SECONDARY)
+        btn_cancel.setFixedHeight(32)
+        btn_ok = QPushButton("Charger")
+        btn_ok.setStyleSheet(_BTN_PRIMARY)
+        btn_ok.setFixedHeight(32)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        hl.addStretch()
+        hl.addWidget(btn_cancel)
+        hl.addWidget(btn_ok)
+        vl.addLayout(hl)
+        lw.doubleClicked.connect(dlg.accept)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        item = lw.currentItem()
+        if not item:
+            return
+        # Charger le profil avec defaults à 0
+        profile = self._COMMON_PROFILES[item.text()]
+        self._rebuild_channels(profile, [0] * len(profile))
+
+    # ── Sauvegarde ────────────────────────────────────────────────────────────
 
     def _on_save(self):
         name = self._e_name.text().strip()
@@ -1630,20 +2102,27 @@ class _FixtureEditDialog(QDialog):
             QMessageBox.warning(self, "Champs requis", "Le nom et le fabricant sont obligatoires.")
             return
 
+        # Sauvegarder le mode courant
+        if 0 <= self._current_mode_idx < len(self._modes_data):
+            self._modes_data[self._current_mode_idx]["profile"]        = self._get_current_profile()
+            self._modes_data[self._current_mode_idx]["default_values"] = self._get_current_defaults()
+
         modes = []
-        for r in range(self._modes_table.rowCount()):
-            mode_name = (self._modes_table.item(r, 0) or QTableWidgetItem("")).text().strip()
-            try:
-                ch = int((self._modes_table.item(r, 1) or QTableWidgetItem("1")).text())
-            except ValueError:
-                ch = 1
-            if mode_name:
-                modes.append({"name": mode_name, "channelCount": ch, "profile": []})
+        for m in self._modes_data:
+            profile  = m.get("profile", [])
+            defaults = m.get("default_values", [0] * len(profile))
+            modes.append({
+                "name":           m["name"],
+                "channelCount":   len(profile),
+                "profile":        profile,
+                "default_values": defaults,
+            })
 
         self._result = {
             "name":         name,
             "manufacturer": mfr,
-            "fixture_type": self._e_type.text().strip(),
+            "fixture_type": self._c_type.currentText(),
+            "group":        self._c_group.currentText(),
             "source":       self._e_src.text().strip(),
             "uuid":         self._e_uuid.text().strip(),
             "modes":        modes,
