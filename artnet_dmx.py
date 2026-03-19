@@ -245,7 +245,11 @@ class ArtNetDMX:
             print(f"ENTTEC Open DMX USB connecte sur {self.com_port}")
             return True
         except Exception as e:
-            print(f"Erreur connexion ENTTEC ({self.com_port}): {e}")
+            err = str(e)
+            if "13" in err or "permission" in err.lower() or "access" in err.lower():
+                print(f"ENTTEC ({self.com_port}): port déjà utilisé par une autre application")
+            else:
+                print(f"Erreur connexion ENTTEC ({self.com_port}): {e}")
             self._serial = None
             self.connected = False
             return False

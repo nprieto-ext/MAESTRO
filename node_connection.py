@@ -1505,6 +1505,15 @@ class DmxOutputDialog(QDialog):
             return
         self._usb_status_lbl.setText("Test en cours…")
         self._usb_indicator.setStyleSheet("color: #888;")
+
+        # Si le module DMX a déjà ce port ouvert, pas besoin de rouvrir
+        dmx_serial = getattr(self._dmx, '_serial', None)
+        if (dmx_serial and dmx_serial.is_open
+                and getattr(self._dmx, 'com_port', None) == com):
+            self._usb_indicator.setStyleSheet("color: #4ade80;")
+            self._usb_status_lbl.setText(f"Port {com} accessible ✓")
+            return
+
         try:
             import serial as _s
             p = _s.Serial(com, 250000, stopbits=_s.STOPBITS_TWO, timeout=0.5)
@@ -1516,7 +1525,14 @@ class DmxOutputDialog(QDialog):
             self._usb_status_lbl.setText("Module série non disponible — relancez l'application")
         except Exception as e:
             self._usb_indicator.setStyleSheet("color: #f87171;")
-            self._usb_status_lbl.setText(f"Erreur : {e}")
+            err = str(e)
+            if "13" in err or "permission" in err.lower() or "access" in err.lower():
+                self._usb_status_lbl.setText(
+                    f"Port {com} occupé par une autre application\n"
+                    "(Chataigne, ENTTEC Software…) — fermez-la d'abord"
+                )
+            else:
+                self._usb_status_lbl.setText(f"Erreur : {e}")
 
     def _apply(self):
         """Sauvegarde le transport actif et reconnecte."""
@@ -1541,12 +1557,18 @@ class DmxOutputDialog(QDialog):
                 self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
                 self._status_lbl.setText("Sélectionnez un port COM")
                 return
-            self._dmx.connect(
+            ok = self._dmx.connect(
                 transport=TRANSPORT_ENTTEC,
                 com_port=com,
                 product_id="enttec",
                 product_name="ENTTEC Open DMX USB",
             )
+            if not ok:
+                self._status_lbl.setStyleSheet("color: #f87171; font-size: 10px;")
+                self._status_lbl.setText(
+                    f"Port {com} inaccessible — fermez Chataigne ou toute autre app DMX"
+                )
+                return
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
             self._status_lbl.setText(f"Sortie USB appliquée — {com}")
 
