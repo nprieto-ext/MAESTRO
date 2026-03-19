@@ -1316,7 +1316,6 @@ class LightTimelineEditor(QDialog):
                                 )
 
         # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
-        # ── 3) Appliquer l'effet courant (priorité maximale) ─────────────────
         if getattr(self.main_window, 'active_effect', None) and hasattr(self.main_window, 'update_effect'):
             self.main_window.update_effect()
 

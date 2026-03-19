@@ -89,7 +89,7 @@ def generate_sig_file(exe_path):
 
 def build_local_installer(version):
     print("\n========== BUILD INSTALLEUR LOCAL ==========")
-    dist_exe = BASE_DIR / "dist" / "MyStrow.exe"
+    dist_exe = BASE_DIR / "dist" / "MyStrow" / "MyStrow.exe"
     installer_out = BASE_DIR / "installer" / "installer_output" / "MyStrow_Setup.exe"
 
     # 1) Nettoyage des anciens builds
@@ -108,7 +108,7 @@ def build_local_installer(version):
         f"@echo off\n"
         f"cd /d \"{base_win}\"\n"
         f"\"{python_win}\" -m PyInstaller "
-        f"--onefile --windowed "
+        f"--onedir --windowed "
         f"--icon=mystrow.ico "
         f"--add-data \"logo.png;.\" "
         f"--add-data \"mystrow.ico;.\" "

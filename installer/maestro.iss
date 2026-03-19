@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=3.0.48
+AppVersion=3.0.49
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -12,8 +12,7 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
-Source: "..\dist\MyStrow.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\MyStrow.exe.sig"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\MyStrow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"

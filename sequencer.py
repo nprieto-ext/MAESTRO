@@ -1589,15 +1589,40 @@ class Sequencer(QFrame):
 
         return int(intensity)
 
+    def _apply_seq_memory(self, seq_clip_info, main_win):
+        """Applique la mémoire de séquence sur les projecteurs (priorité haute)."""
+        if not seq_clip_info:
+            return
+        mem_ref = seq_clip_info.get('memory_ref')
+        if not mem_ref:
+            return
+        memories = getattr(main_win, 'memories', None)
+        if not memories:
+            return
+        mem_col, row_idx = mem_ref[0], mem_ref[1]
+        if mem_col < len(memories) and row_idx < len(memories[mem_col]):
+            mem = memories[mem_col][row_idx]
+            if mem:
+                brightness = seq_clip_info.get('seq_intensity', 100) / 100.0
+                for i, ps in enumerate(mem.get("projectors", [])):
+                    if i < len(main_win.projectors) and ps.get("level", 0) > 0:
+                        proj = main_win.projectors[i]
+                        lvl  = int(ps["level"] * brightness)
+                        base = QColor(ps["base_color"])
+                        proj.level      = lvl
+                        proj.base_color = base
+                        proj.color      = QColor(
+                            int(base.red()   * lvl / 100.0),
+                            int(base.green() * lvl / 100.0),
+                            int(base.blue()  * lvl / 100.0),
+                        )
+
     def apply_timeline_to_dmx(self, active_clips):
         """Applique les clips actifs aux projecteurs DMX avec effets"""
         import math
         import random
 
         main_win = self.player_ui
-        # L'effet AKAI a la priorité sur la timeline — ne pas écraser les projecteurs
-        if getattr(main_win, 'active_effect', None) is not None:
-            return
         if hasattr(main_win, 'get_track_to_indices'):
             track_to_indices = main_win.get_track_to_indices()
         else:
@@ -1615,6 +1640,12 @@ class Sequencer(QFrame):
             proj.level = 0
             proj.base_color = QColor("black")
             proj.color = QColor("black")
+
+        # L'effet AKAI a la priorité sur les groupes — mais la séquence mémoire
+        # doit quand même être appliquée pour servir de base à l'animation de l'effet.
+        if getattr(main_win, 'active_effect', None) is not None:
+            self._apply_seq_memory(active_clips.get('Séquence'), main_win)
+            return
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -1749,29 +1780,7 @@ class Sequencer(QFrame):
                         proj.tilt = tilt_val
 
         # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
-        seq_clip_info = active_clips.get('Séquence')
-        if seq_clip_info:
-            mem_ref = seq_clip_info.get('memory_ref')
-            if mem_ref:
-                memories = getattr(main_win, 'memories', None)
-                if memories:
-                    mem_col, row_idx = mem_ref[0], mem_ref[1]
-                    if mem_col < len(memories) and row_idx < len(memories[mem_col]):
-                        mem = memories[mem_col][row_idx]
-                        if mem:
-                            brightness = seq_clip_info.get('seq_intensity', 100) / 100.0
-                            for i, ps in enumerate(mem.get("projectors", [])):
-                                if i < len(main_win.projectors) and ps.get("level", 0) > 0:
-                                    proj = main_win.projectors[i]
-                                    lvl  = int(ps["level"] * brightness)
-                                    base = QColor(ps["base_color"])
-                                    proj.level      = lvl
-                                    proj.base_color = base
-                                    proj.color      = QColor(
-                                        int(base.red()   * lvl / 100.0),
-                                        int(base.green() * lvl / 100.0),
-                                        int(base.blue()  * lvl / 100.0),
-                                    )
+        self._apply_seq_memory(active_clips.get('Séquence'), main_win)
 
         if hasattr(self.player_ui, 'artnet') and self.player_ui.artnet:
             self.player_ui.artnet.update_from_projectors(self.player_ui.projectors)

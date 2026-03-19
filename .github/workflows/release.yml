@@ -27,15 +27,16 @@ jobs:
           pip install pyinstaller
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --noupx --noconfirm main.py --name MyStrow
+        run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --noupx --noconfirm main.py --name MyStrow
 
       - name: Generate SHA256 and .sig
         shell: pwsh
         run: |
-          $hash = (Get-FileHash dist\MyStrow.exe -Algorithm SHA256).Hash.ToLower()
+          $exe = Get-ChildItem -Path dist\MyStrow -Filter MyStrow.exe -Recurse | Select-Object -First 1
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
           "$hash  MyStrow.exe" | Out-File -Encoding ascii dist\sha256.txt
           Write-Host "SHA256: $hash"
-          python _gen_sig.py dist/MyStrow.exe
+          python _gen_sig.py $exe.FullName
 
       - name: Build Installer (Inno Setup)
         run: |
@@ -47,8 +48,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts
           Copy-Item "installer\installer_output\MyStrow_Setup.exe" "artifacts\"
-          Copy-Item "dist\MyStrow.exe" "artifacts\"
-          Copy-Item "dist\MyStrow.exe.sig" "artifacts\"
+          $exe = Get-ChildItem -Path dist\MyStrow -Filter MyStrow.exe -Recurse | Select-Object -First 1
+          Copy-Item $exe.FullName "artifacts\"
+          $sig = Get-ChildItem -Path dist\MyStrow -Filter "*.sig" -Recurse | Select-Object -First 1
+          if ($sig) { Copy-Item $sig.FullName "artifacts\" }
           Copy-Item "dist\sha256.txt" "artifacts\"
 
       - name: Upload Windows artifacts
