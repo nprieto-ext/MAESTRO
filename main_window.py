@@ -8877,8 +8877,38 @@ class MainWindow(QMainWindow):
             _lay.addWidget(_btn)
             _dlg.exec()
         else:
-            # Échec — ouvrir le diagnostic complet avec rapport copiable
-            self.show_midi_diagnostic()
+            # Échec — dialog intermédiaire avec bouton "Ouvrir le diagnostic"
+            _dlg = QDialog(self)
+            _dlg.setWindowTitle("AKAI APC mini")
+            _dlg.setFixedSize(340, 160)
+            _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
+                               "QLabel{background:transparent;}")
+            _lay = QVBoxLayout(_dlg)
+            _lay.setContentsMargins(24, 20, 24, 20)
+            _lay.setSpacing(12)
+            _ico = QLabel("⚠️")
+            _ico.setAlignment(Qt.AlignCenter)
+            _ico.setStyleSheet("font-size:28px;")
+            _lay.addWidget(_ico)
+            _msg = QLabel("Connexion échouée — AKAI non détecté")
+            _msg.setAlignment(Qt.AlignCenter)
+            _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#f44336;")
+            _lay.addWidget(_msg)
+            _btn_row = QHBoxLayout()
+            _btn_diag = QPushButton("Ouvrir le diagnostic")
+            _btn_diag.setFixedHeight(32)
+            _btn_diag.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                                    "QPushButton:hover{background:#1e4a7a;}")
+            _btn_diag.clicked.connect(lambda: (_dlg.accept(), self.show_midi_diagnostic()))
+            _btn_row.addWidget(_btn_diag)
+            _btn_close2 = QPushButton("Fermer")
+            _btn_close2.setFixedHeight(32)
+            _btn_close2.setStyleSheet("QPushButton{background:#2a2a2a;color:#aaa;border:1px solid #3a3a3a;border-radius:5px;font-size:12px;}"
+                                      "QPushButton:hover{background:#333;color:#ddd;}")
+            _btn_close2.clicked.connect(_dlg.accept)
+            _btn_row.addWidget(_btn_close2)
+            _lay.addLayout(_btn_row)
+            _dlg.exec()
 
     def reset_akai(self):
         """Reinitialise la connexion, les LEDs et les faders de l'AKAI"""
@@ -8903,7 +8933,12 @@ class MainWindow(QMainWindow):
 
     def show_midi_diagnostic(self):
         """Affiche tous les ports MIDI disponibles pour diagnostiquer la detection AKAI."""
+        import sys
+        import subprocess
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit
+
+        is_mac = sys.platform == "darwin"
+        is_win = sys.platform == "win32"
 
         # ── Construire le rapport texte ────────────────────────────────────
         lines = []
@@ -8911,9 +8946,17 @@ class MainWindow(QMainWindow):
         def _is_akai(name):
             return 'APC' in name.upper() or 'AKAI' in name.upper()
 
+        # Infos système
+        lines.append(f"Plateforme : {'macOS' if is_mac else 'Windows' if is_win else sys.platform}")
+        lines.append(f"Python : {sys.version.split()[0]}")
+        lines.append("")
+
         if not MIDI_AVAILABLE:
             lines.append("ERREUR : Module MIDI non installe.")
-            lines.append("Installez avec : pip install rtmidi2")
+            if is_mac:
+                lines.append("Installez avec : pip install python-rtmidi")
+            else:
+                lines.append("Installez avec : pip install rtmidi2")
         else:
             try:
                 try:
@@ -8968,9 +9011,16 @@ class MainWindow(QMainWindow):
                     lines.append("⚠ Aucun port AKAI/APC detecte.")
                     lines.append("  • Verifiez le cable USB")
                     lines.append("  • Essayez un autre port USB")
-                    lines.append("  • Windows : Gestionnaire de peripheriques")
-                    lines.append("    > Controleurs audio, video et jeu")
-                    lines.append("  • Mac : Utilitaires > Configuration MIDI Audio")
+                    if is_mac:
+                        lines.append("  • Mac : ouvrez Configuration MIDI Audio")
+                        lines.append("    (Finder > Applications > Utilitaires)")
+                        lines.append("    Verifiez que APC mini est visible dans la liste")
+                        lines.append("  • Essayez de debrancher/rebrancher l'AKAI")
+                        lines.append("  • Si le port apparait en gris : cliquez sur la fleche")
+                        lines.append("    pour activer le peripherique")
+                    else:
+                        lines.append("  • Windows : Gestionnaire de peripheriques")
+                        lines.append("    > Controleurs audio, video et jeu")
 
             except Exception as e:
                 lines.append(f"Erreur lors de l'enumeration MIDI :")
@@ -8981,7 +9031,7 @@ class MainWindow(QMainWindow):
         # ── Dialogue ───────────────────────────────────────────────────────
         dlg = QDialog(self)
         dlg.setWindowTitle("Diagnostique AKAI")
-        dlg.setFixedSize(520, 380)
+        dlg.setFixedSize(520, 420)
         dlg.setStyleSheet("QDialog, QWidget { background: #1a1a1a; color: #e0e0e0; }"
                           "QLabel { background: transparent; }")
 
@@ -9013,6 +9063,22 @@ class MainWindow(QMainWindow):
                                "QPushButton:hover{background:#1e4a7a;}")
         btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(report))
         btn_row.addWidget(btn_copy)
+
+        # Bouton système selon la plateforme
+        if is_mac:
+            btn_sys = QPushButton("🎹 Configuration MIDI Audio")
+            btn_sys.setFixedHeight(34)
+            btn_sys.setStyleSheet("QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                                  "QPushButton:hover{background:#4a3a7a;}")
+            btn_sys.clicked.connect(lambda: subprocess.Popen(["open", "-a", "Audio MIDI Setup"]))
+            btn_row.addWidget(btn_sys)
+        elif is_win:
+            btn_sys = QPushButton("⚙️ Gestionnaire périphériques")
+            btn_sys.setFixedHeight(34)
+            btn_sys.setStyleSheet("QPushButton{background:#3a2a5a;color:white;border:none;border-radius:5px;font-size:12px;}"
+                                  "QPushButton:hover{background:#4a3a7a;}")
+            btn_sys.clicked.connect(lambda: subprocess.Popen(["devmgmt.msc"], shell=True))
+            btn_row.addWidget(btn_sys)
 
         btn_reconnect = QPushButton("Reconnexion")
         btn_reconnect.setFixedHeight(34)
