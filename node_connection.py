@@ -12,7 +12,7 @@ import platform
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication,
-    QWidget, QStackedWidget, QScrollArea, QLineEdit, QComboBox,
+    QWidget, QStackedWidget, QScrollArea, QLineEdit, QComboBox, QCheckBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QCursor
@@ -189,6 +189,10 @@ def _ping(ip: str, timeout_ms: int = 1000) -> bool:
 
 def _artpoll_probe(target_ip: str, timeout: float = 1.5) -> bool:
     """ArtPoll vers target_ip, filtre les réponses du PC lui-même."""
+    # Si aucune carte réseau n'a d'IP en 2.x, le boitier est forcément inaccessible
+    adapters = _get_ethernet_adapters()
+    if not any(ip.startswith("2.") for _, ip, _, _ in adapters):
+        return False
     local_ips = _get_all_local_ips()
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1400,6 +1404,29 @@ class DmxOutputDialog(QDialog):
         net_row.addWidget(self._node_net_lbl)
         card_lay.addLayout(net_row)
 
+        # Miroir sortie 2
+        if self._dmx is not None:
+            card_lay.addWidget(_sep())
+            dmx2_row = QHBoxLayout()
+            dmx2_key = QLabel("DMX 2")
+            dmx2_key.setFont(QFont("Segoe UI", 9))
+            dmx2_key.setStyleSheet("color: #666; background: transparent; border: none;")
+            dmx2_row.addWidget(dmx2_key)
+            dmx2_row.addStretch()
+            self._mirror_combo = QComboBox()
+            self._mirror_combo.addItem("Désactivé")
+            self._mirror_combo.addItem("DMX 1 (Miroir)")
+            self._mirror_combo.setCurrentIndex(1 if self._dmx.mirror_output else 0)
+            self._mirror_combo.setFixedWidth(150)
+            self._mirror_combo.setFont(QFont("Segoe UI", 9))
+            self._mirror_combo.setStyleSheet(
+                "QComboBox { background:#2a2a2a; color:white; border:1px solid #3a3a3a;"
+                " border-radius:4px; padding:3px 8px; }"
+                "QComboBox::drop-down { border: none; }"
+                "QComboBox QAbstractItemView { background:#2a2a2a; color:white; }")
+            dmx2_row.addWidget(self._mirror_combo)
+            card_lay.addLayout(dmx2_row)
+
         lay.addWidget(card)
 
         cfg_btn = QPushButton("⚙️  Configurer la connexion réseau")
@@ -1599,16 +1626,22 @@ class DmxOutputDialog(QDialog):
             return
 
         if self._transport == TRANSPORT_ARTNET:
+            combo = getattr(self, '_mirror_combo', None)
+            mirror_on = (combo.currentIndex() == 1) if combo else self._dmx.mirror_output
+            u2 = self._dmx.universe + 1
             self._dmx.connect(
                 transport=TRANSPORT_ARTNET,
                 target_ip=TARGET_IP,
                 target_port=TARGET_PORT,
                 universe=0,
+                universe2=u2,
+                mirror_output=mirror_on,
                 product_id="artnet",
                 product_name="Art-Net (réseau)",
             )
+            mirror_info = f"  •  Miroir univers {u2}" if mirror_on else ""
             self._status_lbl.setStyleSheet("color: #4ade80; font-size: 10px;")
-            self._status_lbl.setText(f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}")
+            self._status_lbl.setText(f"Sortie Node appliquée — {TARGET_IP}:{TARGET_PORT}{mirror_info}")
         else:
             com = self._port_combo.currentData()
             if not com:

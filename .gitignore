@@ -1,3 +1,6 @@
+# Donnees sensibles clients - NE JAMAIS PUSHER
+capture/
+
 # SECRETS - NE JAMAIS PUSHER
 stripe_config.py
 functions/.env.local

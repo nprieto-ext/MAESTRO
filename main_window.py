@@ -78,7 +78,7 @@ from sequencer import Sequencer
 from timeline_editor import LightTimelineEditor
 from updater import UpdateBar, UpdateChecker, download_update, AboutDialog
 from license_manager import LicenseState, LicenseResult, verify_license
-from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog
+from license_ui import LicenseBanner, ActivationDialog, LicenseWarningDialog, LoginSuccessDialog
 
 
 class HVUMeter(QWidget):
@@ -5414,10 +5414,15 @@ class MainWindow(QMainWindow):
         # Activer/desactiver DMX
         if self._license.dmx_allowed:
             if not self.dmx.connected:
-                self.test_dmx_on_startup()
+                dlg = LoginSuccessDialog(dmx_allowed=True, parent=self)
+                if dlg.exec() == LoginSuccessDialog.ACTIVATE_DMX:
+                    self.test_dmx_on_startup()
+            else:
+                LoginSuccessDialog(dmx_allowed=False, parent=self).exec()
         else:
             self.dmx.connected = False
             self.plan_de_feu.set_dmx_blocked()
+            LoginSuccessDialog(dmx_allowed=False, parent=self).exec()
 
         # Activer/desactiver menu Node
         if hasattr(self, 'node_menu'):
@@ -6368,6 +6373,16 @@ class MainWindow(QMainWindow):
         )
         dth.addWidget(btn_det_locate)
 
+        btn_det_replace = QPushButton("🔄  Remplacer")
+        btn_det_replace.setFixedHeight(30)
+        btn_det_replace.setToolTip("Remplacer par une autre fixture de la bibliothèque")
+        btn_det_replace.setStyleSheet(
+            "QPushButton { background:#0a1a10; color:#44bb77; border:1px solid #1a3a20;"
+            " border-radius:6px; padding:4px 14px; font-size:11px; }"
+            "QPushButton:hover { background:#0e2a18; color:#66dd99; border-color:#2a6040; }"
+        )
+        dth.addWidget(btn_det_replace)
+
         btn_det_del = QPushButton("🗑  Supprimer")
         btn_det_del.setFixedHeight(30)
         btn_det_del.setStyleSheet(
@@ -6497,10 +6512,6 @@ class MainWindow(QMainWindow):
 
         fv.addWidget(_sec("Profil DMX"))
 
-        det_profile_cb = QComboBox()
-        det_profile_cb.setFixedHeight(36)
-        det_profile_cb.setToolTip("Sélectionner le profil de canaux DMX de la fixture")
-        fv.addWidget(det_profile_cb)
         fv.addSpacing(6)
 
         chips_w = QWidget()
@@ -6765,25 +6776,6 @@ class MainWindow(QMainWindow):
             chips_vl.addWidget(row_n)
             chips_vl.addWidget(row_u)
 
-        def _populate_profile_cb(fixture_type, current_profile=None):
-            """Remplit le combo profil selon le type de fixture, pré-sélectionne current_profile."""
-            det_profile_cb.blockSignals(True)
-            det_profile_cb.clear()
-            keys = TYPE_PROFILES.get(fixture_type, list(DMX_PROFILES.keys()))
-            for key in keys:
-                if key in DMX_PROFILES:
-                    label = f"{key}  —  {profile_display_text(DMX_PROFILES[key])}"
-                    det_profile_cb.addItem(label, key)
-            # Pré-sélectionner si possible
-            if current_profile:
-                # Chercher la clé dont la valeur correspond au profil actuel
-                for k, v in DMX_PROFILES.items():
-                    if list(v) == current_profile:
-                        idx2 = det_profile_cb.findData(k)
-                        if idx2 >= 0:
-                            det_profile_cb.setCurrentIndex(idx2)
-                        break
-            det_profile_cb.blockSignals(False)
 
         _dirty = [False]
         _checked = set()
@@ -7049,7 +7041,6 @@ class MainWindow(QMainWindow):
             _refresh_group_blocks(fd['group'])
             addr_sb.blockSignals(True);  addr_sb.setValue(fd['start_address']);  addr_sb.blockSignals(False)
             _update_addr_range()
-            _populate_profile_cb(fd['fixture_type'], fd.get('profile'))
             _update_chips(fd['profile'])
             if idx in conflicts:
                 others = []
@@ -7075,10 +7066,6 @@ class MainWindow(QMainWindow):
             fd['fixture_type']  = det_type_cb.currentText()
             fd['group']         = _selected_group[0] or fd['group']
             fd['start_address'] = addr_sb.value()
-            # Profil : lire depuis le combo (clé → liste de canaux)
-            prof_key = det_profile_cb.currentData()
-            if prof_key and prof_key in DMX_PROFILES:
-                fd['profile'] = list(DMX_PROFILES[prof_key])
             proj.name           = fd['name']
             proj.fixture_type   = fd['fixture_type']
             proj.group          = fd['group']
@@ -7137,28 +7124,14 @@ class MainWindow(QMainWindow):
         det_name_e.textChanged.connect(lambda _: _name_tmr.start())
 
         def _on_type_changed():
-            """Quand le type change : rafraîchir la liste de profils, garder le profil si compatible."""
+            """Quand le type change : mettre à jour les chips et sauvegarder."""
             idx = _sel[0]
             if idx is None or idx >= len(fixture_data):
                 return
-            cur_prof = fixture_data[idx].get('profile')
-            _populate_profile_cb(det_type_cb.currentText(), cur_prof)
-            # Mettre à jour les chips avec le nouveau profil sélectionné
-            prof_key = det_profile_cb.currentData()
-            if prof_key and prof_key in DMX_PROFILES:
-                _update_chips(list(DMX_PROFILES[prof_key]))
+            _update_chips(fixture_data[idx].get('profile', []))
             _commit()
 
         det_type_cb.currentIndexChanged.connect(lambda _: _on_type_changed())
-
-        def _on_profile_changed():
-            """Quand le profil change : mettre à jour les chips et sauvegarder."""
-            prof_key = det_profile_cb.currentData()
-            if prof_key and prof_key in DMX_PROFILES:
-                _update_chips(list(DMX_PROFILES[prof_key]))
-            _commit()
-
-        det_profile_cb.currentIndexChanged.connect(lambda _: _on_profile_changed())
 
         addr_sb.valueChanged.connect(lambda _: (_update_addr_range(), _commit()))
         btn_am.clicked.connect(lambda: addr_sb.setValue(max(1, addr_sb.value() - 1)))
@@ -7207,6 +7180,143 @@ class MainWindow(QMainWindow):
             tabs.setCurrentIndex(1)
 
         btn_det_locate.clicked.connect(_locate_selected)
+
+        def _replace_selected():
+            idx = _sel[0]
+            if idx is None or idx >= len(fixture_data):
+                return
+            import json as _json
+            from builtin_fixtures import BUILTIN_FIXTURES as _BF
+
+            # Charger toutes les fixtures disponibles
+            _user_fx = []
+            try:
+                _fx_file = Path.home() / ".mystrow_fixtures.json"
+                if _fx_file.exists():
+                    _raw = _json.loads(_fx_file.read_text(encoding="utf-8"))
+                    if isinstance(_raw, list):
+                        for _f in _raw:
+                            if not isinstance(_f, dict) or _f.get("builtin"):
+                                continue
+                            if not _f.get("profile") and _f.get("modes"):
+                                _f["profile"] = _f["modes"][0].get("profile", [])
+                            _user_fx.append(_f)
+            except Exception:
+                pass
+            _all = list(_BF) + _user_fx
+
+            # ── Picker ───────────────────────────────────────────────────────
+            from PySide6.QtWidgets import QListWidget as _QListWidget, QListWidgetItem as _QLWI
+            _SS2 = (
+                "QDialog{background:#141414;color:#e0e0e0;}"
+                "QListWidget{background:#1e1e1e;color:#e0e0e0;border:1px solid #333;"
+                "border-radius:6px;font-size:12px;outline:none;}"
+                "QListWidget::item{padding:6px 12px;}"
+                "QListWidget::item:selected{background:#00d4ff;color:#000;font-weight:bold;}"
+                "QListWidget::item:hover:!selected{background:#2a2a2a;}"
+                "QLineEdit{background:#1e1e1e;color:#fff;border:1px solid #444;"
+                "border-radius:6px;padding:6px 12px;font-size:13px;}"
+                "QLineEdit:focus{border-color:#00d4ff88;}"
+                "QPushButton{background:#2a2a2a;color:#ccc;border:1px solid #444;"
+                "border-radius:6px;padding:6px 16px;font-size:12px;}"
+                "QPushButton:hover{border-color:#00d4ff;color:#fff;}"
+            )
+            pick = QDialog(dialog)
+            pick.setWindowTitle("Remplacer par…")
+            pick.resize(600, 480)
+            pick.setStyleSheet(_SS2)
+            pv = QVBoxLayout(pick)
+            pv.setContentsMargins(16, 14, 16, 14)
+            pv.setSpacing(10)
+
+            srch = QLineEdit()
+            srch.setPlaceholderText("🔍  Rechercher…")
+            srch.setFixedHeight(36)
+            pv.addWidget(srch)
+
+            plst = _QListWidget()
+            pv.addWidget(plst, 1)
+
+            pbr = QHBoxLayout()
+            pok = QPushButton("Remplacer")
+            pok.setFixedHeight(36)
+            pok.setStyleSheet(
+                "QPushButton{background:#00d4ff;color:#000;font-weight:bold;"
+                "border:none;border-radius:6px;padding:6px 24px;font-size:13px;}"
+                "QPushButton:hover{background:#33ddff;}"
+            )
+            pcancel = QPushButton("Annuler")
+            pcancel.setFixedHeight(36)
+            pcancel.clicked.connect(pick.reject)
+            pbr.addStretch()
+            pbr.addWidget(pcancel)
+            pbr.addWidget(pok)
+            pv.addLayout(pbr)
+
+            def _pfill(q=""):
+                plst.clear()
+                q = q.strip().lower()
+                for _fx in _all:
+                    if q and q not in _fx.get("name", "").lower() \
+                           and q not in _fx.get("fixture_type", "").lower() \
+                           and q not in _fx.get("manufacturer", "").lower():
+                        continue
+                    _n   = _fx.get("name", "?")
+                    _mfr = _fx.get("manufacturer", "")
+                    _nch = len(_fx.get("profile", []))
+                    _lbl = f"{_n}  ({_nch}ch)"
+                    if _mfr:
+                        _lbl += f"   — {_mfr}"
+                    _item = _QLWI(_lbl)
+                    _item.setData(Qt.UserRole, _fx)
+                    plst.addItem(_item)
+                if plst.count():
+                    plst.setCurrentRow(0)
+
+            srch.textChanged.connect(_pfill)
+            _pfill()
+            srch.setFocus()
+
+            _pick_result = [None]
+
+            def _paccept():
+                _it = plst.currentItem()
+                if not _it:
+                    return
+                _pick_result[0] = _it.data(Qt.UserRole)
+                pick.accept()
+
+            pok.clicked.connect(_paccept)
+            plst.itemDoubleClicked.connect(lambda _: _paccept())
+
+            pick.exec()
+            new_fx = _pick_result[0]
+            if not new_fx:
+                return
+
+            # ── Appliquer le remplacement ─────────────────────────────────
+            _push_history()
+            fd  = fixture_data[idx]
+            proj = self.projectors[idx]
+
+            fd['name']         = new_fx.get("name", fd['name'])
+            fd['fixture_type'] = new_fx.get("fixture_type", fd['fixture_type'])
+            fd['profile']      = list(new_fx.get("profile", fd['profile']))
+            # start_address et group sont conservés
+
+            proj.name         = fd['name']
+            proj.fixture_type = fd['fixture_type']
+            proj.dmx_profile  = fd['profile']
+
+            _apply_fd_to_dmx()
+            _mark_dirty()
+
+            # Rafraîchir le panneau de détail
+            _sel[0] = None
+            _build_cards(filter_bar.text())
+            _select_card(idx)
+
+        btn_det_replace.clicked.connect(_replace_selected)
 
         def _del_checked():
             if not _checked: return
@@ -7613,34 +7723,7 @@ class MainWindow(QMainWindow):
             from fixture_editor import FixtureEditorDialog
             editor = FixtureEditorDialog(dialog)
 
-            def _on_fixture_added(data):
-                _push_history()
-                profile = data.get("profile", ["R", "G", "B"])
-                if fixture_data:
-                    last_fd = max(fixture_data, key=lambda fd: fd['start_address'])
-                    next_addr = last_fd['start_address'] + len(last_fd['profile'])
-                else:
-                    next_addr = 1
-                p = Projector(
-                    data.get("group", "face"),
-                    name=data.get("name", "Fixture"),
-                    fixture_type=data.get("fixture_type", "PAR LED"),
-                )
-                p.start_address = next_addr
-                if p.fixture_type == "Machine a fumee":
-                    p.fan_speed = 0
-                self.projectors.append(p)
-                i = len(self.projectors) - 1
-                proj_key = f"{p.group}_{i}"
-                channels = [next_addr + c for c in range(len(profile))]
-                self.dmx.set_projector_patch(proj_key, channels, profile=profile)
-                _rebuild_fd()
-                new_idx = len(fixture_data) - 1
-                _build_cards(filter_bar.text())
-                _select_card(new_idx)
-                _mark_dirty()
-
-            editor.fixture_added.connect(_on_fixture_added)
+            editor.fixture_added.connect(lambda _: None)
             editor.showMaximized()
             editor.exec()
 
@@ -7912,7 +7995,22 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
 
-        # ── Barre de recherche + Import ───────────────────────────────────────
+        # ── Onglets ───────────────────────────────────────────────────────────
+        from PySide6.QtWidgets import QTabWidget as _QTabWidget
+        tab_widget = _QTabWidget()
+        tab_widget.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #333; background: #1e1e1e; }"
+            "QTabBar::tab { background: #2a2a2a; color: #aaa; padding: 6px 16px; margin-right: 2px; }"
+            "QTabBar::tab:selected { background: #1e1e1e; color: #fff;"
+            " border-bottom: 2px solid #00d4ff; }"
+        )
+
+        # ── Tab 1 : Bibliothèque de fixtures ──────────────────────────────────
+        tab1 = QWidget()
+        tab1_layout = QVBoxLayout(tab1)
+        tab1_layout.setContentsMargins(8, 8, 8, 8)
+        tab1_layout.setSpacing(8)
+
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
         search_edit = QLineEdit()
@@ -7926,37 +8024,9 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
             "QPushButton:hover { border-color:#44cc88; color:#66ee99; }"
         )
-        btn_refresh = QPushButton("↻  Actualiser")
-        btn_refresh.setFixedHeight(36)
-        btn_refresh.setToolTip("Recharger les fixtures depuis Firestore")
-        btn_refresh.setStyleSheet(
-            "QPushButton { background:#1a2a3a; color:#44aaff; border:1px solid #44aaff44;"
-            " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
-            "QPushButton:hover { border-color:#44aaff; color:#66ccff; }"
-            "QPushButton:disabled { color:#555; border-color:#333; }"
-        )
         search_row.addWidget(search_edit, 1)
         search_row.addWidget(btn_import)
-        search_row.addWidget(btn_refresh)
-        layout.addLayout(search_row)
-
-        # ── Barre de progression (masquée par défaut) ─────────────────────────
-        refresh_lbl = QLabel("")
-        refresh_lbl.setAlignment(Qt.AlignCenter)
-        refresh_lbl.setStyleSheet("color: #44aaff; font-size: 11px; padding: 1px 0;")
-        refresh_lbl.hide()
-        layout.addWidget(refresh_lbl)
-
-        refresh_bar = QProgressBar()
-        refresh_bar.setFixedHeight(3)
-        refresh_bar.setTextVisible(False)
-        refresh_bar.setRange(0, 0)
-        refresh_bar.setStyleSheet(
-            "QProgressBar { background: #1a1a1a; border: none; border-radius: 1px; }"
-            "QProgressBar::chunk { background: #44aaff; border-radius: 1px; }"
-        )
-        refresh_bar.hide()
-        layout.addWidget(refresh_bar)
+        tab1_layout.addLayout(search_row)
 
         # ── Splitter fabricant / fixture ──────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -7972,12 +8042,48 @@ class MainWindow(QMainWindow):
         splitter.addWidget(preset_list)
         splitter.setStretchFactor(1, 1)
 
-        layout.addWidget(splitter, 1)
+        tab1_layout.addWidget(splitter, 1)
 
         # ── Compteur résultats ────────────────────────────────────────────────
         count_lbl = QLabel("")
         count_lbl.setAlignment(Qt.AlignRight)
-        layout.addWidget(count_lbl)
+        tab1_layout.addWidget(count_lbl)
+
+        tab_widget.addTab(tab1, "Bibliothèque de fixtures")
+
+        # ── Tab 2 : Mes projecteurs ────────────────────────────────────────────
+        tab2 = QWidget()
+        tab2_layout = QVBoxLayout(tab2)
+        tab2_layout.setContentsMargins(8, 8, 8, 8)
+        tab2_layout.setSpacing(8)
+
+        _my_fixtures = [
+            f for f in _user_fixtures
+            if f.get("source", "user") not in ("firestore", "ofl")
+        ]
+        my_list = QListWidget()
+        if _my_fixtures:
+            for _fx in _my_fixtures:
+                _n = _fx.get("name", "?")
+                _nch = len(_fx.get("profile", []))
+                _ftype = _fx.get("fixture_type", "")
+                _lbl = f"{_n}  ({_nch}ch)"
+                if _ftype:
+                    _lbl += f"   — {_ftype}"
+                _item = QListWidgetItem(_lbl)
+                _item.setData(Qt.UserRole, _fx)
+                my_list.addItem(_item)
+        else:
+            _empty_item = QListWidgetItem(
+                "Aucun projecteur enregistré — créez-en un dans l'éditeur de fixtures."
+            )
+            _empty_item.setFlags(_empty_item.flags() & ~Qt.ItemIsEnabled)
+            my_list.addItem(_empty_item)
+        tab2_layout.addWidget(my_list, 1)
+
+        tab_widget.addTab(tab2, "Mes projecteurs")
+
+        layout.addWidget(tab_widget, 1)
 
         result = [None]
 
@@ -8147,166 +8253,7 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.information(dialog, "Import réussi", msg)
 
-        def _do_refresh():
-            import urllib.request as _ur
-            from license_manager import get_current_id_token
-            from core import FIREBASE_PROJECT_ID as _proj_id
-            import firebase_client as _fc
-
-            btn_refresh.setEnabled(False)
-            refresh_lbl.setText("⏳  Étape 1/3 — Obtention du token Firebase…")
-            refresh_lbl.show()
-            refresh_bar.setRange(0, 0)
-            refresh_bar.show()
-            QApplication.processEvents()
-
-            try:
-                import urllib.error as _ue
-                token = get_current_id_token()
-                if token:
-                    refresh_lbl.setText("⏳  Étape 2/3 — Token OK, connexion à Firestore…")
-                else:
-                    refresh_lbl.setText("⏳  Étape 2/3 — Pas de compte connecté, tentative accès public…")
-                QApplication.processEvents()
-
-                _fs_base = (
-                    f"https://firestore.googleapis.com/v1/projects/{_proj_id}"
-                    f"/databases/(default)/documents"
-                )
-                results = []
-                page_token = None
-                page_num = 0
-                while True:
-                    page_num += 1
-                    n = len(results)
-                    refresh_lbl.setText(
-                        f"⏳  Étape 3/3 — Page {page_num} ({n} fixture{'s' if n != 1 else ''} récupérée{'s' if n != 1 else ''} jusqu'ici)…"
-                    )
-                    QApplication.processEvents()
-                    url = f"{_fs_base}/gdtf_fixtures?pageSize=300"
-                    if page_token:
-                        url += f"&pageToken={page_token}"
-                    headers = {}
-                    if token:
-                        headers["Authorization"] = f"Bearer {token}"
-                    req = _ur.Request(url, headers=headers)
-                    try:
-                        with _ur.urlopen(req, timeout=15) as resp:
-                            data = json.loads(resp.read().decode())
-                    except _ue.HTTPError as _he:
-                        body = _he.read().decode(errors="replace")
-                        if _he.code in (401, 403):
-                            raise RuntimeError(
-                                f"Accès refusé ({_he.code}) — la collection gdtf_fixtures nécessite un compte connecté.\n"
-                                f"Activez votre licence MyStrow pour accéder aux fixtures Firestore."
-                            )
-                        else:
-                            raise RuntimeError(f"Erreur HTTP {_he.code} : {body[:200]}")
-                    for doc in data.get("documents", []):
-                        fields = {k: _fc._from_firestore(v) for k, v in doc.get("fields", {}).items()}
-                        results.append(fields)
-                    page_token = data.get("nextPageToken")
-                    if not page_token:
-                        break
-
-            except Exception as _e:
-                refresh_bar.hide()
-                refresh_lbl.setText(f"❌  {_e}")
-                QTimer.singleShot(8000, refresh_lbl.hide)
-                btn_refresh.setEnabled(True)
-                return
-
-            refresh_bar.hide()
-
-            if not results:
-                refresh_lbl.setText("Aucune fixture trouvée dans Firestore.")
-                QTimer.singleShot(3000, refresh_lbl.hide)
-                btn_refresh.setEnabled(True)
-                return
-
-            # Normaliser les fixtures multi-modes (admin panel) : profile au niveau racine
-            for fx in results:
-                if not fx.get("profile") and fx.get("modes"):
-                    first = fx["modes"][0]
-                    fx["profile"] = first.get("profile", [])
-
-            # Fusion dans ALL_FIXTURES
-            existing_names = {f["name"] for f in ALL_FIXTURES}
-            added = 0
-            updated = 0
-            for fx in results:
-                if not fx.get("name") or not fx.get("profile"):
-                    continue
-                if fx["name"] not in existing_names:
-                    ALL_FIXTURES.append(fx)
-                    existing_names.add(fx["name"])
-                    added += 1
-                else:
-                    for i, f in enumerate(ALL_FIXTURES):
-                        if f["name"] == fx["name"] and not f.get("builtin"):
-                            ALL_FIXTURES[i] = fx
-                            updated += 1
-                            break
-
-            # Sauvegarde dans le cache local
-            try:
-                _fx_file = Path.home() / ".mystrow_fixtures.json"
-                try:
-                    existing_cache = json.loads(_fx_file.read_text(encoding="utf-8")) if _fx_file.exists() else []
-                    if not isinstance(existing_cache, list):
-                        existing_cache = []
-                except Exception:
-                    existing_cache = []
-                cache_names = {f["name"] for f in existing_cache}
-                for fx in results:
-                    if not fx.get("name") or not fx.get("profile"):
-                        continue
-                    fx_copy = dict(fx)
-                    fx_copy.setdefault("source", "firestore")
-                    if fx["name"] not in cache_names:
-                        existing_cache.append(fx_copy)
-                        cache_names.add(fx["name"])
-                    else:
-                        for i, f in enumerate(existing_cache):
-                            if f["name"] == fx["name"] and not f.get("builtin"):
-                                existing_cache[i] = fx_copy
-                                break
-                _fx_file.write_text(json.dumps(existing_cache, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception:
-                pass
-
-            # Reconstruction de la bibliothèque
-            FIXTURE_LIBRARY.clear()
-            for _fx in ALL_FIXTURES:
-                FIXTURE_LIBRARY.setdefault(_fx.get("manufacturer", "Générique"), []).append(_fx)
-            _s = {}
-            if "Générique" in FIXTURE_LIBRARY:
-                _s["Générique"] = FIXTURE_LIBRARY.pop("Générique")
-            for _k in sorted(FIXTURE_LIBRARY):
-                _s[_k] = FIXTURE_LIBRARY[_k]
-            FIXTURE_LIBRARY.clear()
-            FIXTURE_LIBRARY.update(_s)
-            cat_list.clear()
-            for cat in FIXTURE_LIBRARY.keys():
-                cat_list.addItem(cat)
-            if cat_list.count():
-                cat_list.setCurrentRow(0)
-
-            parts = []
-            if added:
-                parts.append(f"{added} nouvelle{'s' if added != 1 else ''}")
-            if updated:
-                parts.append(f"{updated} mise{'s' if updated != 1 else ''} à jour")
-            detail = f" ({', '.join(parts)})" if parts else " (aucune nouveauté)"
-            total = len(results)
-            summary = f"✅  {total} fixture{'s' if total != 1 else ''} Firestore{detail}"
-            refresh_lbl.setText(summary)
-            count_lbl.setText(summary)
-            btn_refresh.setEnabled(True)
-            QTimer.singleShot(6000, refresh_lbl.hide)
-
         btn_import.clicked.connect(_do_import)
-        btn_refresh.clicked.connect(_do_refresh)
         cat_list.currentItemChanged.connect(on_cat_changed)
         search_edit.textChanged.connect(on_search)
 
@@ -8315,7 +8262,10 @@ class MainWindow(QMainWindow):
 
         # ── Accept ────────────────────────────────────────────────────────────
         def accept():
-            item = preset_list.currentItem()
+            if tab_widget.currentIndex() == 1:
+                item = my_list.currentItem()
+            else:
+                item = preset_list.currentItem()
             if not item:
                 return
             preset = item.data(Qt.UserRole)
@@ -8324,6 +8274,7 @@ class MainWindow(QMainWindow):
                 dialog.accept()
 
         preset_list.itemDoubleClicked.connect(lambda _: accept())
+        my_list.itemDoubleClicked.connect(lambda _: accept())
 
         # ── Bas de dialog : nom + quantité ────────────────────────────────────
         qty_row = QHBoxLayout()
@@ -9412,7 +9363,7 @@ class MainWindow(QMainWindow):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Parametres NODE DMX")
-        dialog.setFixedSize(350, 220)
+        dialog.setFixedSize(350, 310)
         dialog.setStyleSheet("""
             QDialog { background: #1a1a1a; }
             QLabel { color: white; border: none; }
@@ -9452,6 +9403,26 @@ class MainWindow(QMainWindow):
         univers_layout.addWidget(univers_edit)
         layout.addLayout(univers_layout)
 
+        # Miroir sortie 2
+        from PySide6.QtWidgets import QCheckBox
+        mirror_chk = QCheckBox("Miroir sur sortie 2  (univers suivant)")
+        mirror_chk.setChecked(self.dmx.mirror_output)
+        mirror_chk.setStyleSheet("color: white;")
+        layout.addWidget(mirror_chk)
+
+        univers2_layout = QHBoxLayout()
+        univers2_label = QLabel("  Univers sortie 2:")
+        univers2_edit  = QLineEdit(str(self.dmx.universe2))
+        univers2_layout.addWidget(univers2_label)
+        univers2_layout.addWidget(univers2_edit)
+        layout.addLayout(univers2_layout)
+
+        def _toggle_univers2(checked):
+            univers2_label.setEnabled(checked)
+            univers2_edit.setEnabled(checked)
+        _toggle_univers2(mirror_chk.isChecked())
+        mirror_chk.toggled.connect(_toggle_univers2)
+
         # Boutons
         btn_layout = QHBoxLayout()
         apply_btn = QPushButton("Appliquer")
@@ -9471,6 +9442,11 @@ class MainWindow(QMainWindow):
                 new_universe = int(univers_edit.text().strip())
             except ValueError:
                 new_universe = self.dmx.universe
+            try:
+                new_universe2 = int(univers2_edit.text().strip())
+            except ValueError:
+                new_universe2 = new_universe + 1
+            new_mirror = mirror_chk.isChecked()
             # Force transport artnet (le dialog "Configure NODE" est toujours Art-Net)
             from artnet_dmx import TRANSPORT_ARTNET
             self.dmx.connected = False
@@ -9479,13 +9455,17 @@ class MainWindow(QMainWindow):
                 target_ip=new_ip,
                 target_port=new_port,
                 universe=new_universe,
+                universe2=new_universe2,
+                mirror_output=new_mirror,
             )
             dialog.accept()
+            mirror_info = f"\nMiroir sortie 2: univers {self.dmx.universe2}" if new_mirror else ""
             QMessageBox.information(self, "NODE",
                 f"Configuration appliquee:\n"
                 f"IP: {self.dmx.target_ip}\n"
                 f"Port: {self.dmx.target_port}\n"
-                f"Univers: {self.dmx.universe}")
+                f"Univers: {self.dmx.universe}"
+                f"{mirror_info}")
 
         apply_btn.clicked.connect(apply_config)
         btn_layout.addWidget(apply_btn)

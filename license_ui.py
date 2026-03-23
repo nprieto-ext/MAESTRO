@@ -1048,3 +1048,59 @@ class LicenseWarningDialog(QDialog):
         btn_layout.addWidget(btn_activate)
 
         layout.addLayout(btn_layout)
+
+
+class LoginSuccessDialog(QDialog):
+    """
+    Popup affiche apres une reconnexion reussie.
+    Propose d'activer la sortie DMX si la licence le permet.
+    """
+
+    ACTIVATE_DMX = 2
+
+    def __init__(self, dmx_allowed: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("MyStrow — Compte")
+        self.setFixedSize(340, 175 if dmx_allowed else 140)
+        self.setWindowFlags(
+            self.windowFlags()
+            & ~Qt.WindowContextHelpButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        self.setStyleSheet("QDialog { background: #1a1a1a; } QLabel { color: white; border: none; }")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 20, 25, 20)
+        layout.setSpacing(10)
+
+        title = QLabel("Connecté !")
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setStyleSheet("color: #4caf50;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        sub = QLabel("Votre session est active.")
+        sub.setFont(QFont("Segoe UI", 10))
+        sub.setAlignment(Qt.AlignCenter)
+        layout.addWidget(sub)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+
+        btn_close = QPushButton("Continuer")
+        btn_close.setFixedHeight(32)
+        btn_close.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_close.setStyleSheet(_BTN_SECONDARY)
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+
+        if dmx_allowed:
+            btn_dmx = QPushButton("Activer la sortie DMX")
+            btn_dmx.setFixedHeight(32)
+            btn_dmx.setCursor(QCursor(Qt.PointingHandCursor))
+            btn_dmx.setStyleSheet(_BTN_PRIMARY)
+            btn_dmx.clicked.connect(lambda: self.done(self.ACTIVATE_DMX))
+            btn_row.addWidget(btn_dmx)
+
+        layout.addLayout(btn_row)

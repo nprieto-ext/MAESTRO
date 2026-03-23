@@ -124,7 +124,9 @@ class ArtNetDMX:
         # --- Art-Net reseau ---
         self.target_ip = "2.0.0.15"
         self.target_port = 6454       # Port Art-Net standard
-        self.universe = 0             # Univers Art-Net (0-based)
+        self.universe = 0             # Univers Art-Net sortie 1 (0-based)
+        self.universe2 = 1            # Univers Art-Net sortie 2 (miroir)
+        self.mirror_output = True     # Envoyer sur les 2 sorties du NODE (miroir par defaut)
         self._artnet_seq = 0
         self._socket = None
 
@@ -157,6 +159,8 @@ class ArtNetDMX:
                 self.target_ip = _stored_ip if _stored_ip.startswith("2.") else "2.0.0.15"
                 self.target_port  = int(cfg.get("target_port", 6454))
                 self.universe     = int(cfg.get("universe", 0))
+                self.universe2    = int(cfg.get("universe2", 1))
+                self.mirror_output = bool(cfg.get("mirror_output", True))
         except Exception:
             pass
 
@@ -164,13 +168,15 @@ class ArtNetDMX:
         try:
             with open(self.CONFIG_FILE, "w") as f:
                 json.dump({
-                    "transport":    self.transport,
-                    "product_id":   self.product_id,
-                    "product_name": self.product_name,
-                    "com_port":     self.com_port,
-                    "target_ip":    self.target_ip,
-                    "target_port":  self.target_port,
-                    "universe":     self.universe,
+                    "transport":     self.transport,
+                    "product_id":    self.product_id,
+                    "product_name":  self.product_name,
+                    "com_port":      self.com_port,
+                    "target_ip":     self.target_ip,
+                    "target_port":   self.target_port,
+                    "universe":      self.universe,
+                    "universe2":     self.universe2,
+                    "mirror_output": self.mirror_output,
                 }, f, indent=2)
         except Exception:
             pass
@@ -180,7 +186,8 @@ class ArtNetDMX:
     # ------------------------------------------------------------------
 
     def connect(self, com_port=None, target_ip=None, target_port=None,
-                universe=None, transport=None, product_id=None, product_name=None):
+                universe=None, universe2=None, mirror_output=None,
+                transport=None, product_id=None, product_name=None):
         """Ouvre la connexion DMX selon le transport configure.
         Les parametres optionnels ecrasent la config et la sauvegardent."""
         if transport is not None:
@@ -197,6 +204,10 @@ class ArtNetDMX:
             self.target_port = int(target_port)
         if universe is not None:
             self.universe = int(universe)
+        if universe2 is not None:
+            self.universe2 = int(universe2)
+        if mirror_output is not None:
+            self.mirror_output = bool(mirror_output)
 
         self._save_config()
 
@@ -286,26 +297,33 @@ class ArtNetDMX:
             self.connected = False
             return False
 
+    def _build_artnet_packet(self, universe, seq):
+        """Construit un paquet ArtDMX pour l'univers donne"""
+        sub_uni = universe & 0xFF
+        net     = (universe >> 8) & 0x7F
+        return (
+            b'Art-Net\x00'
+            + b'\x00\x50'
+            + b'\x00\x0e'
+            + bytes([seq])
+            + b'\x00'
+            + bytes([sub_uni, net])
+            + b'\x02\x00'
+            + bytes(self.dmx_data[:512])
+        )
+
     def _send_artnet(self):
         """Protocole Art-Net ArtDMX (OpCode 0x5000)"""
         if not self._socket or not self.target_ip:
             return False
         try:
             self._artnet_seq = (self._artnet_seq + 1) % 256
-            sub_uni = self.universe & 0xFF
-            net     = (self.universe >> 8) & 0x7F
-            packet = (
-                b'Art-Net\x00'                           # ID
-                + b'\x00\x50'                            # OpCode ArtDMX (LE)
-                + b'\x00\x0e'                            # ProtVer 14
-                + bytes([self._artnet_seq])              # Sequence
-                + b'\x00'                                # Physical
-                + bytes([sub_uni, net])                  # SubUni / Net
-                + b'\x02\x00'                            # Length = 512 (BE)
-                + bytes(self.dmx_data[:512])
-            )
-            self._socket.sendto(packet, (self.target_ip, self.target_port))
-            self._last_artnet_error = None   # Effacer l'erreur précédente si succès
+            packet1 = self._build_artnet_packet(self.universe, self._artnet_seq)
+            self._socket.sendto(packet1, (self.target_ip, self.target_port))
+            if self.mirror_output:
+                packet2 = self._build_artnet_packet(self.universe2, self._artnet_seq)
+                self._socket.sendto(packet2, (self.target_ip, self.target_port))
+            self._last_artnet_error = None
             return True
         except Exception as e:
             err = str(e)
