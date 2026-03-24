@@ -7,9 +7,16 @@ Couvre : Auth (email/password) + Firestore REST API.
 import json
 import time
 import socket
+import ssl
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _SSL_CTX = ssl.create_default_context()
 
 # Importé depuis core pour éviter la circularité
 from core import FIREBASE_API_KEY, FIREBASE_PROJECT_ID
@@ -50,14 +57,14 @@ def _post_json(url, payload: dict, id_token: str = None) -> dict:
     if id_token:
         headers["Authorization"] = f"Bearer {id_token}"
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
         return json.loads(resp.read().decode())
 
 
 def _get_json(url, id_token: str) -> dict:
     """GET JSON avec Bearer token."""
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {id_token}"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -72,7 +79,7 @@ def _patch_json(url, payload: dict, id_token: str) -> dict:
         },
         method="PATCH"
     )
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -235,7 +242,7 @@ def get_stripe_portal_url(id_token: str) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
             result = json.loads(resp.read().decode())
             if not result.get("ok"):
                 raise Exception(result.get("error", "Erreur inconnue"))
@@ -257,7 +264,7 @@ def send_password_reset(email: str) -> bool:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
             result = json.loads(resp.read().decode())
             if not result.get("ok"):
                 raise Exception(result.get("error", "Erreur inconnue"))
@@ -411,7 +418,7 @@ def _post_json_opt_auth(url: str, payload: dict, id_token: str = None) -> object
         headers["Authorization"] = f"Bearer {id_token}"
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur Firestore : {_firebase_error(e)}")
@@ -468,7 +475,7 @@ def delete_fixture_pack(pack_id: str, id_token: str) -> bool:
         method="DELETE",
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT):
+        with urllib.request.urlopen(req, timeout=_TIMEOUT, context=_SSL_CTX):
             return True
     except urllib.error.HTTPError as e:
         raise Exception(f"Erreur suppression pack : {_firebase_error(e)}")
@@ -540,7 +547,7 @@ def fetch_fixture_pack(pack_id: str, id_token: str = None) -> dict:
         headers["Authorization"] = f"Bearer {id_token}"
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
             doc = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 404:

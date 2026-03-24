@@ -2134,6 +2134,112 @@ class _FixtureEditDialog(QDialog):
 
 
 # ---------------------------------------------------------------
+# SparklineWidget — graphique courbe custom
+# ---------------------------------------------------------------
+
+class _SparklineWidget(QWidget):
+    """Affiche une courbe d'activité journalière avec area fill (QPainter)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data: list = []   # list of (date_str, count)
+        self.setMinimumHeight(130)
+
+    def set_data(self, data: list):
+        """data = [(date_str, count), ...] trié par date asc."""
+        self._data = data
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPainterPath, QLinearGradient, QPen, QColor as QC
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        W, H = self.width(), self.height()
+        pad_l, pad_r, pad_t, pad_b = 40, 16, 12, 28
+
+        # Fond
+        p.fillRect(0, 0, W, H, QC(BG_PANEL))
+
+        if not self._data:
+            p.setPen(QC(TEXT_DIM))
+            p.drawText(self.rect(), Qt.AlignCenter, "Aucune donnée")
+            p.end()
+            return
+
+        dates  = [d for d, _ in self._data]
+        values = [v for _, v in self._data]
+        n      = len(values)
+        vmax   = max(values) if values else 1
+
+        draw_w = W - pad_l - pad_r
+        draw_h = H - pad_t - pad_b
+
+        def x_of(i): return pad_l + (i / max(n - 1, 1)) * draw_w
+        def y_of(v): return pad_t + draw_h - (v / vmax) * draw_h
+
+        # Grilles horizontales (4 lignes)
+        grid_pen = QPen(QC("#1e1e1e"))
+        grid_pen.setWidth(1)
+        p.setPen(grid_pen)
+        for frac in [0.25, 0.5, 0.75, 1.0]:
+            y = pad_t + draw_h - frac * draw_h
+            p.drawLine(pad_l, int(y), W - pad_r, int(y))
+            lbl = str(int(vmax * frac))
+            p.setPen(QC(TEXT_DIM))
+            p.drawText(0, int(y) - 7, pad_l - 4, 14, Qt.AlignRight | Qt.AlignVCenter, lbl)
+            p.setPen(grid_pen)
+
+        # Area fill (dégradé)
+        path_area = QPainterPath()
+        path_area.moveTo(x_of(0), pad_t + draw_h)
+        for i, v in enumerate(values):
+            path_area.lineTo(x_of(i), y_of(v))
+        path_area.lineTo(x_of(n - 1), pad_t + draw_h)
+        path_area.closeSubpath()
+
+        grad = QLinearGradient(0, pad_t, 0, pad_t + draw_h)
+        from PySide6.QtGui import QColor as QC2
+        c_top = QC2(ACCENT); c_top.setAlpha(80)
+        c_bot = QC2(ACCENT); c_bot.setAlpha(0)
+        grad.setColorAt(0.0, c_top)
+        grad.setColorAt(1.0, c_bot)
+        p.setBrush(grad)
+        p.setPen(Qt.NoPen)
+        p.drawPath(path_area)
+
+        # Courbe
+        line_pen = QPen(QC(ACCENT))
+        line_pen.setWidth(2)
+        p.setPen(line_pen)
+        p.setBrush(Qt.NoBrush)
+        path_line = QPainterPath()
+        path_line.moveTo(x_of(0), y_of(values[0]))
+        for i in range(1, n):
+            path_line.lineTo(x_of(i), y_of(values[i]))
+        p.drawPath(path_line)
+
+        # Points sur valeurs > 0
+        p.setBrush(QC(ACCENT))
+        for i, v in enumerate(values):
+            if v > 0:
+                p.drawEllipse(int(x_of(i)) - 3, int(y_of(v)) - 3, 6, 6)
+
+        # Labels dates (début, milieu, fin)
+        p.setPen(QC(TEXT_DIM))
+        label_font = self.font()
+        label_font.setPointSize(8)
+        p.setFont(label_font)
+        indices = [0, n // 2, n - 1] if n >= 3 else list(range(n))
+        for i in set(indices):
+            lbl = dates[i][5:]  # MM-DD
+            p.drawText(int(x_of(i)) - 20, H - pad_b + 4, 40, pad_b - 2,
+                       Qt.AlignHCenter | Qt.AlignTop, lbl)
+
+        p.end()
+
+
+# ---------------------------------------------------------------
 # AdminPanel — fenêtre principale
 # ---------------------------------------------------------------
 
@@ -2147,9 +2253,10 @@ class AdminPanel(QMainWindow):
         self._filtered_clients: list = []
 
         self.setWindowTitle("MyStrow — Admin")
-        self.setMinimumSize(900, 580)
+        self.setMinimumSize(1000, 600)
         self._build_ui()
         self._load_clients()
+        self._load_github_downloads()
 
         # Rafraîchissement automatique du token toutes les 50 min (expire à 60 min)
         self._token_timer = QTimer(self)
@@ -2228,23 +2335,35 @@ class AdminPanel(QMainWindow):
                        f" border-radius: 0; font-size: 12px; padding: 0 14px; }}"
                        f"QPushButton:hover {{ color: {TEXT}; }}")
 
+        self._btn_nav_stats = QPushButton("Stats")
+        self._btn_nav_stats.setFixedHeight(38)
+        self._btn_nav_stats.setStyleSheet(_nav_active)
+        self._btn_nav_stats.clicked.connect(lambda: self._switch_view(0))
+        nav_lay.addWidget(self._btn_nav_stats)
+
         self._btn_nav_lic = QPushButton("Licences")
         self._btn_nav_lic.setFixedHeight(38)
-        self._btn_nav_lic.setStyleSheet(_nav_active)
-        self._btn_nav_lic.clicked.connect(lambda: self._switch_view(0))
+        self._btn_nav_lic.setStyleSheet(_nav_idle)
+        self._btn_nav_lic.clicked.connect(lambda: self._switch_view(1))
         nav_lay.addWidget(self._btn_nav_lic)
 
         self._btn_nav_fix = QPushButton("Fixtures")
         self._btn_nav_fix.setFixedHeight(38)
         self._btn_nav_fix.setStyleSheet(_nav_idle)
-        self._btn_nav_fix.clicked.connect(lambda: self._switch_view(1))
+        self._btn_nav_fix.clicked.connect(lambda: self._switch_view(2))
         nav_lay.addWidget(self._btn_nav_fix)
 
         self._btn_nav_release = QPushButton("Release")
         self._btn_nav_release.setFixedHeight(38)
         self._btn_nav_release.setStyleSheet(_nav_idle)
-        self._btn_nav_release.clicked.connect(lambda: self._switch_view(2))
+        self._btn_nav_release.clicked.connect(lambda: self._switch_view(3))
         nav_lay.addWidget(self._btn_nav_release)
+
+        self._btn_nav_blog = QPushButton("Blog IA")
+        self._btn_nav_blog.setFixedHeight(38)
+        self._btn_nav_blog.setStyleSheet(_nav_idle)
+        self._btn_nav_blog.clicked.connect(lambda: self._switch_view(4))
+        nav_lay.addWidget(self._btn_nav_blog)
 
         nav_lay.addStretch()
         main_lay.addWidget(nav_bar)
@@ -2253,12 +2372,13 @@ class AdminPanel(QMainWindow):
         self._content_stack = QStackedWidget()
         main_lay.addWidget(self._content_stack, 1)
 
-        # ── Page 0 : Licences ─────────────────────────────────────────────────
+        # ── Page 0 : Stats (sera construite par _build_stats_page) ────────────
+
+        # ── Page 1 : Licences ─────────────────────────────────────────────────
         lic_page = QWidget()
         lic_lay = QVBoxLayout(lic_page)
         lic_lay.setContentsMargins(0, 0, 0, 0)
         lic_lay.setSpacing(0)
-        self._content_stack.addWidget(lic_page)
 
         # ── Barre recherche + compteur ────────────────────────────────────────
         search_bar = QFrame()
@@ -2401,13 +2521,507 @@ class AdminPanel(QMainWindow):
 
         lic_lay.addWidget(action_bar)
 
-        # ── Page 1 : Fixtures ─────────────────────────────────────────────────
+        # ── Page 0 : Stats ────────────────────────────────────────────────────
+        self._build_stats_page()
+
+        # ── Ajout de la page Licences (index 1) ───────────────────────────────
+        self._content_stack.addWidget(lic_page)
+
+        # ── Page 2 : Fixtures ─────────────────────────────────────────────────
         self._build_fixtures_panel()
 
-        # ── Page 2 : Release ──────────────────────────────────────────────────
+        # ── Page 3 : Release ──────────────────────────────────────────────────
         self._build_release_panel()
 
+        # ── Page 4 : Blog IA ──────────────────────────────────────────────────
+        from blog_panel import BlogPanel
+        self._blog_panel = BlogPanel()
+        self._content_stack.addWidget(self._blog_panel)
+
     # ------------------------------------------------------------------
+
+    # ── Page Stats ────────────────────────────────────────────────────────────
+
+    def _build_stats_page(self):
+        """Construit la page Stats complète (onglet index 0)."""
+        page = QWidget()
+        page.setStyleSheet(f"background: {BG_MAIN};")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self._content_stack.addWidget(page)
+
+        # ── En-tête ───────────────────────────────────────────────────────────
+        hdr = QFrame()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet(f"background:{BG_PANEL}; border-bottom:1px solid #1e1e1e;")
+        hdr_lay = QHBoxLayout(hdr)
+        hdr_lay.setContentsMargins(20, 0, 20, 0)
+        lbl_title = QLabel("Vue d'ensemble")
+        lbl_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_title.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        hdr_lay.addWidget(lbl_title)
+        hdr_lay.addStretch()
+        btn_ref = QPushButton("↺  Actualiser")
+        btn_ref.setFixedHeight(28)
+        btn_ref.setStyleSheet(_BTN_SECONDARY)
+        btn_ref.clicked.connect(lambda: (self._load_clients(), self._load_github_downloads()))
+        hdr_lay.addWidget(btn_ref)
+        root.addWidget(hdr)
+
+        # ── Zone scrollable ───────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border:none; }")
+        inner = QWidget()
+        inner.setStyleSheet(f"background:{BG_MAIN};")
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(24, 20, 24, 24)
+        inner_lay.setSpacing(20)
+        scroll.setWidget(inner)
+        root.addWidget(scroll, 1)
+
+        # ── Ligne 1 : KPI cards ───────────────────────────────────────────────
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(12)
+
+        def _kpi(icon, label, color=ACCENT):
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background:{BG_PANEL}; border-radius:8px;"
+                f" border:1px solid #222; }}")
+            card.setFixedHeight(90)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(16, 10, 16, 10)
+            cl.setSpacing(2)
+            top = QHBoxLayout()
+            top.setSpacing(6)
+            li = QLabel(icon)
+            li.setStyleSheet(f"color:{color}; font-size:15px; background:transparent;")
+            top.addWidget(li)
+            lv = QLabel("—")
+            lv.setFont(QFont("Segoe UI", 22, QFont.Bold))
+            lv.setStyleSheet(f"color:{color}; background:transparent;")
+            top.addWidget(lv, 1)
+            cl.addLayout(top)
+            ln = QLabel(label)
+            ln.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+            cl.addWidget(ln)
+            return card, lv
+
+        card, self._stat_downloads = _kpi("↓", "Téléchargements GitHub")
+        kpi_row.addWidget(card)
+        card, self._stat_total    = _kpi("◉", "Licences totales", "#ffffff")
+        kpi_row.addWidget(card)
+        card, self._stat_active   = _kpi("✔", "Actives", "#2ecc71")
+        kpi_row.addWidget(card)
+        card, self._stat_expiring = _kpi("⚠", "Expirent < 30j", "#f39c12")
+        kpi_row.addWidget(card)
+        card, self._stat_expired  = _kpi("✕", "Expirées", "#e74c3c")
+        kpi_row.addWidget(card)
+        card, self._stat_machines = _kpi("⬛", "Machines enregistrées", TEXT_DIM)
+        kpi_row.addWidget(card)
+        inner_lay.addLayout(kpi_row)
+
+        # ── Ligne 1b : KPI secondaires ────────────────────────────────────────
+        kpi_row2 = QHBoxLayout()
+        kpi_row2.setSpacing(12)
+        card, self._stat_rate       = _kpi("%",  "Taux d'activité",      ACCENT)
+        kpi_row2.addWidget(card)
+        card, self._stat_new_month  = _kpi("★",  "Nouveaux ce mois",     "#3498db")
+        kpi_row2.addWidget(card)
+        card, self._stat_growth     = _kpi("↑",  "Croissance MoM",       "#2ecc71")
+        kpi_row2.addWidget(card)
+        card, self._stat_avg_mach   = _kpi("∅",  "Moy. machines/lic",    TEXT_DIM)
+        kpi_row2.addWidget(card)
+        card, self._stat_stripe_pct = _kpi("$",  "Part Stripe",          "#635bff")
+        kpi_row2.addWidget(card)
+        card, self._stat_lifetime_pct = _kpi("∞", "Part À vie",          "#f39c12")
+        kpi_row2.addWidget(card)
+        inner_lay.addLayout(kpi_row2)
+
+        # ── Ligne 2 : Plans + Activité 30j ───────────────────────────────────
+        mid = QHBoxLayout()
+        mid.setSpacing(16)
+
+        # ── Plans ──────────────────────────────────────────────────────────
+        plan_card = QFrame()
+        plan_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        plan_card.setFixedWidth(280)
+        plan_lay = QVBoxLayout(plan_card)
+        plan_lay.setContentsMargins(16, 14, 16, 14)
+        plan_lay.setSpacing(10)
+
+        t = QLabel("Répartition plans")
+        t.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        plan_lay.addWidget(t)
+
+        self._stat_plan_bars: dict = {}
+        for key, label, color in [
+            ("lifetime", "À vie",   ACCENT),
+            ("annual",   "Annuel",  "#9b59b6"),
+            ("monthly",  "Mensuel", "#3498db"),
+            ("stripe",   "Stripe",  "#635bff"),
+            ("manuel",   "Manuel",  "#7f8c8d"),
+        ]:
+            row_w = QWidget()
+            row_w.setStyleSheet("background:transparent;")
+            row_l = QVBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(2)
+
+            top_row = QHBoxLayout()
+            lbl_n = QLabel(label)
+            lbl_n.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+            top_row.addWidget(lbl_n)
+            top_row.addStretch()
+            lbl_v = QLabel("—")
+            lbl_v.setStyleSheet(f"color:{TEXT}; font-size:11px; font-weight:bold; background:transparent;")
+            top_row.addWidget(lbl_v)
+            row_l.addLayout(top_row)
+
+            bar_bg = QFrame()
+            bar_bg.setFixedHeight(6)
+            bar_bg.setStyleSheet("background:#222; border-radius:3px;")
+            bar_inner = QFrame(bar_bg)
+            bar_inner.setFixedHeight(6)
+            bar_inner.setStyleSheet(f"background:{color}; border-radius:3px;")
+            bar_inner.resize(0, 6)
+
+            row_l.addWidget(bar_bg)
+            plan_lay.addWidget(row_w)
+            self._stat_plan_bars[key] = (lbl_v, bar_bg, bar_inner)
+
+        plan_lay.addStretch()
+        mid.addWidget(plan_card)
+
+        # ── Activité 30 derniers jours ─────────────────────────────────────
+        act_card = QFrame()
+        act_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        act_lay = QVBoxLayout(act_card)
+        act_lay.setContentsMargins(16, 14, 16, 14)
+        act_lay.setSpacing(10)
+
+        t2 = QLabel("Nouvelles licences — 30 derniers jours")
+        t2.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t2.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        act_lay.addWidget(t2)
+
+        self._activity_container = QWidget()
+        self._activity_container.setStyleSheet("background:transparent;")
+        self._activity_layout = QVBoxLayout(self._activity_container)
+        self._activity_layout.setContentsMargins(0, 0, 0, 0)
+        self._activity_layout.setSpacing(4)
+        act_lay.addWidget(self._activity_container)
+        act_lay.addStretch()
+        mid.addWidget(act_card, 1)
+
+        inner_lay.addLayout(mid)
+
+        # ── Ligne 3 : Releases GitHub ─────────────────────────────────────────
+        rel_card = QFrame()
+        rel_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        rel_lay = QVBoxLayout(rel_card)
+        rel_lay.setContentsMargins(16, 14, 16, 14)
+        rel_lay.setSpacing(8)
+
+        t3 = QLabel("Téléchargements par version GitHub")
+        t3.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t3.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        rel_lay.addWidget(t3)
+
+        self._releases_table = QTableWidget()
+        self._releases_table.setColumnCount(4)
+        self._releases_table.setHorizontalHeaderLabels(["Version", "Date", "Fichier", "Téléchargements"])
+        self._releases_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._releases_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._releases_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self._releases_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._releases_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._releases_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self._releases_table.verticalHeader().setVisible(False)
+        self._releases_table.setShowGrid(False)
+        self._releases_table.setAlternatingRowColors(True)
+        self._releases_table.setFixedHeight(200)
+        rel_lay.addWidget(self._releases_table)
+        inner_lay.addWidget(rel_card)
+
+        # ── Ligne 4 : Sparkline 90j + Clients récents ─────────────────────────
+        row4 = QHBoxLayout()
+        row4.setSpacing(16)
+
+        # Sparkline
+        spark_card = QFrame()
+        spark_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        spark_lay = QVBoxLayout(spark_card)
+        spark_lay.setContentsMargins(16, 14, 16, 14)
+        spark_lay.setSpacing(8)
+        t4 = QLabel("Inscriptions — 90 derniers jours")
+        t4.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t4.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        spark_lay.addWidget(t4)
+        self._sparkline = _SparklineWidget()
+        spark_lay.addWidget(self._sparkline, 1)
+        row4.addWidget(spark_card, 3)
+
+        # Clients récents
+        recent_card = QFrame()
+        recent_card.setStyleSheet(
+            f"QFrame {{ background:{BG_PANEL}; border-radius:8px; border:1px solid #222; }}")
+        recent_lay = QVBoxLayout(recent_card)
+        recent_lay.setContentsMargins(16, 14, 16, 14)
+        recent_lay.setSpacing(8)
+        t5 = QLabel("Inscriptions récentes")
+        t5.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        t5.setStyleSheet(f"color:{TEXT}; background:transparent;")
+        recent_lay.addWidget(t5)
+        self._recent_table = QTableWidget()
+        self._recent_table.setColumnCount(4)
+        self._recent_table.setHorizontalHeaderLabels(["Email", "Plan", "Source", "Date"])
+        self._recent_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._recent_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._recent_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._recent_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._recent_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._recent_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self._recent_table.verticalHeader().setVisible(False)
+        self._recent_table.setShowGrid(False)
+        self._recent_table.setAlternatingRowColors(True)
+        self._recent_table.setFixedHeight(220)
+        recent_lay.addWidget(self._recent_table)
+        row4.addWidget(recent_card, 2)
+
+        inner_lay.addLayout(row4)
+        inner_lay.addStretch()
+
+    def _refresh_stats(self):
+        """Met à jour tous les widgets de la page Stats depuis self._clients."""
+        from collections import defaultdict
+        now = datetime.now(timezone.utc).timestamp()
+        today = datetime.now(timezone.utc).date()
+
+        total = len(self._clients)
+        active = expiring = expired = machines = 0
+        stripe_count = 0
+        plan_counts: dict = {"lifetime": 0, "annual": 0, "monthly": 0,
+                             "stripe": 0, "manuel": 0}
+        daily_30: dict = defaultdict(int)   # date_str -> nb inscriptions (30j)
+        daily_90: dict = defaultdict(int)   # date_str -> nb inscriptions (90j)
+        new_this_month = 0
+        new_last_month = 0
+        first_of_month = today.replace(day=1)
+        import calendar
+        prev_month_end   = first_of_month
+        prev_month_start = (prev_month_end.replace(day=1) -
+                            __import__('datetime').timedelta(days=1)).replace(day=1)
+
+        clients_with_date = []
+
+        for c in self._clients:
+            expiry    = c.get("expiry_utc", 0)
+            days_left = int((expiry - now) / 86400) if expiry else -1
+            if days_left > 30:   active    += 1
+            elif days_left >= 0: expiring  += 1
+            else:                expired   += 1
+            machines += len(c.get("machines", []))
+            pt = c.get("plan_type", "")
+            if pt in plan_counts:
+                plan_counts[pt] += 1
+            if c.get("stripe_customer_id"):
+                plan_counts["stripe"] += 1
+                stripe_count += 1
+            else:
+                plan_counts["manuel"] += 1
+            created = c.get("created_utc")
+            if created:
+                try:
+                    d = datetime.fromtimestamp(float(created), tz=timezone.utc).date()
+                    age = (today - d).days
+                    if age <= 30:
+                        daily_30[d.isoformat()] += 1
+                    if age <= 90:
+                        daily_90[d.isoformat()] += 1
+                    if d >= first_of_month:
+                        new_this_month += 1
+                    elif prev_month_start <= d < prev_month_end:
+                        new_last_month += 1
+                    clients_with_date.append((d, c))
+                except Exception:
+                    pass
+
+        # ── KPI ligne 1 ──────────────────────────────────────────────────────
+        self._stat_total.setText(str(total))
+        self._stat_active.setText(str(active))
+        self._stat_expiring.setText(str(expiring))
+        self._stat_expired.setText(str(expired))
+        self._stat_machines.setText(str(machines))
+
+        # ── KPI ligne 2 ──────────────────────────────────────────────────────
+        rate = int(active / total * 100) if total else 0
+        self._stat_rate.setText(f"{rate}%")
+
+        self._stat_new_month.setText(str(new_this_month))
+
+        if new_last_month > 0:
+            growth = int((new_this_month - new_last_month) / new_last_month * 100)
+            sign = "+" if growth >= 0 else ""
+            color = "#2ecc71" if growth >= 0 else "#e74c3c"
+            self._stat_growth.setText(f"{sign}{growth}%")
+            self._stat_growth.setStyleSheet(
+                f"color:{color}; background:transparent; font-size:22px; font-weight:bold;")
+        else:
+            self._stat_growth.setText("—")
+
+        avg_mach = f"{machines / total:.1f}" if total else "—"
+        self._stat_avg_mach.setText(avg_mach)
+
+        stripe_pct = int(stripe_count / total * 100) if total else 0
+        self._stat_stripe_pct.setText(f"{stripe_pct}%")
+
+        lft = plan_counts.get("lifetime", 0)
+        lft_pct = int(lft / total * 100) if total else 0
+        self._stat_lifetime_pct.setText(f"{lft_pct}%")
+
+        # ── Barres plans ─────────────────────────────────────────────────────
+        max_plan = max(plan_counts.values(), default=1) or 1
+        for key, (lbl_v, bar_bg, bar_inner) in self._stat_plan_bars.items():
+            n = plan_counts.get(key, 0)
+            lbl_v.setText(str(n))
+            bar_bg.show()
+            bar_inner._ratio = n / max_plan
+            bar_inner.setFixedWidth(max(2, int(bar_bg.width() * n / max_plan)))
+
+        # ── Activité 30j ─────────────────────────────────────────────────────
+        for i in reversed(range(self._activity_layout.count())):
+            w = self._activity_layout.itemAt(i).widget()
+            if w: w.deleteLater()
+
+        if daily_30:
+            max_day = max(daily_30.values(), default=1)
+            for day_str in sorted(daily_30.keys(), reverse=True):
+                n = daily_30[day_str]
+                row_w = QWidget()
+                row_w.setStyleSheet("background:transparent;")
+                row_l = QHBoxLayout(row_w)
+                row_l.setContentsMargins(0, 0, 0, 0)
+                row_l.setSpacing(8)
+
+                lbl_d = QLabel(day_str)
+                lbl_d.setFixedWidth(90)
+                lbl_d.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px; background:transparent;")
+                row_l.addWidget(lbl_d)
+
+                bar_bg = QFrame()
+                bar_bg.setFixedHeight(10)
+                bar_bg.setStyleSheet("background:#222; border-radius:5px;")
+                bar_fill = QFrame(bar_bg)
+                bar_fill.setFixedHeight(10)
+                fill_w = max(4, int(200 * n / max_day))
+                bar_fill.setFixedWidth(fill_w)
+                bar_fill.setStyleSheet(f"background:{ACCENT}; border-radius:5px;")
+                row_l.addWidget(bar_bg, 1)
+
+                lbl_n = QLabel(str(n))
+                lbl_n.setFixedWidth(24)
+                lbl_n.setStyleSheet(f"color:{ACCENT}; font-size:11px; font-weight:bold; background:transparent;")
+                row_l.addWidget(lbl_n)
+
+                self._activity_layout.addWidget(row_w)
+        else:
+            lbl_empty = QLabel("Aucune donnée created_utc disponible")
+            lbl_empty.setStyleSheet(f"color:{TEXT_DIM}; font-size:11px;")
+            self._activity_layout.addWidget(lbl_empty)
+
+        # ── Sparkline 90j ────────────────────────────────────────────────────
+        if daily_90:
+            import datetime as _dt
+            start_90 = today - _dt.timedelta(days=89)
+            all_days = []
+            cur = start_90
+            while cur <= today:
+                all_days.append((cur.isoformat(), daily_90.get(cur.isoformat(), 0)))
+                cur += _dt.timedelta(days=1)
+            self._sparkline.set_data(all_days)
+        else:
+            self._sparkline.set_data([])
+
+        # ── Clients récents ───────────────────────────────────────────────────
+        clients_with_date.sort(key=lambda x: x[0], reverse=True)
+        recent = clients_with_date[:8]
+        _forfait_labels = {"monthly": "Mensuel", "annual": "Annuel", "lifetime": "À vie"}
+        self._recent_table.setRowCount(len(recent))
+        for i, (d, c) in enumerate(recent):
+            email  = c.get("email", "")
+            plan   = _forfait_labels.get(c.get("plan_type", ""), c.get("plan_type", "—"))
+            source = "Stripe" if c.get("stripe_customer_id") else "Manuel"
+            src_color = "#635bff" if source == "Stripe" else TEXT_DIM
+            self._recent_table.setItem(i, 0, QTableWidgetItem(email))
+            self._recent_table.setItem(i, 1, QTableWidgetItem(plan))
+            src_item = QTableWidgetItem(source)
+            src_item.setForeground(QColor(src_color))
+            self._recent_table.setItem(i, 2, src_item)
+            self._recent_table.setItem(i, 3, QTableWidgetItem(d.isoformat()))
+
+    def _load_github_downloads(self):
+        """Récupère les téléchargements par release GitHub (avec pagination)."""
+        if not _RELEASE_OK:
+            return
+        self._stat_downloads.setText("…")
+
+        def _fetch():
+            all_releases = []
+            page = 1
+            while True:
+                releases = _release_gh_api(f"/releases?per_page=100&page={page}")
+                if not releases:
+                    break
+                all_releases.extend(releases)
+                if len(releases) < 100:
+                    break
+                page += 1
+            return all_releases
+
+        def _on_releases(releases: list):
+            if not releases:
+                self._stat_downloads.setText("—")
+                return
+            total = sum(
+                asset.get("download_count", 0)
+                for rel in releases
+                for asset in rel.get("assets", [])
+            )
+            n_str = f"{total:,}".replace(",", "\u202f")
+            self._stat_downloads.setText(n_str)
+            self._populate_releases_table(releases)
+
+        _run_async(self, _fetch, on_success=_on_releases,
+                   on_error=lambda _: self._stat_downloads.setText("—"))
+
+    def _populate_releases_table(self, releases: list):
+        rows = []
+        for rel in releases:
+            tag  = rel.get("tag_name", "")
+            date = rel.get("published_at", "")[:10]
+            for asset in rel.get("assets", []):
+                rows.append((tag, date, asset.get("name", ""), asset.get("download_count", 0)))
+        rows.sort(key=lambda r: r[1], reverse=True)
+
+        self._releases_table.setRowCount(len(rows))
+        for i, (tag, date, name, count) in enumerate(rows):
+            self._releases_table.setItem(i, 0, QTableWidgetItem(tag))
+            self._releases_table.setItem(i, 1, QTableWidgetItem(date))
+            self._releases_table.setItem(i, 2, QTableWidgetItem(name))
+            count_item = QTableWidgetItem(str(count))
+            count_item.setTextAlignment(Qt.AlignCenter)
+            count_item.setForeground(QColor(ACCENT))
+            self._releases_table.setItem(i, 3, count_item)
+
+    # ── Navigation ────────────────────────────────────────────────────────────
 
     def _switch_view(self, idx: int):
         _active = (f"QPushButton {{ background: transparent; color: {ACCENT};"
@@ -2417,11 +3031,13 @@ class AdminPanel(QMainWindow):
                    f" border: none; border-bottom: 2px solid transparent;"
                    f" border-radius: 0; font-size: 12px; padding: 0 14px; }}"
                    f"QPushButton:hover {{ color: {TEXT}; }}")
-        self._btn_nav_lic.setStyleSheet(_active if idx == 0 else _idle)
-        self._btn_nav_fix.setStyleSheet(_active if idx == 1 else _idle)
-        self._btn_nav_release.setStyleSheet(_active if idx == 2 else _idle)
+        self._btn_nav_stats.setStyleSheet(_active if idx == 0 else _idle)
+        self._btn_nav_lic.setStyleSheet(_active if idx == 1 else _idle)
+        self._btn_nav_fix.setStyleSheet(_active if idx == 2 else _idle)
+        self._btn_nav_release.setStyleSheet(_active if idx == 3 else _idle)
+        self._btn_nav_blog.setStyleSheet(_active if idx == 4 else _idle)
         self._content_stack.setCurrentIndex(idx)
-        if idx == 1 and not self._fixtures_loaded:
+        if idx == 2 and not self._fixtures_loaded:
             self._load_fixtures()
 
     def _build_fixtures_panel(self):
@@ -2833,6 +3449,7 @@ class AdminPanel(QMainWindow):
         self._populate_table(clients)
         self.loading_lbl.hide()
         self.table.show()
+        self._refresh_stats()
 
     def _on_load_error(self, msg: str):
         self.loading_lbl.setText(f"Erreur de chargement : {msg}")
