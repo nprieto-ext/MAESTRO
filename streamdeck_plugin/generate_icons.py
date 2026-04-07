@@ -37,6 +37,7 @@ ICONS = [
     ("level",   "^",       "LEVEL",   BLUE,    "circle"),
     ("mute",    "M",       "MUTE",    ORANGE,  "circle"),
     ("scene",   "S",       "SCENE",   GREEN,   "circle"),
+    ("seq",     ">>|",     "SEQ",     YELLOW,  "circle"),
 ]
 
 SIZES = [72, 144]   # @1x et @2x

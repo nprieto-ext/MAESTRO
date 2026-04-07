@@ -147,7 +147,20 @@ def build_local_installer(version):
     # Generer le fichier .sig (requis par check_exe_integrity)
     generate_sig_file(dist_exe)
 
-    # 3) Build installeur avec Inno Setup
+    # 3) Génération des icônes StreamDeck
+    print("\n--- Icônes StreamDeck ---")
+    gen_icons = BASE_DIR / "streamdeck_plugin" / "generate_icons.py"
+    if gen_icons.exists():
+        result_icons = subprocess.run(
+            [sys.executable, str(gen_icons)],
+            cwd=str(BASE_DIR / "streamdeck_plugin"),
+        )
+        if result_icons.returncode != 0:
+            print("AVERTISSEMENT: Génération icônes StreamDeck échouée (non bloquant).")
+    else:
+        print("AVERTISSEMENT: generate_icons.py introuvable, icônes StreamDeck ignorées.")
+
+    # 4) Build installeur avec Inno Setup
     print("\n--- Inno Setup ---")
     iscc_paths = [
         r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",

@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('logo.png', '.'), ('mystrow.ico', '.')]
@@ -7,10 +9,12 @@ hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio']
 tmp_ret = collect_all('rtmidi')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+IS_MAC = sys.platform == 'darwin'
+icon_file = 'mystrow.icns' if (IS_MAC and os.path.exists('mystrow.icns')) else 'mystrow.ico'
 
 a = Analysis(
     ['main.py'],
-    pathex=['C:\\Users\\nikop\\Desktop\\MyStrow'],
+    pathex=['.'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -42,5 +46,17 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['mystrow.ico'],
+    icon=[icon_file],
 )
+
+if IS_MAC:
+    app = BUNDLE(
+        exe,
+        name='MyStrow.app',
+        icon=icon_file,
+        bundle_identifier='com.mystrow.app',
+        info_plist={
+            'NSHighResolutionCapable': True,
+            'CFBundleShortVersionString': '3.0.65',
+        },
+    )

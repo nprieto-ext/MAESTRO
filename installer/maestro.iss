@@ -1,6 +1,6 @@
 [Setup]
 AppName=MyStrow
-AppVersion=3.0.65
+AppVersion=3.0.66
 AppPublisher=MyStrow
 AppPublisherURL=https://mystrow.fr
 DefaultDirName={autopf}\MyStrow
@@ -13,6 +13,7 @@ WizardStyle=modern
 
 [Files]
 Source: "..\dist\MyStrow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\streamdeck_plugin\com.mystrow.streamdeck.sdPlugin\*"; DestDir: "{userappdata}\Elgato\StreamDeck\Plugins\com.mystrow.streamdeck.sdPlugin"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\MyStrow"; Filename: "{app}\MyStrow.exe"
