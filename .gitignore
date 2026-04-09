@@ -8,6 +8,7 @@ functions/.env
 functions/.env.*
 firebase_config.py
 smtp_config.py
+brevo_config.py
 service_account.json
 create_client.py
 activate_dev.py

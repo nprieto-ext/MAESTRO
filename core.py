@@ -43,7 +43,7 @@ FIREBASE_PROJECT_ID = "mystrow-907be"
 
 # === BREVO (email marketing + transactionnel) ===
 # Récupérer la clé API dans Brevo > SMTP & API > API Keys
-BREVO_API_KEY      = ""                # À remplir
+BREVO_API_KEY      = ""  # Clé stockée dans brevo_config.py (ignoré par git)
 BREVO_SENDER_EMAIL = "hello@mystrow.io"  # Domaine à vérifier dans Brevo
 BREVO_SENDER_NAME  = "MyStrow"
 BREVO_LIST_ID      = 3                  # ID de la liste newsletter (entier, 0 = sans liste)
@@ -54,6 +54,12 @@ try:
         FIREBASE_API_KEY = _fc.FIREBASE_API_KEY
     if getattr(_fc, "FIREBASE_PROJECT_ID", ""):
         FIREBASE_PROJECT_ID = _fc.FIREBASE_PROJECT_ID
+except ImportError:
+    pass
+try:
+    import brevo_config as _bc
+    if getattr(_bc, "BREVO_API_KEY", ""):
+        BREVO_API_KEY = _bc.BREVO_API_KEY
 except ImportError:
     pass
 
