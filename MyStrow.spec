@@ -4,6 +4,8 @@ import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('logo.png', '.'), ('mystrow.ico', '.')]
+if os.path.exists('fixtures_bundle_custom.json.gz'):
+    datas += [('fixtures_bundle_custom.json.gz', '.')]
 binaries = []
 hiddenimports = ['rtmidi', 'rtmidi._rtmidi', 'miniaudio']
 tmp_ret = collect_all('rtmidi')

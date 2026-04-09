@@ -99,19 +99,23 @@ def _fetch_custom_fixtures_bundle():
 
     out_path = BASE_DIR / "fixtures_bundle_custom.json.gz"
     print("\n--- Fetch fixtures Firestore → fixtures_bundle_custom.json.gz ---")
+
+    def _write_bundle(fixtures_list):
+        data = json.dumps(fixtures_list, ensure_ascii=False, indent=None).encode("utf-8")
+        with _gzip.open(out_path, "wb") as gz:
+            gz.write(data)
+
     try:
         from license_manager import get_current_id_token
         import firebase_client as fc
 
         token = get_current_id_token()
         if not token:
-            print("AVERTISSEMENT: pas de token Firebase — fixtures_bundle_custom ignoré.")
+            print("AVERTISSEMENT: pas de token Firebase — bundle vide généré.")
+            _write_bundle([])
             return
 
         fixtures = fc.fetch_all_gdtf_fixtures(token)
-        if not fixtures:
-            print("AVERTISSEMENT: aucune fixture Firestore récupérée.")
-            return
 
         # Nettoyer les champs internes et normaliser profile
         clean = []
@@ -121,12 +125,14 @@ def _fetch_custom_fixtures_bundle():
                 f["profile"] = f["modes"][0].get("profile", [])
             clean.append(f)
 
-        data = json.dumps(clean, ensure_ascii=False, indent=None).encode("utf-8")
-        with _gzip.open(out_path, "wb") as gz:
-            gz.write(data)
+        _write_bundle(clean)
         print(f"✓ {len(clean)} fixture(s) embarquée(s) dans {out_path.name}")
     except Exception as e:
-        print(f"AVERTISSEMENT: fetch fixtures Firestore échoué ({e}) — bundle ignoré.")
+        print(f"AVERTISSEMENT: fetch fixtures Firestore échoué ({e}) — bundle vide généré.")
+        try:
+            _write_bundle([])
+        except Exception:
+            pass
 
 
 def build_local_installer(version):
@@ -451,6 +457,8 @@ def main():
         build_local_installer(new_version)
 
     if choix in ("2", "3"):
+        # Fetch fixtures Firestore → bundle embarqué dans l'exe CI (GitHub Actions)
+        _fetch_custom_fixtures_bundle()
         run("git add -A")
         run(f'git commit -m "Release {new_version}"', allow_fail=True)
         run(f"git tag v{new_version}")
