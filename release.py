@@ -87,21 +87,72 @@ def generate_sig_file(exe_path):
     return sig_path
 
 
+def _fetch_custom_fixtures_bundle():
+    """
+    Récupère toutes les fixtures Firestore (gdtf_fixtures) et génère
+    fixtures_bundle_custom.json.gz à côté de release.py.
+    Non-bloquant : en cas d'erreur, un avertissement est affiché et le build continue.
+    """
+    import gzip as _gzip
+    import sys as _sys
+    _sys.path.insert(0, str(BASE_DIR))
+
+    out_path = BASE_DIR / "fixtures_bundle_custom.json.gz"
+    print("\n--- Fetch fixtures Firestore → fixtures_bundle_custom.json.gz ---")
+    try:
+        from license_manager import get_current_id_token
+        import firebase_client as fc
+
+        token = get_current_id_token()
+        if not token:
+            print("AVERTISSEMENT: pas de token Firebase — fixtures_bundle_custom ignoré.")
+            return
+
+        fixtures = fc.fetch_all_gdtf_fixtures(token)
+        if not fixtures:
+            print("AVERTISSEMENT: aucune fixture Firestore récupérée.")
+            return
+
+        # Nettoyer les champs internes et normaliser profile
+        clean = []
+        for fx in fixtures:
+            f = {k: v for k, v in fx.items() if not k.startswith("_")}
+            if not f.get("profile") and f.get("modes"):
+                f["profile"] = f["modes"][0].get("profile", [])
+            clean.append(f)
+
+        data = json.dumps(clean, ensure_ascii=False, indent=None).encode("utf-8")
+        with _gzip.open(out_path, "wb") as gz:
+            gz.write(data)
+        print(f"✓ {len(clean)} fixture(s) embarquée(s) dans {out_path.name}")
+    except Exception as e:
+        print(f"AVERTISSEMENT: fetch fixtures Firestore échoué ({e}) — bundle ignoré.")
+
+
 def build_local_installer(version):
     print("\n========== BUILD INSTALLEUR LOCAL ==========")
     dist_exe = BASE_DIR / "dist" / "MyStrow" / "MyStrow.exe"
     installer_out = BASE_DIR / "installer" / "installer_output" / "MyStrow_Setup.exe"
 
-    # 1) Nettoyage des anciens builds
+    # 1) Fetch fixtures Firestore → bundle embarqué dans l'exe
+    _fetch_custom_fixtures_bundle()
+
+    # 3) Nettoyage des anciens builds
     for d in ["dist", "build"]:
         p = BASE_DIR / d
         if p.exists():
             shutil.rmtree(p)
 
-    # 2) Build EXE via un .bat execute par cmd.exe (contourne MINGW64)
+    # 4) Build EXE via un .bat execute par cmd.exe (contourne MINGW64)
     print("\n--- PyInstaller ---")
     python_win = sys.executable.replace("/", "\\")
     base_win = str(BASE_DIR).replace("/", "\\")
+
+    _custom_bundle = BASE_DIR / "fixtures_bundle_custom.json.gz"
+    _custom_bundle_flag = (
+        f"--add-data \"fixtures_bundle_custom.json.gz;.\" "
+        if _custom_bundle.exists() else ""
+    )
 
     bat_path = BASE_DIR / "_build_tmp.bat"
     bat_path.write_text(
@@ -112,6 +163,7 @@ def build_local_installer(version):
         f"--icon=mystrow.ico "
         f"--add-data \"logo.png;.\" "
         f"--add-data \"mystrow.ico;.\" "
+        f"{_custom_bundle_flag}"
         f"--name=MyStrow "
         f"--paths=\"{base_win}\" "
         f"--hidden-import=rtmidi "

@@ -17,66 +17,36 @@ from PySide6.QtCore import Qt, Signal, QTimer, QSize, QRectF, QMimeData, QPoint
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QDrag, QPixmap, QCursor
 
 import gzip
-import time
 
 from builtin_fixtures import BUILTIN_FIXTURES
 
 # Cache module du bundle OFL (chargé une seule fois à la demande)
 _OFL_BUNDLE: list | None = None
 
-# Cache fixtures cloud (Firestore)
-_CLOUD_FIXTURES_CACHE_PATH = Path.home() / ".mystrow_cloud_fixtures.json"
-_CLOUD_FIXTURES_TTL = 6 * 3600  # 6 heures
-_cloud_fixtures_cache: list | None = None  # cache mémoire pour la session
+# Cache module du bundle custom (fixtures Firestore exportées depuis l'admin panel)
+_CUSTOM_BUNDLE: list | None = None
 
 
-def get_cloud_fixtures(force_refresh: bool = False) -> list:
-    """
-    Retourne les fixtures depuis Firestore (gdtf_fixtures), avec cache local 6h.
-    Retourne [] si hors-ligne ou pas de compte.
-    """
-    global _cloud_fixtures_cache
-    # Cache mémoire (session)
-    if not force_refresh and _cloud_fixtures_cache is not None:
-        return _cloud_fixtures_cache
-
-    # Cache disque
-    if not force_refresh and _CLOUD_FIXTURES_CACHE_PATH.exists():
-        try:
-            cached = json.loads(_CLOUD_FIXTURES_CACHE_PATH.read_text(encoding="utf-8"))
-            if time.time() - cached.get("ts", 0) < _CLOUD_FIXTURES_TTL:
-                _cloud_fixtures_cache = cached.get("fixtures", [])
-                return _cloud_fixtures_cache
-        except Exception:
-            pass
-
-    # Fetch Firestore
+def _load_custom_bundle() -> list:
+    """Charge fixtures_bundle_custom.json.gz en cache module (fixtures admin panel)."""
+    global _CUSTOM_BUNDLE
+    if _CUSTOM_BUNDLE is not None:
+        return _CUSTOM_BUNDLE
+    # Chercher à côté du script ou dans le dossier de l'exe (PyInstaller)
+    import sys as _sys
+    base = Path(getattr(_sys, "_MEIPASS", Path(__file__).parent))
+    bundle_path = base / "fixtures_bundle_custom.json.gz"
+    if not bundle_path.exists():
+        bundle_path = Path(__file__).parent / "fixtures_bundle_custom.json.gz"
+    if not bundle_path.exists():
+        _CUSTOM_BUNDLE = []
+        return _CUSTOM_BUNDLE
     try:
-        import firebase_client as fc
-        from license_manager import get_current_id_token
-        token = get_current_id_token()
-        if not token:
-            return _cloud_fixtures_cache or []
-        fixtures = fc.fetch_all_gdtf_fixtures(token)
-        _cloud_fixtures_cache = fixtures
-        try:
-            _CLOUD_FIXTURES_CACHE_PATH.write_text(
-                json.dumps({"ts": time.time(), "fixtures": fixtures}, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
-        return fixtures
+        with gzip.open(bundle_path, "rb") as f:
+            _CUSTOM_BUNDLE = json.loads(f.read().decode("utf-8"))
     except Exception:
-        # Fallback : cache disque même périmé
-        if _CLOUD_FIXTURES_CACHE_PATH.exists():
-            try:
-                data = json.loads(_CLOUD_FIXTURES_CACHE_PATH.read_text(encoding="utf-8"))
-                _cloud_fixtures_cache = data.get("fixtures", [])
-                return _cloud_fixtures_cache
-            except Exception:
-                pass
-        return []
+        _CUSTOM_BUNDLE = []
+    return _CUSTOM_BUNDLE
 
 def _load_ofl_bundle() -> list:
     """Charge fixtures_bundle.json.gz (OFL) en cache module."""
@@ -1097,23 +1067,23 @@ class FixtureEditorDialog(QDialog):
         btn_row.addWidget(btn_ok)
         vl.addLayout(btn_row)
 
-        # Builtins + bundle OFL + fixtures cloud (dédupliqués par nom+fabricant)
+        # Builtins + bundle OFL + bundle custom (admin panel) — dédupliqués
         _seen = {(fx["name"], fx.get("manufacturer", "")) for fx in BUILTIN_FIXTURES}
         ofl_extra = [
             fx for fx in _load_ofl_bundle()
             if (fx["name"], fx.get("manufacturer", "")) not in _seen
         ]
         _seen.update((fx["name"], fx.get("manufacturer", "")) for fx in ofl_extra)
-        cloud_extra = []
-        for fx in get_cloud_fixtures():
-            if (fx.get("name", ""), fx.get("manufacturer", "")) not in _seen:
-                # Normaliser profile si absent
+        custom_extra = []
+        for fx in _load_custom_bundle():
+            key = (fx.get("name", ""), fx.get("manufacturer", ""))
+            if key not in _seen:
                 if not fx.get("profile") and fx.get("modes"):
                     fx = dict(fx)
                     fx["profile"] = fx["modes"][0].get("profile", [])
-                cloud_extra.append(fx)
-                _seen.add((fx["name"], fx.get("manufacturer", "")))
-        all_fixtures = list(BUILTIN_FIXTURES) + ofl_extra + cloud_extra
+                custom_extra.append(fx)
+                _seen.add(key)
+        all_fixtures = list(BUILTIN_FIXTURES) + ofl_extra + custom_extra
 
         def _fill(q=""):
             lst.clear()

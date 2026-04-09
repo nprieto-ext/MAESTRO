@@ -8112,11 +8112,11 @@ class MainWindow(QMainWindow):
                             _user_fx.append(_f)
             except Exception:
                 pass
-            _cloud_fx = []
+            _custom_fx = []
             try:
-                from fixture_editor import get_cloud_fixtures as _gcc
+                from fixture_editor import _load_custom_bundle as _lcb2
                 _seen2 = {(f["name"], f.get("manufacturer", "")) for f in list(_BF) + _user_fx}
-                for _cf in _gcc():
+                for _cf in _lcb2():
                     if not isinstance(_cf, dict) or not _cf.get("name"):
                         continue
                     _k = (_cf["name"], _cf.get("manufacturer", ""))
@@ -8125,11 +8125,11 @@ class MainWindow(QMainWindow):
                     if not _cf.get("profile") and _cf.get("modes"):
                         _cf = dict(_cf)
                         _cf["profile"] = _cf["modes"][0].get("profile", [])
-                    _cloud_fx.append(_cf)
+                    _custom_fx.append(_cf)
                     _seen2.add(_k)
             except Exception:
                 pass
-            _all = list(_BF) + _user_fx + _cloud_fx
+            _all = list(_BF) + _user_fx + _custom_fx
 
             # ── Picker ───────────────────────────────────────────────────────
             from PySide6.QtWidgets import QListWidget as _QListWidget, QListWidgetItem as _QLWI
@@ -8882,15 +8882,15 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # Fixtures cloud Firestore (admin panel)
-        _cloud_fixtures = []
+        # Fixtures du bundle custom (admin panel → embarquées dans l'exe)
+        _custom_fixtures = []
         try:
-            from fixture_editor import get_cloud_fixtures as _get_cloud_fixtures
+            from fixture_editor import _load_custom_bundle as _lcb
             _seen_names = {
                 (f["name"], f.get("manufacturer", ""))
                 for f in list(BUILTIN_FIXTURES) + _user_fixtures
             }
-            for _cf in _get_cloud_fixtures():
+            for _cf in _lcb():
                 if not isinstance(_cf, dict) or not _cf.get("name"):
                     continue
                 key = (_cf["name"], _cf.get("manufacturer", ""))
@@ -8899,12 +8899,12 @@ class MainWindow(QMainWindow):
                 if not _cf.get("profile") and _cf.get("modes"):
                     _cf = dict(_cf)
                     _cf["profile"] = _cf["modes"][0].get("profile", [])
-                _cloud_fixtures.append(_cf)
+                _custom_fixtures.append(_cf)
                 _seen_names.add(key)
         except Exception:
             pass
 
-        ALL_FIXTURES = list(BUILTIN_FIXTURES) + _user_fixtures + _cloud_fixtures
+        ALL_FIXTURES = list(BUILTIN_FIXTURES) + _user_fixtures + _custom_fixtures
 
         FIXTURE_LIBRARY = {}
         for _fx in ALL_FIXTURES:
