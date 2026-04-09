@@ -651,3 +651,31 @@ def fetch_gdtf_fixtures(
         }
 
     return {"fixtures": fixtures, "next_cursor": next_cursor}
+
+
+def fetch_all_gdtf_fixtures(id_token: str) -> list:
+    """
+    Charge TOUTES les fixtures de la collection gdtf_fixtures (pagination auto).
+    Retourne une liste de dicts fixture standardisés.
+    """
+    results = []
+    page_token = None
+    while True:
+        url = f"{_FS_BASE}/gdtf_fixtures?pageSize=300"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {id_token}"}
+        )
+        ctx = _SSL_CTX
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            data = json.loads(resp.read().decode())
+        docs = data.get("documents", [])
+        for doc in docs:
+            d = _doc_to_dict(doc)
+            if d.get("name"):
+                results.append(d)
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return results

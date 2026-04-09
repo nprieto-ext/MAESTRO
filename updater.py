@@ -648,7 +648,7 @@ class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("about_title"))
-        self.setFixedSize(380, 380)
+        self.setFixedSize(380, 300)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet("""
             QDialog, QWidget {
@@ -741,54 +741,9 @@ class AboutDialog(QDialog):
         lay.addWidget(self.btn_recheck, alignment=Qt.AlignCenter)
         lay.addStretch()
 
-        # Sélecteur de langue
-        lang_lay = QHBoxLayout()
-        lang_lay.setSpacing(0)
-        lang_lbl = QLabel("🌐")
-        lang_lbl.setStyleSheet("color:#444; font-size:13px; background:transparent;")
-        lang_lay.addWidget(lang_lbl)
-        lang_lay.addSpacing(6)
-
-        self._btn_fr = QPushButton("FR")
-        self._btn_en = QPushButton("EN")
-        for btn, code in ((self._btn_fr, "fr"), (self._btn_en, "en")):
-            btn.setFixedSize(36, 22)
-            btn.setCheckable(True)
-            btn.setChecked(get_language() == code)
-            btn.setStyleSheet("""
-                QPushButton { background:#222; color:#666; border:1px solid #333;
-                              border-radius:3px; font-size:10px; font-weight:bold; }
-                QPushButton:checked { background:#0078d4; color:#fff; border-color:#0078d4; }
-                QPushButton:hover:!checked { background:#2a2a2a; color:#aaa; }
-            """)
-            lang_lay.addWidget(btn)
-
-        self._lang_restart_lbl = QLabel(tr("lang_restart_required"))
-        self._lang_restart_lbl.setStyleSheet("color:#555; font-size:9px; background:transparent;")
-        self._lang_restart_lbl.hide()
-        lang_lay.addSpacing(8)
-        lang_lay.addWidget(self._lang_restart_lbl)
-        lang_lay.addStretch()
-
-        self._btn_fr.clicked.connect(lambda: self._set_lang("fr"))
-        self._btn_en.clicked.connect(lambda: self._set_lang("en"))
-
-        lay.addLayout(lang_lay)
-        lay.addSpacing(8)
-
         # Boutons bas
         btns_lay = QHBoxLayout()
         btns_lay.setSpacing(8)
-
-        btn_idea = QPushButton(tr("btn_submit_idea"))
-        btn_idea.setFixedHeight(34)
-        btn_idea.setStyleSheet("""
-            QPushButton       { background: #1e1a00; color: #c9b800; border: 1px solid #3a3200;
-                                border-radius: 4px; font-size: 11px; }
-            QPushButton:hover { background: #2a2400; color: #e2ce16; }
-        """)
-        btn_idea.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://mystrow.fr/contact")))
-        btns_lay.addWidget(btn_idea)
 
         btn_close = QPushButton(tr("btn_close"))
         btn_close.setFixedHeight(34)
@@ -801,15 +756,6 @@ class AboutDialog(QDialog):
         btns_lay.addWidget(btn_close)
 
         lay.addLayout(btns_lay)
-
-    # ------------------------------------------------------------------
-
-    def _set_lang(self, code: str):
-        set_language(code)
-        self._btn_fr.setChecked(code == "fr")
-        self._btn_en.setChecked(code == "en")
-        self._lang_restart_lbl.setText(tr("lang_restart_required"))
-        self._lang_restart_lbl.show()
 
     # ------------------------------------------------------------------
 
