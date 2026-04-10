@@ -26,6 +26,16 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Ensure fixture bundle exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "fixtures_bundle_custom.json.gz")) {
+            python -c "import gzip,json; f=gzip.open('fixtures_bundle_custom.json.gz','wb'); f.write(json.dumps([]).encode('utf-8')); f.close()"
+            Write-Host "fixtures_bundle_custom.json.gz créé (bundle vide)"
+          } else {
+            Write-Host "fixtures_bundle_custom.json.gz présent"
+          }
+
       - name: Build EXE
         run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
 
