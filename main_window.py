@@ -907,6 +907,9 @@ class MainWindow(QMainWindow):
         self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
 
         about_menu = bar.addMenu(tr("menu_about"))
+        _logo_path = resource_path("logo.png")
+        if os.path.exists(_logo_path):
+            about_menu.setIcon(QIcon(_logo_path))
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
@@ -923,8 +926,8 @@ class MainWindow(QMainWindow):
         act_en.setChecked(get_language() == "en")
         act_fr.triggered.connect(lambda: self._change_language("fr"))
         act_en.triggered.connect(lambda: self._change_language("en"))
-
-        bar.addAction(tr("menu_restart"), self.restart_application)
+        about_menu.addSeparator()
+        about_menu.addAction(tr("menu_restart"), self.restart_application)
 
     def _create_video_frame(self):
         """Cree le frame video avec overlay image"""

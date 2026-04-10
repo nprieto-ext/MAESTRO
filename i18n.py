@@ -257,7 +257,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "menu_test_logo":        {"en": "🖼️ Send a test logo",          "fr": "🖼️ Envoi un logo de test"},
     "menu_broadcast_on":     {"en": "🖥️ Broadcast video on",        "fr": "🖥️ Diffuser video sur"},
     "menu_external_input":   {"en": "📱 External Input",             "fr": "📱 Entrée Externe"},
-    "menu_about":            {"en": "ℹ️ About",                     "fr": "ℹ️ A propos"},
+    "menu_about":            {"en": "About",                        "fr": "A propos"},
     "menu_about_updates":    {"en": "ℹ️ About / Updates",           "fr": "ℹ️ A propos / Mises à jour"},
     "menu_license":          {"en": "🔑 License",                   "fr": "🔑 Licence"},
     "menu_contact":          {"en": "✉️  Contact us",               "fr": "✉️  Nous contacter"},
