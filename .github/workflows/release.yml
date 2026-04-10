@@ -26,15 +26,37 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Ensure fixture bundle exists
+      - name: Fetch fixtures Firestore
+        env:
+          FIREBASE_ADMIN_EMAIL: ${{ secrets.FIREBASE_ADMIN_EMAIL }}
+          FIREBASE_ADMIN_PASSWORD: ${{ secrets.FIREBASE_ADMIN_PASSWORD }}
         shell: pwsh
         run: |
-          if (-not (Test-Path "fixtures_bundle_custom.json.gz")) {
-            python -c "import gzip,json; f=gzip.open('fixtures_bundle_custom.json.gz','wb'); f.write(json.dumps([]).encode('utf-8')); f.close()"
-            Write-Host "fixtures_bundle_custom.json.gz créé (bundle vide)"
-          } else {
-            Write-Host "fixtures_bundle_custom.json.gz présent"
-          }
+          python -c "
+import os, gzip, json, sys
+sys.path.insert(0, '.')
+email = os.environ.get('FIREBASE_ADMIN_EMAIL', '')
+password = os.environ.get('FIREBASE_ADMIN_PASSWORD', '')
+out = 'fixtures_bundle_custom.json.gz'
+def write_bundle(data):
+    with gzip.open(out, 'wb') as f:
+        f.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+if not email or not password:
+    print('Secrets Firebase absents — bundle vide')
+    write_bundle([])
+else:
+    try:
+        import firebase_client as fc
+        result = fc.sign_in(email, password)
+        token = result['id_token']
+        fixtures = fc.fetch_all_gdtf_fixtures(token)
+        clean = [{k:v for k,v in fx.items() if not k.startswith('_')} for fx in fixtures]
+        write_bundle(clean)
+        print(f'{len(clean)} fixture(s) embarquees')
+    except Exception as e:
+        print(f'Erreur fetch fixtures: {e} — bundle vide')
+        write_bundle([])
+"
 
       - name: Build EXE
         run: pyinstaller --onedir --windowed --icon=mystrow.ico --add-data "logo.png;." --add-data "mystrow.ico;." --add-data "fixtures_bundle_custom.json.gz;." --paths=. --collect-all=rtmidi --hidden-import=rtmidi._rtmidi --hidden-import=miniaudio --collect-all=serial --hidden-import=serial.tools.list_ports --noupx --noconfirm main.py --name MyStrow
