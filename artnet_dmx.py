@@ -269,14 +269,35 @@ class ArtNetDMX:
     def _send_enttec(self):
         """Protocole ENTTEC Open DMX USB : Break + MAB + 0x00 + 512 canaux (univers 0 uniquement)"""
         if not self._serial or not self._serial.is_open:
-            return False
+            # Tentative de reconnexion automatique
+            if self.com_port:
+                try:
+                    self._serial = serial.Serial(
+                        port=self.com_port,
+                        baudrate=250000,
+                        bytesize=serial.EIGHTBITS,
+                        parity=serial.PARITY_NONE,
+                        stopbits=serial.STOPBITS_TWO,
+                        timeout=0.1,
+                    )
+                    print(f"ENTTEC: reconnexion automatique sur {self.com_port}")
+                except Exception:
+                    return False
+            else:
+                return False
         try:
-            self._serial.send_break(duration=0.001)
+            self._serial.send_break(duration=0.000176)   # 176 µs — spec DMX minimum
             self._serial.write(b'\x00' + bytes(self.dmx_data[0][:512]))
+            self._serial.flush()
             return True
         except Exception as e:
             print(f"Erreur envoi ENTTEC: {e}")
-            self.connected = False
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+            self._serial = None
+            # Ne pas mettre connected=False : le prochain tick tentera une reconnexion
             return False
 
     # ------------------------------------------------------------------
