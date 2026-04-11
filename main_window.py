@@ -868,12 +868,9 @@ class MainWindow(QMainWindow):
 
         edit_menu = bar.addMenu(tr("menu_edit"))
         edit_menu.addAction(tr("menu_dmx_patch"), self.show_dmx_patch_config)
+        edit_menu.addAction(tr("menu_dmx_tester"), self.open_dmx_tester)
         edit_menu.addSeparator()
-        edit_menu.addAction(tr("menu_rec_light"), self.open_light_editor)
         edit_menu.addAction(tr("menu_effect_editor"), self.open_effect_editor)
-        edit_menu.addSeparator()
-        edit_menu.addAction(tr("menu_volume"), self._edit_current_volume)
-        edit_menu.addAction(tr("menu_set_duration"), self._edit_current_duration)
         edit_menu.addSeparator()
         edit_menu.addAction(tr("menu_ia_lumiere"), self.show_ia_lumiere_config)
         edit_menu.addSeparator()
@@ -881,13 +878,10 @@ class MainWindow(QMainWindow):
 
         conn_menu = bar.addMenu(tr("menu_connection"))
 
-        akai_menu = conn_menu.addMenu(tr("menu_akai_input"))
-        akai_menu.addAction(tr("menu_test_connection"), self.test_akai_connection)
-        akai_menu.addAction(tr("menu_reset_akai"), self.reset_akai)
-        akai_menu.addSeparator()
-
-        conn_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
-        conn_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
+        ctrl_menu = conn_menu.addMenu(tr("menu_control"))
+        ctrl_menu.addAction(tr("menu_akai_mini"), self.test_akai_connection)
+        ctrl_menu.addAction(tr("menu_streamdeck"), self._start_streamdeck_dialog)
+        ctrl_menu.addAction(tr("menu_external_input"), self._start_tablet_server)
 
         conn_menu.addSeparator()
 
@@ -907,9 +901,6 @@ class MainWindow(QMainWindow):
         self.video_target_screen = 1  # Ecran cible par defaut (second ecran)
 
         about_menu = bar.addMenu(tr("menu_about"))
-        _logo_path = resource_path("logo.png")
-        if os.path.exists(_logo_path):
-            about_menu.setIcon(QIcon(_logo_path))
         about_menu.addAction(tr("menu_about_updates"), self.show_about)
         about_menu.addSeparator()
         about_menu.addAction(tr("menu_license"), self._open_activation_dialog)
@@ -2202,8 +2193,8 @@ class MainWindow(QMainWindow):
         self._style_memory_pad(mem_col, row, active=True)
         self._update_memory_pad_led(mem_col, row, active=True)
         fader_val = self.faders[col_akai].value if col_akai in self.faders else 0
-        if fader_val > 0:
-            self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
+        # Toujours appliquer (pan/tilt doivent s'appliquer même si fader à 0)
+        self._apply_memory_to_projectors(mem_col, row, fader_value=fader_val)
 
         self._save_akai_config_auto()
         # Envoi DMX immediat sans attendre le prochain tick
@@ -2245,9 +2236,12 @@ class MainWindow(QMainWindow):
         for i, proj_state in enumerate(mem["projectors"]):
             if i >= len(self.projectors):
                 break
+            p = self.projectors[i]
+            # Pan/Tilt toujours appliqués (même si projecteur éteint)
+            if "pan"  in proj_state: p.pan  = proj_state["pan"]
+            if "tilt" in proj_state: p.tilt = proj_state["tilt"]
             if proj_state["level"] <= 0:
                 continue
-            p = self.projectors[i]
             level = int(proj_state["level"] * brightness)
             base_color = QColor(proj_state["base_color"])
             p.level = level
@@ -2413,13 +2407,17 @@ class MainWindow(QMainWindow):
                 snapshot.append({
                     "group": p.group,
                     "base_color": base.name(),
-                    "level": level
+                    "level": level,
+                    "pan":  getattr(p, 'pan',  128),
+                    "tilt": getattr(p, 'tilt', 128),
                 })
             else:
                 snapshot.append({
                     "group": p.group,
                     "base_color": p.base_color.name(),
-                    "level": p.level
+                    "level": p.level,
+                    "pan":  getattr(p, 'pan',  128),
+                    "tilt": getattr(p, 'tilt', 128),
                 })
         self.memories[mem_col][row] = {"projectors": snapshot}
         col_akai = self._mem_col_to_fader(mem_col)
@@ -2667,11 +2665,12 @@ class MainWindow(QMainWindow):
                 btn.update_style()
                 return
 
-            # Sauvegarder l'état précédent pour pouvoir le restaurer au toggle-off
+            # Sauvegarder l'état précédent — uniquement si l'effet vient d'un FX pad,
+            # pas d'un autre bouton d'effet (sinon désactiver B relancerait A)
             self._prev_effect_state = {
-                "effect":      self.active_effect,
-                "config":      dict(self.active_effect_config) if self.active_effect_config else {},
-                "fx_pads":     dict(self.active_fx_pads),   # {(fc,fr): True}
+                "effect":  self.active_effect if self.active_fx_pads else None,
+                "config":  dict(self.active_effect_config) if (self.active_effect_config and self.active_fx_pads) else {},
+                "fx_pads": dict(self.active_fx_pads),
             }
             # Désactiver visuellement les pads FX actifs sans stopper l'effet
             # (stop_effect sera appelé par start_effect)
@@ -3007,7 +3006,8 @@ class MainWindow(QMainWindow):
         self.effect_saved_colors = {}
 
         for p in self.projectors:
-            self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level)
+            self.effect_saved_colors[id(p)] = (p.base_color, p.color, p.level,
+                                               getattr(p, 'pan', 128), getattr(p, 'tilt', 128))
 
         if not hasattr(self, 'effect_timer'):
             self.effect_timer = QTimer()
@@ -3076,10 +3076,11 @@ class MainWindow(QMainWindow):
 
         for p in self.projectors:
             if id(p) in self.effect_saved_colors:
-                base_color, color, level = self.effect_saved_colors[id(p)]
-                p.base_color = base_color
-                p.color = color
-                p.level = level
+                saved = self.effect_saved_colors[id(p)]
+                p.base_color, p.color, p.level = saved[0], saved[1], saved[2]
+                if len(saved) > 3:
+                    p.pan  = saved[3]
+                    p.tilt = saved[4]
 
     def _bascule(self):
         """Effet Bascule : echange les couleurs entre les deux groupes ou alterne un/deux."""
@@ -3525,9 +3526,14 @@ class MainWindow(QMainWindow):
             elif forme == "Fixe":     return 1.0
             return 0.0
 
+        # En mode rec lumière, l'effet ne s'applique qu'aux projecteurs allumés par les clips
+        _timeline_mode = hasattr(getattr(self, 'seq', None), 'timeline_playback_row')
+
         for i, proj in enumerate(projectors):
+            _base_level = proj.level   # niveau posé par les clips, avant l'effet
             dim = 0.0; r = 0.0; g = 0.0; b = 0.0
             has_dim = False; has_rgb_layer = False
+            _explicitly_targeted = False  # ciblage explicite par groupe/pair/impair
 
             for ld in layers_dicts:
                 preset = ld.get("target_preset", "Tous")
@@ -3536,6 +3542,9 @@ class MainWindow(QMainWindow):
                 if preset == "Impair" and i % 2 != 1: continue
                 if preset in _LETTER_TO_GROUP and getattr(proj, 'group', '') != _LETTER_TO_GROUP[preset]: continue
                 if groups and getattr(proj, 'group', '') not in [_LETTER_TO_GROUP.get(g, g) for g in groups]: continue
+                # Ciblage explicite → l'effet peut allumer ce projo même s'il est éteint
+                if preset != "Tous" or groups:
+                    _explicitly_targeted = True
 
                 speed     = ld.get("speed", 50)
                 size      = ld.get("size", 100)
@@ -3587,6 +3596,25 @@ class MainWindow(QMainWindow):
                     r += (c1.redF()   * raw + c2.redF()   * r2) * amp
                     g += (c1.greenF() * raw + c2.greenF() * r2) * amp
                     b += (c1.blueF()  * raw + c2.blueF()  * r2) * amp
+                elif attr in ("Pan", "Tilt"):
+                    saved = self.effect_saved_colors.get(id(proj))
+                    if attr == "Pan":
+                        center = saved[3] if saved and len(saved) > 3 else getattr(proj, 'pan', 128)
+                        amplitude = (size / 100.0) * 128
+                        proj.pan = int(max(0, min(255, center + (scaled - 0.5) * 2 * amplitude)))
+                    else:
+                        center = saved[4] if saved and len(saved) > 4 else getattr(proj, 'tilt', 128)
+                        amplitude = (size / 100.0) * 128
+                        proj.tilt = int(max(0, min(255, center + (scaled - 0.5) * 2 * amplitude)))
+                elif attr == "Zoom":
+                    proj.zoom = int(max(0, min(255, scaled * 255)))
+                elif attr == "Gobo":
+                    n_gobos = 8
+                    proj.gobo = int(scaled * (n_gobos - 1)) * 32
+
+            # En mode rec lumière, ignorer les projos éteints sauf ciblage explicite
+            if _timeline_mode and _base_level == 0 and not _explicitly_targeted:
+                continue
 
             level = min(1.0, dim) if has_dim else 1.0
             # L'effet contrôle la luminosité indépendamment du fader :
@@ -6952,6 +6980,7 @@ class MainWindow(QMainWindow):
         _menu_row.addWidget(menubar, 0)
 
         btn_fixture_editor = QPushButton("🛠  Editeur de fixture")
+        btn_fixture_editor.setAutoDefault(False)
         btn_fixture_editor.setFixedHeight(28)
         btn_fixture_editor.setStyleSheet(
             "QPushButton { background:transparent; color:#aaaaaa; border:none;"
@@ -6986,6 +7015,7 @@ class MainWindow(QMainWindow):
             return b
 
         btn_add = _tbar_btn("➕  Ajouter", "#55cc77")
+        btn_add.setAutoDefault(False)
         th.addWidget(btn_add)
         th.addStretch()
         btn_save = QPushButton("💾  Sauvegarder")
@@ -7008,9 +7038,20 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background:#3d1010; color:#ff6666; border-color:#883333; }"
             "QPushButton:pressed { background:#1a0505; }"
         )
+        close_btn.setAutoDefault(False)
+        btn_save.setAutoDefault(False)
         close_btn.clicked.connect(dialog.accept)
         th.addWidget(close_btn)
         root.addWidget(toolbar)
+
+        # Bloquer Enter/Espace au niveau du dialog pour éviter l'activation accidentelle de boutons
+        def _dialog_key(event):
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                event.accept()
+                return
+            from PySide6.QtWidgets import QDialog as _QD
+            _QD.keyPressEvent(dialog, event)
+        dialog.keyPressEvent = _dialog_key
 
         # ── Bandeau conflits ──────────────────────────────────────────────
         conflict_banner = QLabel()
@@ -7535,6 +7576,7 @@ class MainWindow(QMainWindow):
                     'universe':      getattr(proj, 'universe', 0),
                     'start_address': proj.start_address,
                     'profile':       list(self.dmx._get_profile(f"{proj.group}_{i}")),
+                    'channel_defaults': dict(getattr(proj, 'channel_defaults', {})),
                 })
 
         _rebuild_fd()
@@ -7550,6 +7592,7 @@ class MainWindow(QMainWindow):
                 profile = fd.get('profile') or list(DMX_PROFILES['RGBDS'])
                 if isinstance(profile, list) and profile:
                     proj.dmx_profile = list(profile)
+                proj.channel_defaults = dict(fd.get('channel_defaults', {}))
                 uni = fd.get('universe', 0)
                 proj.universe = uni
                 channels = [fd['start_address'] + c for c in range(len(profile))]
@@ -7646,30 +7689,160 @@ class MainWindow(QMainWindow):
                     item.widget().deleteLater()
             if not profile:
                 return
+
+            cur_idx = _sel[0]
+            fd_cur = fixture_data[cur_idx] if cur_idx is not None and cur_idx < len(fixture_data) else {}
+            ch_defs = fd_cur.get('channel_defaults', {})
+
+            def _set_default(ch_type, pct, snap_idx):
+                """Applique une valeur par défaut (0-100%) et rafraîchit l'affichage."""
+                dmx_val = int(round(pct / 100.0 * 255))
+                if snap_idx is not None and snap_idx < len(fixture_data):
+                    fixture_data[snap_idx].setdefault('channel_defaults', {})[ch_type] = dmx_val
+                    if snap_idx < len(self.projectors):
+                        self.projectors[snap_idx].channel_defaults[ch_type] = dmx_val
+                    _mark_dirty()
+
+            def _show_default_popup(chip_lbl, ch_type, snap_idx, col):
+                """Menu clic droit : curseur 0-100% pour régler la valeur par défaut."""
+                from PySide6.QtWidgets import QMenu, QWidgetAction, QSlider, QLabel as _QL
+                pct_cur = int(round(ch_defs.get(ch_type, 0) / 255.0 * 100))
+
+                m = QMenu(chip_lbl)
+                m.setStyleSheet(
+                    "QMenu { background:#0e0e0e; border:1px solid #2a2a2a; border-radius:8px; padding:4px; }"
+                    "QMenu::item { padding:0; background:transparent; }"
+                )
+                wa = QWidgetAction(m)
+                w = QWidget()
+                w.setStyleSheet("background:#0e0e0e; border-radius:6px;")
+                wl = QVBoxLayout(w)
+                wl.setContentsMargins(12, 10, 12, 10)
+                wl.setSpacing(8)
+
+                title = _QL(f"Défaut  {ch_type}")
+                title.setStyleSheet(
+                    f"color:{col}; font-size:10px; font-weight:bold;"
+                    f" background:transparent; border:none; letter-spacing:1px;"
+                )
+                title.setAlignment(Qt.AlignCenter)
+                wl.addWidget(title)
+
+                val_lbl = _QL(f"{pct_cur}%")
+                val_lbl.setAlignment(Qt.AlignCenter)
+                val_lbl.setStyleSheet(
+                    f"color:#ffffff; font-size:20px; font-weight:bold;"
+                    f" background:transparent; border:none;"
+                )
+                wl.addWidget(val_lbl)
+
+                sli = QSlider(Qt.Horizontal)
+                sli.setRange(0, 100)
+                sli.setValue(pct_cur)
+                sli.setFixedWidth(200)
+                sli.setFixedHeight(28)
+                sli.setStyleSheet(
+                    f"QSlider {{ background:transparent; }}"
+                    f"QSlider::groove:horizontal {{"
+                    f"  background:#1e1e1e; height:6px; border-radius:3px;"
+                    f"  border:1px solid #2a2a2a;"
+                    f"}}"
+                    f"QSlider::handle:horizontal {{"
+                    f"  background:{col}; width:18px; height:18px;"
+                    f"  margin:-6px 0; border-radius:9px;"
+                    f"  border:2px solid #0e0e0e;"
+                    f"}}"
+                    f"QSlider::handle:horizontal:hover {{"
+                    f"  background:#ffffff;"
+                    f"}}"
+                    f"QSlider::sub-page:horizontal {{"
+                    f"  background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                    f"  stop:0 {col}66, stop:1 {col});"
+                    f"  border-radius:3px;"
+                    f"}}"
+                    f"QSlider::add-page:horizontal {{"
+                    f"  background:#1e1e1e; border-radius:3px;"
+                    f"}}"
+                )
+
+                def _on_slide(v):
+                    val_lbl.setText(f"{v}%")
+                    _set_default(ch_type, v, snap_idx)
+                    ch_defs[ch_type] = int(round(v / 100.0 * 255))
+                    pct_txt = f"{v}%" if v > 0 else ""
+                    chip_lbl.setToolTip(
+                        f"Canal {ch_type} — clic droit pour régler le défaut\nDéfaut actuel : {v}%"
+                    )
+                    # Mettre à jour le petit label %
+                    chip_lbl.setProperty("def_pct", v)
+                    chip_lbl.update()
+
+                sli.valueChanged.connect(_on_slide)
+                wl.addWidget(sli, 0, Qt.AlignHCenter)
+
+                wa.setDefaultWidget(w)
+                m.addAction(wa)
+                m.exec(chip_lbl.mapToGlobal(chip_lbl.rect().bottomLeft()))
+
+            row_p = QWidget(); row_p.setStyleSheet("background:transparent;")
+            rp = QHBoxLayout(row_p); rp.setContentsMargins(0, 0, 0, 0); rp.setSpacing(4)
             row_n = QWidget(); row_n.setStyleSheet("background:transparent;")
             rn = QHBoxLayout(row_n); rn.setContentsMargins(0, 0, 0, 0); rn.setSpacing(4)
             row_u = QWidget(); row_u.setStyleSheet("background:transparent;")
             ru = QHBoxLayout(row_u); ru.setContentsMargins(0, 0, 0, 0); ru.setSpacing(4)
+
             for ci, ch in enumerate(profile):
                 col = CH_COLORS.get(ch, "#444455")
                 cw = max(36, len(ch) * 7 + 14)
-                # Calcul luminance pour choisir texte blanc ou noir
                 _r = int(col[1:3], 16); _g = int(col[3:5], 16); _b = int(col[5:7], 16)
                 text_col = "#ffffff" if (_r * 0.299 + _g * 0.587 + _b * 0.114) < 145 else "#111111"
+
+                # Petit label % au-dessus
+                pct_val = int(round(ch_defs.get(ch, 0) / 255.0 * 100))
+                pct_lbl = QLabel(f"{pct_val}%" if pct_val > 0 else "")
+                pct_lbl.setFixedWidth(cw)
+                pct_lbl.setAlignment(Qt.AlignCenter)
+                pct_lbl.setStyleSheet(
+                    f"color:{col}; font-size:8px; background:transparent; border:none;"
+                )
+
                 chip = QLabel(ch)
                 chip.setFixedSize(cw, 24)
                 chip.setAlignment(Qt.AlignCenter)
                 chip.setStyleSheet(
                     f"background:{col}; color:{text_col}; border:none;"
-                    f" border-radius:5px; font-size:10px; font-weight:bold;"
+                    f" border-radius:5px; font-size:10px; font-weight:bold; cursor:pointer;"
                 )
-                chip.setToolTip(f"Canal {ci + 1}: {ch}")
+                chip.setToolTip(
+                    f"Canal {ci + 1}: {ch}"
+                    + (f"\nDéfaut : {pct_val}%" if pct_val > 0 else "\nClic droit → régler valeur par défaut")
+                )
+                chip.setCursor(Qt.PointingHandCursor)
+
                 num = QLabel(str(ci + 1))
                 num.setFixedWidth(cw)
                 num.setAlignment(Qt.AlignCenter)
                 num.setStyleSheet(f"color:{col}; font-size:9px; font-weight:bold; border:none; background:transparent;")
-                rn.addWidget(chip); ru.addWidget(num)
-            rn.addStretch(); ru.addStretch()
+
+                # Clic droit → popup curseur
+                def _make_ctx(c=chip, ch_type=ch, si=cur_idx, color=col, pl=pct_lbl):
+                    def _ctx(event):
+                        if event.button() == Qt.RightButton:
+                            _show_default_popup(c, ch_type, si, color)
+                            # Rafraîchir le % après fermeture du menu
+                            new_pct = int(round(
+                                fixture_data[si].get('channel_defaults', {}).get(ch_type, 0) / 255.0 * 100
+                            )) if si is not None and si < len(fixture_data) else 0
+                            pl.setText(f"{new_pct}%" if new_pct > 0 else "")
+                    return _ctx
+                chip.mousePressEvent = _make_ctx()
+
+                rp.addWidget(pct_lbl)
+                rn.addWidget(chip)
+                ru.addWidget(num)
+
+            rp.addStretch(); rn.addStretch(); ru.addStretch()
+            chips_vl.addWidget(row_p)
             chips_vl.addWidget(row_n)
             chips_vl.addWidget(row_u)
 
@@ -9519,6 +9692,7 @@ class MainWindow(QMainWindow):
                 'profile': self.dmx._get_profile(proj_key),
                 'pos_x': getattr(proj, 'canvas_x', None),
                 'pos_y': getattr(proj, 'canvas_y', None),
+                'channel_defaults': dict(getattr(proj, 'channel_defaults', {})),
             })
         config = {
             'fixtures': fixtures_list,
@@ -9557,6 +9731,7 @@ class MainWindow(QMainWindow):
                         profile = fd.get('profile', list(DMX_PROFILES['RGBDS']))
                         if isinstance(profile, list) and profile:
                             p.dmx_profile = list(profile)
+                        p.channel_defaults = dict(fd.get('channel_defaults', {}))
                         self.projectors.append(p)
                         proj_key = f"{p.group}_{i}"
                         nb_ch = len(profile)
@@ -9752,8 +9927,8 @@ class MainWindow(QMainWindow):
 
         if connected:
             _dlg = QDialog(self)
-            _dlg.setWindowTitle("AKAI APC mini")
-            _dlg.setFixedSize(320, 140)
+            _dlg.setWindowTitle("AKAI APC Mini MK2")
+            _dlg.setFixedSize(320, 170)
             _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
                                "QLabel{background:transparent;}")
             _lay = QVBoxLayout(_dlg)
@@ -9767,13 +9942,22 @@ class MainWindow(QMainWindow):
             _msg.setAlignment(Qt.AlignCenter)
             _msg.setStyleSheet("font-size:13px;font-weight:bold;color:#4CAF50;")
             _lay.addWidget(_msg)
+            _btn_row = QHBoxLayout()
+            _btn_reconnect = QPushButton("🔄  Redémarrer AKAI")
+            _btn_reconnect.setFixedHeight(32)
+            _btn_reconnect.setStyleSheet("QPushButton{background:#1a3a5a;color:white;border:none;"
+                                         "border-radius:5px;font-size:12px;}"
+                                         "QPushButton:hover{background:#1e4a7a;}")
+            _btn_reconnect.clicked.connect(lambda: (_dlg.accept(), self.reset_akai()))
+            _btn_row.addWidget(_btn_reconnect)
             _btn = QPushButton("OK")
             _btn.setFixedHeight(32)
             _btn.setStyleSheet("QPushButton{background:#2a5a2a;color:white;border:none;"
                                "border-radius:5px;font-size:12px;}"
                                "QPushButton:hover{background:#3a7a3a;}")
             _btn.clicked.connect(_dlg.accept)
-            _lay.addWidget(_btn)
+            _btn_row.addWidget(_btn)
+            _lay.addLayout(_btn_row)
             _dlg.exec()
             return
 
@@ -9792,7 +9976,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(300, self.turn_off_all_effects)
             QTimer.singleShot(400, self._sync_faders_to_projectors)
             _dlg = QDialog(self)
-            _dlg.setWindowTitle("AKAI APC mini")
+            _dlg.setWindowTitle("AKAI APC Mini MK2")
             _dlg.setFixedSize(320, 140)
             _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
                                "QLabel{background:transparent;}")
@@ -9820,7 +10004,7 @@ class MainWindow(QMainWindow):
             import sys as _sys
             import subprocess as _sub
             _dlg = QDialog(self)
-            _dlg.setWindowTitle("AKAI APC mini")
+            _dlg.setWindowTitle("AKAI APC Mini MK2")
             _dlg.setFixedSize(360, 190)
             _dlg.setStyleSheet("QDialog,QWidget{background:#1a1a1a;color:#e0e0e0;}"
                                "QLabel{background:transparent;}")
@@ -10083,6 +10267,16 @@ class MainWindow(QMainWindow):
                     if col_idx in self.faders:
                         self.faders[col_idx].set_value(p.level)
                     break
+
+    def open_dmx_tester(self):
+        """Ouvre l'outil de diagnostic DMX canal par canal."""
+        from dmx_tester import DmxTesterDialog
+        self.dmx_send_timer.stop()
+        try:
+            dlg = DmxTesterDialog(self.dmx, self)
+            dlg.exec()
+        finally:
+            self.dmx_send_timer.start(40)
 
     def open_node_connection(self):
         """Ouvre le dialogue de paramétrage de la sortie DMX (Node ou USB)."""
@@ -10632,6 +10826,10 @@ class MainWindow(QMainWindow):
 
     def send_dmx_update(self):
         """Envoie les donnees DMX avec HTP memoires + pads AKAI + refresh plan de feu"""
+        # Appliquer l'effet en cours (pan/tilt/couleur) avant le rendu
+        if getattr(self, 'active_effect', None) is not None:
+            self.update_effect()
+
         # Calculer les overrides HTP sans modifier les projecteurs
         overrides = self._compute_htp_overrides()
 

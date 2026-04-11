@@ -24,6 +24,7 @@ class Projector:
         self.zoom = 0                 # Zoom (0-255)
         self.shutter = 255            # Shutter/Iris (0-255)
         self.color_wheel = 0          # Color wheel (0-255)
+        self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
 
     def set_color(self, color, brightness=None):
         """Definit la couleur de base et recalcule la couleur effective"""

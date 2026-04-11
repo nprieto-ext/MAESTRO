@@ -874,6 +874,146 @@ def _find_free_canvas_pos(projectors, pref_x, pref_y, min_dist=0.07):
 
 # ── FixtureCanvas ─────────────────────────────────────────────────────────────
 
+class _PanTiltFloater(QFrame):
+    """Panneau flottant Pan/Tilt qui s'accroche à une Moving Head dans le canvas."""
+
+    closed = Signal()
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._canvas  = canvas
+        self._targets = []   # liste de Projector à contrôler
+
+        self.setWindowFlags(Qt.SubWindow)
+        self.setStyleSheet("""
+            _PanTiltFloater, QFrame {
+                background: #0e0e0e;
+                border: 1px solid #00d4ff44;
+                border-radius: 8px;
+            }
+        """)
+        self.setStyleSheet(
+            "background:#0e0e0e; border:1px solid #00d4ff55; border-radius:8px;"
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 8)
+        lay.setSpacing(6)
+
+        # Header
+        hdr = QHBoxLayout()
+        lbl = QLabel("Pan / Tilt")
+        lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        lbl.setStyleSheet("color:#00d4ff; background:transparent; border:none;")
+        hdr.addWidget(lbl)
+        hdr.addStretch()
+        self._lbl_vals = QLabel("P:128  T:128")
+        self._lbl_vals.setFont(QFont("Segoe UI", 8))
+        self._lbl_vals.setStyleSheet("color:#444; background:transparent; border:none;")
+        hdr.addWidget(self._lbl_vals)
+        btn_close = QPushButton("✕")
+        btn_close.setFixedSize(16, 16)
+        btn_close.setStyleSheet(
+            "QPushButton{background:transparent;color:#444;border:none;font-size:10px;}"
+            "QPushButton:hover{color:#f44336;}"
+        )
+        btn_close.clicked.connect(self.hide_floater)
+        hdr.addWidget(btn_close)
+        lay.addLayout(hdr)
+
+        # Pad XY
+        self._pad = PanTiltPad(128, 128)
+        self._pad.changed.connect(self._on_changed)
+        lay.addWidget(self._pad, 0, Qt.AlignHCenter)
+
+        # Presets compacts
+        self._presets = _load_presets()
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(4)
+        colors = ["#00d4ff", "#ff9800", "#4CAF50", "#e91e63", "#9c27b0", "#ff5722"]
+        for i, pr in enumerate(self._presets[:6]):
+            c = QColor(colors[i % len(colors)])
+            b = QPushButton(pr["name"])
+            b.setFixedHeight(20)
+            b.setStyleSheet(
+                f"QPushButton{{background:#1a1a1a;color:{c.name()};"
+                f"border:1px solid {c.name()}44;border-radius:3px;font-size:9px;}}"
+                f"QPushButton:hover{{border-color:{c.name()};}}"
+            )
+            b.clicked.connect(lambda _, p=pr: self._apply_preset(p))
+            preset_row.addWidget(b)
+        lay.addLayout(preset_row)
+
+        # Bouton centre
+        btn_center = QPushButton("⊕  Centre (128 / 128)")
+        btn_center.setFixedHeight(22)
+        btn_center.setStyleSheet(
+            "QPushButton{background:#1a1a1a;color:#555;border:1px solid #222;"
+            "border-radius:4px;font-size:9px;}"
+            "QPushButton:hover{color:#00d4ff;border-color:#00d4ff44;}"
+        )
+        btn_center.clicked.connect(lambda: self._apply_preset({"pan": 128, "tilt": 128}))
+        lay.addWidget(btn_center)
+
+        self.adjustSize()
+        self.hide()
+
+    def show_for(self, idx, canvas_pos):
+        """Affiche le floater près de la fixture idx."""
+        projs = self.get_group_projs(idx)
+        self._targets = projs
+        if projs:
+            pan  = getattr(projs[0], 'pan',  128)
+            tilt = getattr(projs[0], 'tilt', 128)
+        else:
+            pan, tilt = 128, 128
+
+        self._pad.set_values(pan, tilt)
+        self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
+
+        # Positionner à côté de la fixture sans sortir du canvas
+        fw, fh = self.sizeHint().width(), self.sizeHint().height()
+        cw, ch = self._canvas.width(), self._canvas.height()
+        x = canvas_pos.x() + 20
+        y = canvas_pos.y() - fh // 2
+        x = max(4, min(x, cw - fw - 4))
+        y = max(4, min(y, ch - fh - 4))
+        self.move(x, y)
+        self.adjustSize()
+        self.raise_()
+        self.show()
+
+    def get_group_projs(self, idx):
+        """Retourne tous les Moving Head du même groupe que idx."""
+        proj = self._canvas.pdf.projectors[idx]
+        group = proj.group
+        return [
+            p for p in self._canvas.pdf.projectors
+            if p.group == group and getattr(p, 'fixture_type', '') == 'Moving Head'
+        ] or [proj]
+
+    def _on_changed(self, pan, tilt):
+        for p in self._targets:
+            p.pan  = pan
+            p.tilt = tilt
+        self._lbl_vals.setText(f"P:{pan}  T:{tilt}")
+        self._canvas.update()
+        # Flush DMX
+        pdf = self._canvas.pdf
+        if hasattr(pdf, '_flush_dmx'):
+            pdf._flush_dmx()
+
+    def _apply_preset(self, pr):
+        self._pad.set_values(pr["pan"], pr["tilt"])
+
+    def hide_floater(self):
+        self._targets = []
+        self._pt_fixture = None if not self._canvas else None
+        self._canvas._pt_fixture = None
+        self.hide()
+        self.closed.emit()
+
+
 class FixtureCanvas(QWidget):
     """Canvas 2D libre - toutes les fixtures sont dessinees via paintEvent"""
 
@@ -894,7 +1034,13 @@ class FixtureCanvas(QWidget):
 
         self._drag_index  = None
         self._drag_offset = QPoint()
-        self._drag_starts = {}      # {proj_idx: (norm_x, norm_y)} pour multi-drag
+
+        # Drag direct du faisceau Pan/Tilt (Moving Head)
+        self._beam_drag_idx     = None   # index de la fixture cliquée
+        self._beam_drag_start   = None   # QPoint origin du drag
+        self._beam_drag_pt0     = None   # (pan0, tilt0) au début du drag
+        self._beam_drag_targets = []     # [(proj, pan0, tilt0)] à modifier
+        self._drag_starts = {}         # {proj_idx: (norm_x, norm_y)} pour multi-drag
         self._hover_index = None
         self._rubber_origin = None
         self._rubber_rect   = None
@@ -945,6 +1091,39 @@ class FixtureCanvas(QWidget):
                     return i
             else:
                 if (px - cx) ** 2 + (py - cy) ** 2 <= 13 * 13:
+                    return i
+        return None
+
+    def _beam_at(self, pos):
+        """Retourne l'index d'une Moving Head dont le faisceau est sous pos, ou None."""
+        import math as _m
+        px, py = pos.x(), pos.y()
+        r = 9 if self.compact else 13
+        TOL = 12  # px de tolérance latérale pour faciliter la prise
+        for i in range(len(self.pdf.projectors) - 1, -1, -1):
+            proj = self.pdf.projectors[i]
+            if getattr(proj, 'fixture_type', '') != 'Moving Head':
+                continue
+            cx, cy = self._get_canvas_pos(i)
+            pan_val    = getattr(proj, 'pan',  128)
+            tilt_val   = getattr(proj, 'tilt', 128)
+            pan_angle  = (pan_val - 128) / 128.0 * 135.0
+            tilt_ratio = tilt_val / 255.0
+            beam_len   = int(r * 2 + tilt_ratio * r * 7)
+            beam_hw    = int(r * 0.6 + tilt_ratio * r * 2.5)
+
+            # Transformer dans le repère local (centré + rotation inverse)
+            rad = _m.radians(-pan_angle)
+            dx, dy = px - cx, py - cy
+            lx =  dx * _m.cos(rad) - dy * _m.sin(rad)
+            ly =  dx * _m.sin(rad) + dy * _m.cos(rad)
+
+            # Zone : de la sortie de la fixture jusqu'au bout du faisceau + impact
+            base_hw = r // 2
+            if 0 < ly <= beam_len + beam_hw + TOL:
+                t = max(0.0, min(1.0, (ly - r) / max(1, beam_len - r)))
+                hw_at_ly = base_hw + (beam_hw - base_hw) * t
+                if abs(lx) <= hw_at_ly + TOL:
                     return i
         return None
 
@@ -1256,6 +1435,34 @@ class FixtureCanvas(QWidget):
         idx = self._fixture_at(pos)
 
         if event.button() == Qt.LeftButton:
+            # Clic sur le faisceau d'une Moving Head → drag direct pan/tilt
+            beam_idx = self._beam_at(pos)
+            if beam_idx is not None and idx is None:
+                proj = self.pdf.projectors[beam_idx]
+                group, local_idx = self._local_idx(beam_idx)
+                key = (group, local_idx)
+                # Cibles : fixtures sélectionnées (si la cliquée en fait partie)
+                # sinon uniquement la fixture cliquée
+                if key in self.pdf.selected_lamps and self.pdf.selected_lamps:
+                    targets = []
+                    for j, p in enumerate(self.pdf.projectors):
+                        gj, lj = self._local_idx(j)
+                        if (gj, lj) in self.pdf.selected_lamps and getattr(p, 'fixture_type', '') == 'Moving Head':
+                            targets.append(p)
+                else:
+                    targets = [proj]
+                self._beam_drag_idx     = beam_idx
+                self._beam_drag_start   = pos
+                self._beam_drag_pt0     = (getattr(proj, 'pan', 128), getattr(proj, 'tilt', 128))
+                self._beam_drag_targets = [(p, getattr(p, 'pan', 128), getattr(p, 'tilt', 128)) for p in targets]
+                # Si dimmer à 0%, passer à 100% pour voir le faisceau
+                for p in targets:
+                    if p.level == 0:
+                        p.level = 100
+                        p.color = QColor(p.base_color.red(), p.base_color.green(), p.base_color.blue())
+                self.setCursor(Qt.CrossCursor)
+                return
+
             if idx is not None:
                 group, local_idx = self._local_idx(idx)
                 key = (group, local_idx)
@@ -1282,6 +1489,9 @@ class FixtureCanvas(QWidget):
             else:
                 if not (event.modifiers() & Qt.ControlModifier):
                     self.pdf.selected_lamps.clear()
+                # Cacher le floater si on clique dans le vide
+                if self._pt_floater is not None:
+                    self._pt_floater.hide_floater()
                 self._rubber_origin = pos
                 self._rubber_rect   = QRect(pos, QSize())
                 self.update()
@@ -1540,6 +1750,51 @@ class FixtureCanvas(QWidget):
     def mouseMoveEvent(self, event):
         pos = event.pos()
 
+        # ── Drag faisceau Pan/Tilt ────────────────────────────────
+        if self._beam_drag_idx is not None and (event.buttons() & Qt.LeftButton):
+            import math as _m
+            r = 9 if self.compact else 13
+            beam_len_max = float(r * 2 + r * 7)  # beam_len à tilt=255
+
+            if len(self._beam_drag_targets) == 1:
+                # Une seule fixture : le faisceau pointe absolument vers le curseur
+                p, _, _ = self._beam_drag_targets[0]
+                cx, cy = self._get_canvas_pos(self._beam_drag_idx)
+                dx, dy = pos.x() - cx, pos.y() - cy
+                dist = _m.sqrt(dx * dx + dy * dy)
+                angle = _m.degrees(_m.atan2(dx, dy))  # axe de référence = bas
+                pan_angle = max(-135.0, min(135.0, angle))
+                p.pan  = int(128 + pan_angle / 135.0 * 128)
+                p.tilt = int(max(0, min(255, dist / beam_len_max * 255)))
+            else:
+                # Plusieurs fixtures : décalage relatif commun (pan/tilt delta)
+                cx, cy = self._get_canvas_pos(self._beam_drag_idx)
+                # Position de référence = position de départ du premier clic
+                ref_dx = self._beam_drag_start.x() - cx
+                ref_dy = self._beam_drag_start.y() - cy
+                ref_dist = max(1.0, _m.sqrt(ref_dx**2 + ref_dy**2))
+                ref_angle = _m.degrees(_m.atan2(ref_dx, ref_dy))
+                ref_pan   = int(128 + max(-135.0, min(135.0, ref_angle)) / 135.0 * 128)
+                ref_tilt  = int(max(0, min(255, ref_dist / beam_len_max * 255)))
+
+                now_dx = pos.x() - cx
+                now_dy = pos.y() - cy
+                now_dist  = max(1.0, _m.sqrt(now_dx**2 + now_dy**2))
+                now_angle = _m.degrees(_m.atan2(now_dx, now_dy))
+                now_pan   = int(128 + max(-135.0, min(135.0, now_angle)) / 135.0 * 128)
+                now_tilt  = int(max(0, min(255, now_dist / beam_len_max * 255)))
+
+                dpan  = now_pan  - ref_pan
+                dtilt = now_tilt - ref_tilt
+                for p, pan0, tilt0 in self._beam_drag_targets:
+                    p.pan  = int(max(0, min(255, pan0 + dpan)))
+                    p.tilt = int(max(0, min(255, tilt0 + dtilt)))
+
+            if hasattr(self.pdf, '_flush_dmx'):
+                self.pdf._flush_dmx()
+            self.update()
+            return
+
         if self._editable and self._drag_index is not None and (event.buttons() & Qt.LeftButton):
             w, h = max(self.width(), 1), max(self.height(), 1)
             SB_H = 22
@@ -1592,17 +1847,28 @@ class FixtureCanvas(QWidget):
             new_hover = self._fixture_at(pos)
             if new_hover != self._hover_index:
                 self._hover_index = new_hover
-                # Curseur contextuel
-                if new_hover is not None and self._editable:
-                    self.setCursor(Qt.SizeAllCursor)
-                elif new_hover is not None:
-                    self.setCursor(Qt.PointingHandCursor)
-                else:
-                    self.setCursor(Qt.ArrowCursor)
                 self.update()
+            # Curseur contextuel (priorité : faisceau > fixture)
+            on_beam = self._beam_at(pos) is not None and new_hover is None
+            if on_beam:
+                self.setCursor(Qt.CrossCursor)
+            elif new_hover is not None and self._editable:
+                self.setCursor(Qt.SizeAllCursor)
+            elif new_hover is not None:
+                self.setCursor(Qt.PointingHandCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self._beam_drag_idx is not None:
+                self._beam_drag_idx     = None
+                self._beam_drag_start   = None
+                self._beam_drag_pt0     = None
+                self._beam_drag_targets = []
+                self.setCursor(Qt.ArrowCursor)
+                self.update()
+                return
             if self._drag_index is not None:
                 self._drag_index  = None
                 self._drag_starts = {}
@@ -1837,6 +2103,11 @@ class PlanDeFeu(QFrame):
 
     def is_dmx_enabled(self):
         return self.dmx_toggle_btn.isChecked()
+
+    def _flush_dmx(self):
+        """Envoie immédiatement l'état des projecteurs en DMX."""
+        if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
+            self.main_window.dmx.update_from_projectors(self.projectors)
 
     # ── DMX toggle ──────────────────────────────────────────────────
 
@@ -2559,14 +2830,6 @@ class PlanDeFeu(QFrame):
                 colors_g.addWidget(btn, row, col)
             _wa(colors_w)
 
-            picker_w = ColorPickerWidget(230, 100)
-            def _on_color_picker(c, t=targets):
-                self._apply_color_to_targets(t, c)
-                v = t[0][0].level
-                dim_sli.setValue(v)
-                dim_val.setText(f"{v}%")
-            picker_w.colorSelected.connect(_on_color_picker)
-            _wa(picker_w)
 
         # ── Bas de menu ──────────────────────────────────────────────────
         menu.addSeparator()

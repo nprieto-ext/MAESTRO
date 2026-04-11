@@ -497,6 +497,7 @@ class ArtNetDMX:
                 if int(time.time() * 10) % 2 == 0:
                     r, g, b = 0, 0, 0
 
+            _ch_defaults = getattr(proj, 'channel_defaults', {})
             for idx, ch_type in enumerate(profile):
                 if idx >= len(channels):
                     break
@@ -505,53 +506,58 @@ class ArtNetDMX:
                     continue
 
                 if ch_type == "R":
-                    self.set_channel(ch, r, universe)
+                    ch_val = r
                 elif ch_type == "G":
-                    self.set_channel(ch, g, universe)
+                    ch_val = g
                 elif ch_type == "B":
-                    self.set_channel(ch, b, universe)
+                    ch_val = b
                 elif ch_type == "W":
-                    self.set_channel(ch, min(r, g, b), universe)
+                    ch_val = min(r, g, b)
                 elif ch_type == "Ambre":
-                    ambre = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
-                    self.set_channel(ch, ambre, universe)
+                    ch_val = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
                 elif ch_type == "Orange":
-                    orange = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
-                    self.set_channel(ch, orange, universe)
+                    ch_val = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
                 elif ch_type == "UV":
-                    self.set_channel(ch, 0, universe)
+                    ch_val = 0
                 elif ch_type == "Zoom":
-                    self.set_channel(ch, getattr(proj, 'zoom', 0), universe)
+                    ch_val = getattr(proj, 'zoom', 0)
                 elif ch_type == "Iris":
-                    self.set_channel(ch, getattr(proj, 'iris', 0), universe)
+                    ch_val = getattr(proj, 'iris', 0)
                 elif ch_type == "Dim":
-                    self.set_channel(ch, dimmer, universe)
+                    ch_val = dimmer
                 elif ch_type == "Strobe":
                     spd = getattr(proj, 'strobe_speed', 0)
                     if spd > 0:
-                        strobe_value = int(16 + (spd / 100.0) * (250 - 16))
+                        ch_val = int(16 + (spd / 100.0) * (250 - 16))
                     elif hasattr(proj, 'dmx_mode') and proj.dmx_mode == "Strobe":
-                        strobe_value = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100
+                        ch_val = int(16 + (effect_speed / 100.0) * (250 - 16)) if effect_speed > 0 else 100
                     else:
-                        strobe_value = 0
-                    self.set_channel(ch, strobe_value, universe)
+                        ch_val = 0
                 elif ch_type == "Pan":
-                    self.set_channel(ch, getattr(proj, 'pan', 128), universe)
+                    ch_val = getattr(proj, 'pan', 128)
                 elif ch_type == "PanFine":
-                    self.set_channel(ch, (getattr(proj, 'pan', 128) * 256) % 256, universe)
+                    ch_val = (getattr(proj, 'pan', 128) * 256) % 256
                 elif ch_type == "Tilt":
-                    self.set_channel(ch, getattr(proj, 'tilt', 128), universe)
+                    ch_val = getattr(proj, 'tilt', 128)
                 elif ch_type == "TiltFine":
-                    self.set_channel(ch, (getattr(proj, 'tilt', 128) * 256) % 256, universe)
+                    ch_val = (getattr(proj, 'tilt', 128) * 256) % 256
                 elif ch_type == "Gobo1":
-                    self.set_channel(ch, getattr(proj, 'gobo', 0), universe)
+                    ch_val = getattr(proj, 'gobo', 0)
                 elif ch_type == "ColorWheel":
-                    self.set_channel(ch, getattr(proj, 'color_wheel', 0), universe)
+                    ch_val = getattr(proj, 'color_wheel', 0)
                 elif ch_type == "Shutter":
                     shutter = getattr(proj, 'shutter', 255)
-                    self.set_channel(ch, shutter if not proj.muted else 0, universe)
+                    ch_val = shutter if not proj.muted else 0
                 elif ch_type in ("Gobo2", "Prism", "Focus", "Speed", "Mode"):
-                    self.set_channel(ch, 0, universe)
+                    ch_val = 0
+                else:
+                    ch_val = 0
+
+                # Valeur par défaut : appliquée quand le canal sortirait 0
+                if ch_val == 0 and ch_type in _ch_defaults:
+                    ch_val = _ch_defaults[ch_type]
+
+                self.set_channel(ch, ch_val, universe)
 
     def set_projector_patch(self, proj_key, channels, universe=0, profile=None, mode=None):
         self.projector_channels[proj_key] = channels

@@ -1702,8 +1702,13 @@ class Sequencer(QFrame):
             if mem:
                 brightness = seq_clip_info.get('seq_intensity', 100) / 100.0
                 for i, ps in enumerate(mem.get("projectors", [])):
-                    if i < len(main_win.projectors) and ps.get("level", 0) > 0:
-                        proj = main_win.projectors[i]
+                    if i >= len(main_win.projectors):
+                        continue
+                    proj = main_win.projectors[i]
+                    # Pan/Tilt toujours appliqués (même si level=0)
+                    if "pan"  in ps: proj.pan  = ps["pan"]
+                    if "tilt" in ps: proj.tilt = ps["tilt"]
+                    if ps.get("level", 0) > 0:
                         lvl  = int(ps["level"] * brightness)
                         base = QColor(ps["base_color"])
                         proj.level      = lvl
@@ -1737,12 +1742,6 @@ class Sequencer(QFrame):
             proj.level = 0
             proj.base_color = QColor("black")
             proj.color = QColor("black")
-
-        # L'effet AKAI a la priorité sur les groupes — mais la séquence mémoire
-        # doit quand même être appliquée pour servir de base à l'animation de l'effet.
-        if getattr(main_win, 'active_effect', None) is not None:
-            self._apply_seq_memory(active_clips.get('Séquence'), main_win)
-            return
 
         for track_name, clip_info in active_clips.items():
             indices = track_to_indices.get(track_name, [])
@@ -1872,9 +1871,8 @@ class Sequencer(QFrame):
             for idx in lyres_indices:
                 if idx < len(self.player_ui.projectors):
                     proj = self.player_ui.projectors[idx]
-                    if getattr(proj, 'fixture_type', '') == 'Moving Head':
-                        proj.pan  = pan_val
-                        proj.tilt = tilt_val
+                    proj.pan  = pan_val
+                    proj.tilt = tilt_val
 
         # ── Appliquer la séquence mémoire par-dessus les groupes ────────────
         self._apply_seq_memory(active_clips.get('Séquence'), main_win)

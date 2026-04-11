@@ -1303,8 +1303,13 @@ class LightTimelineEditor(QDialog):
                     if mem:
                         brightness = new_seq_clip.intensity / 100.0
                         for i, ps in enumerate(mem.get("projectors", [])):
-                            if i < len(projectors) and ps.get("level", 0) > 0:
-                                p = projectors[i]
+                            if i >= len(projectors):
+                                continue
+                            p = projectors[i]
+                            # Pan/Tilt toujours appliqués (même si projecteur éteint)
+                            if "pan"  in ps: p.pan  = ps["pan"]
+                            if "tilt" in ps: p.tilt = ps["tilt"]
+                            if ps.get("level", 0) > 0:
                                 lvl = int(ps["level"] * brightness)
                                 base = QColor(ps["base_color"])
                                 p.level = lvl

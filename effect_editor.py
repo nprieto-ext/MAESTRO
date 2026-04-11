@@ -1227,6 +1227,306 @@ class WaveformCanvas(QWidget):
         p.end()
 
 
+# ─── Aperçu Pan/Tilt (pad XY animé) ──────────────────────────────────────────
+
+def _wave_at(t, speed, size, phase, direction, forme):
+    """Retourne une valeur [0..1] (0.5 = centre) pour une couche à l'instant t."""
+    freq = max(0.01, speed / 100.0) * 2.0
+    t_adj = t * freq + phase / 100.0
+    if forme == "Sinus":
+        raw = math.sin(t_adj * math.pi * 2)
+    elif forme == "Triangle":
+        frac = t_adj % 1.0
+        raw = 4 * frac - 1 if frac < 0.5 else 3 - 4 * frac
+    elif forme == "Flash":
+        raw = 1.0 if (t_adj % 1.0) < 0.5 else -1.0
+    elif forme == "Montée":
+        raw = (t_adj % 1.0) * 2 - 1
+    elif forme == "Descente":
+        raw = 1 - (t_adj % 1.0) * 2
+    else:
+        raw = 0.0
+    d = direction if direction != 0 else 1
+    return 0.5 + raw * d * (size / 100.0) * 0.5
+
+
+class PanTiltLivePad(QWidget):
+    """
+    Pad XY interactif pour les couches Pan/Tilt d'un effet.
+    - Tracé de la trajectoire complète
+    - Point animé qui se déplace en temps réel
+    - Centre draggable (stocké dans pan_layer.phase / tilt_layer.phase en tant qu'offset)
+    - Sliders vitesse et amplitude
+    """
+
+    changed = Signal()
+
+    _W = 220
+    _H = 170
+    _M = 12
+
+    _SL = """
+        QSlider::groove:horizontal {
+            background: #1a1a1a; height: 4px; border-radius: 2px;
+        }
+        QSlider::sub-page:horizontal {
+            background: #00d4ff; border-radius: 2px;
+        }
+        QSlider::handle:horizontal {
+            background: #00d4ff; width: 10px; height: 10px;
+            margin: -3px 0; border-radius: 5px;
+        }
+    """
+
+    def __init__(self, pan_layer, tilt_layer, parent=None):
+        super().__init__(parent)
+        self._pan_l  = pan_layer   # EffectLayer ou None
+        self._tilt_l = tilt_layer  # EffectLayer ou None
+        self._t = 0.0
+        # Centre de la trajectoire (0..255), draggable
+        self._cx = 128
+        self._cy = 128
+        self._dragging = False
+        self.setMouseTracking(True)
+
+        pad_w = self._W + self._M * 2
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        # Canvas du pad
+        self._canvas = _PanTiltCanvas(self)
+        self._canvas.setFixedSize(pad_w, self._H + self._M * 2)
+        outer.addWidget(self._canvas)
+
+        # Sliders vitesse / amplitude
+        sl_row = QHBoxLayout()
+        sl_row.setSpacing(12)
+        sl_row.setContentsMargins(self._M, 0, self._M, 0)
+
+        self._sl_speed, self._lbl_speed = self._mk_slider("VIT", 50)
+        self._sl_amp,   self._lbl_amp   = self._mk_slider("AMP", 100)
+        sl_row.addLayout(self._sl_speed_lay)
+        sl_row.addLayout(self._sl_amp_lay)
+        outer.addLayout(sl_row)
+
+        self._sync_from_layers()
+
+        self._sl_speed.valueChanged.connect(self._on_speed)
+        self._sl_amp.valueChanged.connect(self._on_amp)
+
+    def _mk_slider(self, label, val):
+        lay = QVBoxLayout()
+        lay.setSpacing(2)
+        top = QHBoxLayout()
+        lbl = QLabel(label)
+        lbl.setStyleSheet("color:#2a2a2a; font-size:7px; font-weight:bold; letter-spacing:1px;")
+        top.addWidget(lbl)
+        top.addStretch()
+        vlbl = QLabel(str(val))
+        vlbl.setStyleSheet("color:#444; font-size:9px; font-weight:bold;")
+        vlbl.setFixedWidth(24)
+        vlbl.setAlignment(Qt.AlignRight)
+        top.addWidget(vlbl)
+        lay.addLayout(top)
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(1, 100)
+        sl.setValue(val)
+        sl.setFixedHeight(14)
+        sl.setStyleSheet(self._SL)
+        lay.addWidget(sl)
+        # stockage temporaire pour récupérer dans __init__
+        if label == "VIT":
+            self._sl_speed_lay = lay
+        else:
+            self._sl_amp_lay = lay
+        return sl, vlbl
+
+    def _sync_from_layers(self):
+        """Lit les valeurs des couches et met à jour les sliders."""
+        l = self._pan_l or self._tilt_l
+        if not l:
+            return
+        self._sl_speed.blockSignals(True)
+        self._sl_amp.blockSignals(True)
+        self._sl_speed.setValue(max(1, l.speed))
+        self._sl_amp.setValue(max(1, l.size))
+        self._lbl_speed.setText(str(l.speed))
+        self._lbl_amp.setText(str(l.size))
+        self._sl_speed.blockSignals(False)
+        self._sl_amp.blockSignals(False)
+
+    def _on_speed(self, v):
+        self._lbl_speed.setText(str(v))
+        for l in (self._pan_l, self._tilt_l):
+            if l:
+                l.speed = v
+        self.changed.emit()
+        self._canvas.update()
+
+    def _on_amp(self, v):
+        self._lbl_amp.setText(str(v))
+        for l in (self._pan_l, self._tilt_l):
+            if l:
+                l.size = v
+        self.changed.emit()
+        self._canvas.update()
+
+    # ── API publique ────────────────────────────────────────────────────────
+    def set_time(self, t: float):
+        self._t = t
+        self._canvas.update()
+
+    def get_t(self):        return self._t
+    def get_cx(self):       return self._cx
+    def get_cy(self):       return self._cy
+    def get_pan_layer(self): return self._pan_l
+    def get_tilt_layer(self): return self._tilt_l
+
+    # ── Souris (délégué au canvas) ──────────────────────────────────────────
+    def on_canvas_press(self, pos):
+        self._dragging = True
+        self._move_center(pos)
+
+    def on_canvas_move(self, pos):
+        if self._dragging:
+            self._move_center(pos)
+
+    def on_canvas_release(self):
+        self._dragging = False
+
+    def on_canvas_double(self):
+        self._cx, self._cy = 128, 128
+        self._canvas.update()
+        self.changed.emit()
+
+    def _move_center(self, pos):
+        m = self._M
+        W, H = self._W, self._H
+        fx = max(0.0, min(1.0, (pos.x() - m) / W))
+        fy = max(0.0, min(1.0, (pos.y() - m) / H))
+        self._cx = int(fx * 255)
+        self._cy = int(fy * 255)
+        self._canvas.update()
+        self.changed.emit()
+
+
+class _PanTiltCanvas(QWidget):
+    """Canvas interne du PanTiltLivePad."""
+
+    N_TRAJ = 120  # nombre de points pour le tracé
+
+    def __init__(self, pad: 'PanTiltLivePad'):
+        super().__init__(pad)
+        self._pad = pad
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CrossCursor)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self._pad.on_canvas_press(ev.position())
+
+    def mouseMoveEvent(self, ev):
+        self._pad.on_canvas_move(ev.position())
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self._pad.on_canvas_release()
+
+    def mouseDoubleClickEvent(self, ev):
+        self._pad.on_canvas_double()
+
+    def _to_px(self, fx, fy):
+        m = self._pad._M
+        W, H = self._pad._W, self._pad._H
+        return int(m + fx * W), int(m + fy * H)
+
+    def _traj_point(self, tf):
+        pad = self._pad
+        cx = pad.get_cx() / 255.0
+        cy = pad.get_cy() / 255.0
+        pl = pad.get_pan_layer()
+        tl = pad.get_tilt_layer()
+        if pl:
+            xv = _wave_at(tf, pl.speed, pl.size, pl.phase, pl.direction, pl.forme)
+            xv = cx + (xv - 0.5)
+        else:
+            xv = cx
+        if tl:
+            yv = _wave_at(tf, tl.speed, tl.size, tl.phase, tl.direction, tl.forme)
+            yv = cy + (yv - 0.5)
+        else:
+            yv = cy
+        return max(0.0, min(1.0, xv)), max(0.0, min(1.0, yv))
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pad = self._pad
+        m, W, H = pad._M, pad._W, pad._H
+
+        # Fond
+        p.fillRect(QRect(m, m, W, H), QColor("#0a0d14"))
+
+        # Grille fine
+        p.setPen(QPen(QColor("#141820"), 1))
+        for i in range(1, 8):
+            p.drawLine(m + i * W // 8, m, m + i * W // 8, m + H)
+            p.drawLine(m, m + i * H // 8, m + W, m + i * H // 8)
+
+        # Axe central du centre draggable
+        cx_f = pad.get_cx() / 255.0
+        cy_f = pad.get_cy() / 255.0
+        cpx, cpy = self._to_px(cx_f, cy_f)
+        p.setPen(QPen(QColor("#1e2235"), 1, Qt.DashLine))
+        p.drawLine(cpx, m, cpx, m + H)
+        p.drawLine(m, cpy, m + W, cpy)
+
+        # Bordure
+        p.setPen(QPen(QColor("#1a2a3a"), 1))
+        p.drawRect(QRect(m, m, W, H))
+
+        # ── Tracé de trajectoire (cycle complet fixe, ne bouge pas) ────────────
+        N = self.N_TRAJ
+        t_now = pad.get_t()
+        l = pad.get_pan_layer() or pad.get_tilt_layer()
+        freq = max(0.01, (l.speed if l else 50) / 100.0) * 2.0
+        period = 1.0 / freq
+        pts = [self._traj_point(i / N * period) for i in range(N + 1)]
+        for i in range(N):
+            col = QColor(0, 180, 255, 160)
+            p.setPen(QPen(col, 1.5))
+            x0, y0 = self._to_px(*pts[i])
+            x1, y1 = self._to_px(*pts[i + 1])
+            p.drawLine(x0, y0, x1, y1)
+
+        # ── Centre draggable (croix orange) ─────────────────────────────────
+        p.setPen(QPen(QColor("#cc6600"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QRect(cpx - 5, cpy - 5, 10, 10))
+        p.drawLine(cpx - 9, cpy, cpx + 9, cpy)
+        p.drawLine(cpx, cpy - 9, cpx, cpy + 9)
+
+        # ── Point animé (position actuelle) ────────────────────────────────
+        dx, dy = self._traj_point(t_now)
+        dpx, dpy = self._to_px(dx, dy)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 212, 255, 40))
+        p.drawEllipse(QRect(dpx - 10, dpy - 10, 20, 20))
+        p.setBrush(QColor(0, 212, 255, 230))
+        p.drawEllipse(QRect(dpx - 4, dpy - 4, 8, 8))
+        p.setPen(QPen(QColor("#00d4ff"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QRect(dpx - 4, dpy - 4, 8, 8))
+
+        # Labels valeurs actuelles
+        p.setPen(QColor("#2a3050"))
+        p.setFont(QFont("Segoe UI", 7))
+        p.drawText(QRect(m + 2, m + 2, 60, 12), Qt.AlignLeft, f"Pan {int(dx * 255)}")
+        p.drawText(QRect(m + W - 62, m + 2, 60, 12), Qt.AlignRight, f"Tilt {int(dy * 255)}")
+        p.end()
+
+
 # ─── Carte d'une couche ───────────────────────────────────────────────────────
 
 class LayerCard(QFrame):
@@ -2116,16 +2416,31 @@ class SimpleEffectPanel(QWidget):
 
     def _rebuild_layer_widgets(self):
         self._layer_cards = []
+        self._pt_pad_widget = None
         while self._layers_vl.count():
             item = self._layers_vl.takeAt(0)
             if item and item.widget():
                 item.widget().deleteLater()
+
+        pan_l  = next((l for l in self._layers if l.attribute == "Pan"),  None)
+        tilt_l = next((l for l in self._layers if l.attribute == "Tilt"), None)
+
+        # Couches non-pan/tilt → LayerCard normaux
         for layer in self._layers:
+            if layer.attribute in ("Pan", "Tilt"):
+                continue
             card = LayerCard(layer)
             card.deleted.connect(lambda _w, l=layer: self._on_delete_layer(l))
             card.changed.connect(self.changed)
             self._layers_vl.addWidget(card)
             self._layer_cards.append(card)
+
+        # Couches Pan + Tilt → un seul pad XY interactif
+        if pan_l is not None or tilt_l is not None:
+            pad = PanTiltLivePad(pan_l, tilt_l)
+            pad.changed.connect(self.changed)
+            self._layers_vl.addWidget(pad)
+            self._pt_pad_widget = pad
 
     def _on_add_layer(self):
         new_layer           = EffectLayer()
@@ -2145,9 +2460,11 @@ class SimpleEffectPanel(QWidget):
     # ── Tick d'animation ──────────────────────────────────────────────────────
 
     def tick(self, t: float):
-        """Mettre à jour toutes les waveforms des LayerCard."""
+        """Mettre à jour toutes les waveforms des LayerCard + pad XY Pan/Tilt."""
         for card in self._layer_cards:
             card.set_time(t)
+        if getattr(self, '_pt_pad_widget', None) is not None:
+            self._pt_pad_widget.set_time(t)
 
     def set_preview_levels(self, levels: list, colors: list):
         if hasattr(self, '_preview_strip'):

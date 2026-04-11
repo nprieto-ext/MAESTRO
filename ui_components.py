@@ -519,10 +519,10 @@ class CartoucheButton(QPushButton):
     STOPPED = 2
 
     COLORS = [
-        QColor("#ff8800"),  # Orange
-        QColor("#ffdd00"),  # Jaune
-        QColor("#00cc44"),  # Vert
-        QColor("#0088ff"),  # Bleu
+        QColor("#00d4ff"),  # Cyan MyStrow
+        QColor("#00d4ff"),
+        QColor("#00d4ff"),
+        QColor("#00d4ff"),
     ]
 
     VIDEO_EXTS = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'}
@@ -559,50 +559,41 @@ class CartoucheButton(QPushButton):
         if self.state == self.PLAYING:
             self.setStyleSheet(f"""
                 QPushButton {{
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba({r},{g},{b},220),
-                        stop:1 rgba({r//2},{g//2},{b//2},255));
-                    border-left: 3px solid #ffffff;
-                    border-top: 1px solid rgba({r},{g},{b},120);
-                    border-right: 1px solid rgba({r//2},{g//2},{b//2},180);
-                    border-bottom: 1px solid rgba({r},{g},{b},80);
+                    background: rgba({r},{g},{b},18);
+                    border-left: 3px solid rgba({r},{g},{b},255);
+                    border-top: 1px solid rgba({r},{g},{b},60);
+                    border-right: 1px solid rgba({r},{g},{b},20);
+                    border-bottom: 1px solid rgba({r},{g},{b},40);
                     border-radius: 4px;
-                    color: white;
+                    color: rgba({r},{g},{b},255);
                     font-weight: bold;
                     font-size: 11px;
                     padding: 4px 8px 4px 10px;
                     text-align: left;
                 }}
                 QPushButton:hover {{
-                    border-left: 3px solid white;
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba({min(r+30,255)},{min(g+30,255)},{min(b+30,255)},230),
-                        stop:1 rgba({r//2},{g//2},{b//2},255));
+                    background: rgba({r},{g},{b},28);
                 }}
             """)
         else:
             self.setStyleSheet(f"""
                 QPushButton {{
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba({r},{g},{b},70),
-                        stop:0.45 rgba({r},{g},{b},25),
-                        stop:1 rgba(20,20,20,255));
-                    border-left: 3px solid {hex_col};
-                    border-top: 1px solid rgba({r},{g},{b},55);
-                    border-right: 1px solid #1e1e1e;
-                    border-bottom: 1px solid rgba({r},{g},{b},40);
+                    background: #111111;
+                    border-left: 3px solid rgba({r},{g},{b},120);
+                    border-top: 1px solid #1e1e1e;
+                    border-right: 1px solid #1a1a1a;
+                    border-bottom: 1px solid #1e1e1e;
                     border-radius: 4px;
-                    color: white;
+                    color: #888888;
                     font-weight: bold;
                     font-size: 11px;
                     padding: 4px 8px 4px 10px;
                     text-align: left;
                 }}
                 QPushButton:hover {{
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba({r},{g},{b},100),
-                        stop:1 rgba(30,30,30,255));
-                    border-left: 3px solid white;
+                    background: #161616;
+                    border-left: 3px solid rgba({r},{g},{b},200);
+                    color: #bbbbbb;
                 }}
             """)
 

@@ -159,6 +159,7 @@ class DmxSetupDialog(QDialog):
             QListWidget::item:hover:!selected { background: #1c1c1c; color: #ccc; }
         """)
         self._build_ui()
+        self.diag_widget.setVisible(False)
         self._refresh_ports()
         self._restore_selection()
 
@@ -348,9 +349,12 @@ class DmxSetupDialog(QDialog):
 
         lay.addSpacing(14)
 
-        # ── Diagnostic ───────────────────────────────────────────────────────
-        lay.addLayout(self._step_hdr("✦", "Diagnostic"))
-        lay.addSpacing(6)
+        # ── Diagnostic (USB uniquement) ───────────────────────────────────────
+        self.diag_widget = QWidget()
+        diag_lay = QVBoxLayout(self.diag_widget)
+        diag_lay.setContentsMargins(0, 0, 0, 0)
+        diag_lay.setSpacing(6)
+        diag_lay.addLayout(self._step_hdr("✦", "Diagnostic"))
 
         row4 = QHBoxLayout()
         row4.setContentsMargins(26, 0, 0, 0)
@@ -368,7 +372,8 @@ class DmxSetupDialog(QDialog):
         self.lbl_diag.setWordWrap(True)
         self.lbl_diag.setStyleSheet("color: #555;")
         row4.addWidget(self.lbl_diag, 1)
-        lay.addLayout(row4)
+        diag_lay.addLayout(row4)
+        lay.addWidget(self.diag_widget)
 
         lay.addStretch()
 
@@ -487,8 +492,10 @@ class DmxSetupDialog(QDialog):
 
         if prod["transport"] == TRANSPORT_ENTTEC:
             self.stack.setCurrentIndex(0)
+            self.diag_widget.setVisible(True)
         else:
             self.stack.setCurrentIndex(1)
+            self.diag_widget.setVisible(False)
             d = prod.get("defaults", {})
             self.ip_edit.setText(str(d.get("target_ip",   self._dmx.target_ip)))
             self.port_edit.setText(str(d.get("target_port", self._dmx.target_port)))
