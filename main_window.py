@@ -10230,6 +10230,9 @@ class MainWindow(QMainWindow):
         # Creer le socket UDP inconditionnellement (Art-Net = UDP sans confirmation,
         # pas besoin de ping pour ouvrir le socket)
         if self.dmx.connect():
+            # Réactiver le toggle plan de feu si la licence vient d'être reconnectée
+            if hasattr(self, 'plan_de_feu') and not self.plan_de_feu.is_dmx_enabled():
+                self.plan_de_feu.set_dmx_unblocked()
             self.update_connection_indicators()
 
     def update_connection_indicators(self):

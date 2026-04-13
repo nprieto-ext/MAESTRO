@@ -26,6 +26,11 @@ class Projector:
         self.color_wheel = 0          # Color wheel (0-255)
         self.prism = 0                # Prism (0=off, >0=actif)
         self.channel_defaults = {}    # {ch_type: 0-255} valeurs par défaut par canal
+        # Canaux spéciaux — contrôle manuel indépendant
+        self.uv           = 0   # UV (0-255, direct)
+        self.white_boost  = 0   # Blanc extra au-dessus du RGB-dérivé (0-255)
+        self.amber_boost  = 0   # Ambre extra (0-255)
+        self.orange_boost = 0   # Orange extra (0-255)
         self.color_wheel_slots = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
         self.gobo_wheel_slots  = []   # [{"name": str, "color": "#rrggbb", "dmx": int}] depuis OFL
 

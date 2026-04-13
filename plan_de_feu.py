@@ -240,6 +240,12 @@ class PresetBar(QWidget):
             _save_presets(self._presets)
             self._rebuild_buttons()
 
+    def _delete(self, idx):
+        if 0 <= idx < len(self._presets):
+            self._presets.pop(idx)
+            _save_presets(self._presets)
+            self._rebuild_buttons()
+
 
 class PanTiltPad(QWidget):
     """Pad XY interactif pour contrôler Pan/Tilt d'une Moving Head."""
@@ -1200,8 +1206,11 @@ class FixtureCanvas(QWidget):
 
             # Cone de faisceau orienté
             if is_lit:
+                gobo_val = getattr(proj, 'gobo', 0)
+                gobo_idx = int(gobo_val // 32) if gobo_val > 0 else 0  # 0=open, 1-7=gobos
+
                 beam_col = QColor(fill_color)
-                beam_col.setAlpha(22)
+                beam_col.setAlpha(14 if gobo_idx > 0 else 22)
                 painter.save()
                 painter.translate(cx, cy)
                 painter.rotate(pan_angle)
@@ -1214,11 +1223,49 @@ class FixtureCanvas(QWidget):
                     QPoint(-beam_hw, beam_len),
                 ])
                 painter.drawPolygon(cone)
-                # Impact au sol (petit ellipse en bout de faisceau)
+
+                # Impact au sol
                 impact_col = QColor(fill_color)
                 impact_col.setAlpha(55)
+                iw = beam_hw; ih = max(3, beam_hw // 3)
                 painter.setBrush(QBrush(impact_col))
-                painter.drawEllipse(QPoint(0, beam_len), beam_hw, max(3, beam_hw // 3))
+                painter.drawEllipse(QPoint(0, beam_len), iw, ih)
+
+                # Motif gobo dans l'impact
+                if gobo_idx > 0:
+                    pat_col = QColor(fill_color)
+                    pat_col.setAlpha(160)
+                    pat_pen = QPen(pat_col, max(1, iw // 6))
+                    painter.setPen(pat_pen)
+                    painter.setBrush(Qt.NoBrush)
+                    import math as _gm
+                    if gobo_idx == 1:   # lignes horizontales
+                        for dy in (-ih // 2, 0, ih // 2):
+                            painter.drawLine(-iw + 2, beam_len + dy, iw - 2, beam_len + dy)
+                    elif gobo_idx == 2:  # croix +
+                        painter.drawLine(-iw + 2, beam_len, iw - 2, beam_len)
+                        painter.drawLine(0, beam_len - ih + 1, 0, beam_len + ih - 1)
+                    elif gobo_idx == 3:  # croix ×
+                        painter.drawLine(-iw + 2, beam_len - ih + 1, iw - 2, beam_len + ih - 1)
+                        painter.drawLine(-iw + 2, beam_len + ih - 1, iw - 2, beam_len - ih + 1)
+                    elif gobo_idx == 4:  # étoile 6 branches
+                        for angle_deg in range(0, 180, 30):
+                            rad = _gm.radians(angle_deg)
+                            dx = int(_gm.cos(rad) * iw)
+                            dy = int(_gm.sin(rad) * ih)
+                            painter.drawLine(-dx, beam_len - dy, dx, beam_len + dy)
+                    elif gobo_idx == 5:  # cercle inscrit
+                        painter.drawEllipse(QPoint(0, beam_len), iw * 2 // 3, ih * 2 // 3)
+                    elif gobo_idx == 6:  # triangle
+                        painter.drawPolygon(QPolygon([
+                            QPoint(0,       beam_len - ih + 1),
+                            QPoint(iw - 2,  beam_len + ih - 1),
+                            QPoint(-iw + 2, beam_len + ih - 1),
+                        ]))
+                    elif gobo_idx == 7:  # deux cercles concentriques
+                        painter.drawEllipse(QPoint(0, beam_len), iw * 2 // 3, ih * 2 // 3)
+                        painter.drawEllipse(QPoint(0, beam_len), iw // 3, ih // 3)
+
                 painter.restore()
             painter.setPen(pen)
             painter.setBrush(QBrush(fill_color))
@@ -2146,6 +2193,17 @@ class PlanDeFeu(QFrame):
             "QPushButton:pressed { background: #333; }"
         )
 
+    def set_dmx_unblocked(self):
+        """Réactive le toggle DMX après une reconnexion de licence."""
+        self.dmx_toggle_btn.setChecked(True)
+        self.dmx_toggle_btn.setText("ON")
+        self.dmx_toggle_btn.setStyleSheet(
+            "QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
+            "border-radius: 4px; font-size: 10px; font-weight: bold; } "
+            "QPushButton:hover { background: #2a2a2a; color: #00ff88; border-color: #00ff88; } "
+            "QPushButton:pressed { background: #333; }"
+        )
+
     def is_dmx_enabled(self):
         return self.dmx_toggle_btn.isChecked()
 
@@ -2619,7 +2677,7 @@ class PlanDeFeu(QFrame):
             )
         if self.main_window and hasattr(self.main_window, 'dmx') and self.main_window.dmx:
             self.main_window.dmx.update_from_projectors(self.projectors)
-        self.refresh()
+        self.canvas.update()
         if close_menu:
             close_menu.close()
 
@@ -2782,6 +2840,90 @@ class PlanDeFeu(QFrame):
                 strobe_h.addWidget(w)
             _wa(strobe_w)
 
+        # ── Canaux spéciaux : UV / Blanc / Ambre / Orange ────────────────────
+        _proj_profile = getattr(proj, 'dmx_profile', None) or []
+
+        _EXTRA_CHANNELS = [
+            ("UV",     "UV",           "#8844ff", "uv",           0,   255),
+            ("W",      "Blanc",        "#ffffff", "white_boost",  0,   255),
+            ("Ambre",  "Ambre",        "#ff9900", "amber_boost",  0,   255),
+            ("Orange", "Orange",       "#ff6600", "orange_boost", 0,   255),
+        ]
+
+        _extra_shown = False
+        for ch_key, ch_label, ch_color, attr_name, vmin, vmax in _EXTRA_CHANNELS:
+            if ch_key not in _proj_profile:
+                continue
+            if not _extra_shown:
+                menu.addSeparator()
+                _sec_lbl = QLabel("CANAUX SPÉCIAUX")
+                _sec_lbl.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                       "padding:2px 10px;border:none;background:transparent;")
+                _wa(_sec_lbl)
+                _extra_shown = True
+
+            cur_val = getattr(targets[0][0], attr_name, 0)
+
+            # Barre de style adaptée à la couleur du canal
+            _sli_extra = (
+                "QSlider::groove:horizontal { background:#333; height:6px; border-radius:3px; }"
+                f"QSlider::handle:horizontal {{ background:{ch_color}; width:14px; height:14px;"
+                "margin:-4px 0; border-radius:7px; }"
+                f"QSlider::sub-page:horizontal {{ background:{ch_color}44; border-radius:3px; }}"
+            )
+
+            ch_w = QWidget(); ch_h = QHBoxLayout(ch_w)
+            ch_h.setContentsMargins(10, 4, 10, 4); ch_h.setSpacing(8)
+
+            ch_lbl = QLabel(ch_label)
+            ch_lbl.setStyleSheet(f"color:{ch_color};font-size:11px;font-weight:bold;border:none;"
+                                  "background:transparent;")
+            ch_lbl.setFixedWidth(52)
+
+            ch_sli = QSlider(Qt.Horizontal)
+            ch_sli.setRange(vmin, vmax); ch_sli.setValue(cur_val)
+            ch_sli.setFixedWidth(140); ch_sli.setStyleSheet(_sli_extra)
+
+            # Pourcent pour UV direct, "+" pour les boosts
+            _is_boost = attr_name != "uv"
+            _pct = int(cur_val / 255 * 100)
+            ch_val_lbl = QLabel(
+                f"{_pct}%" if not _is_boost or cur_val == 0
+                else f"+{_pct}%"
+            )
+            ch_val_lbl.setStyleSheet("color:#ddd;font-size:12px;font-weight:bold;min-width:36px;")
+            ch_val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            def _apply_special_visual(p):
+                """Recalcule p.color en intégrant UV et Ambre pour le simulateur."""
+                br = (p.level / 100.0) if p.level > 0 else 0.0
+                r = p.base_color.red()   * br
+                g = p.base_color.green() * br
+                b = p.base_color.blue()  * br
+                uv_f  = getattr(p, 'uv',           0) / 255.0
+                amb_f = getattr(p, 'amber_boost',  0) / 255.0
+                # UV → violet (#8844ff)
+                r += 136 * uv_f;  g += 68 * uv_f;  b += 255 * uv_f
+                # Ambre → orange (#ff9900)
+                r += 255 * amb_f; g += 153 * amb_f
+                p.color = QColor(min(255, int(r)), min(255, int(g)), min(255, int(b)))
+
+            def _make_ch_cb(aname, lbl_ref, is_boost):
+                def _cb(v, t=targets):
+                    for p, g, i in t:
+                        setattr(p, aname, v)
+                        if aname in ("uv", "amber_boost"):
+                            _apply_special_visual(p)
+                    pct = int(v / 255 * 100)
+                    lbl_ref.setText(f"+{pct}%" if is_boost and v > 0 else f"{pct}%")
+                    _flush()
+                return _cb
+
+            ch_sli.valueChanged.connect(_make_ch_cb(attr_name, ch_val_lbl, _is_boost))
+
+            for w in (ch_lbl, ch_sli, ch_val_lbl): ch_h.addWidget(w)
+            _wa(ch_w)
+
         # ── Moving Head : PanTilt + Presets + Roue Couleur + Gobo + Prisme ──
         if proj.fixture_type == "Moving Head":
             menu.addSeparator()
@@ -2844,6 +2986,26 @@ class PlanDeFeu(QFrame):
                 def _on_cw(v, t=targets):
                     for p, g, i in t:
                         p.color_wheel = v
+                        # Trouver la couleur du slot le plus proche et mettre à jour le simulateur
+                        slots = getattr(p, 'color_wheel_slots', []) or [
+                            {"dmx": 0,   "color": "#ffffff"}, {"dmx": 20,  "color": "#ff3300"},
+                            {"dmx": 42,  "color": "#ff8800"}, {"dmx": 64,  "color": "#ffff00"},
+                            {"dmx": 85,  "color": "#00cc44"}, {"dmx": 106, "color": "#00ccff"},
+                            {"dmx": 128, "color": "#0044ff"}, {"dmx": 149, "color": "#cc00ff"},
+                            {"dmx": 170, "color": "#ff99cc"}, {"dmx": 192, "color": "#ffee88"},
+                        ]
+                        passed = [s for s in slots if s["dmx"] <= v]
+                        closest = max(passed, key=lambda s: s["dmx"]) if passed else min(slots, key=lambda s: s["dmx"])
+                        qc = QColor(closest["color"])
+                        if p.level == 0:
+                            p.level = 100
+                        brightness = p.level / 100.0
+                        p.base_color = qc
+                        p.color = QColor(
+                            int(qc.red() * brightness),
+                            int(qc.green() * brightness),
+                            int(qc.blue() * brightness),
+                        )
                     _flush()
 
                 _wa(_slider_row("Roue couleur", cur_cw, 255, _on_cw))
@@ -2854,7 +3016,6 @@ class PlanDeFeu(QFrame):
                     _CW_PRESETS = [
                         (s['dmx'], s['color'], s['name']) for s in _ofl_cw
                     ]
-                    _cw_source_lbl = None
                 else:
                     _CW_PRESETS = [
                         (0,   "#ffffff", "Open"),    (20,  "#ff3300", "Rouge"),
@@ -2863,10 +3024,14 @@ class PlanDeFeu(QFrame):
                         (128, "#0044ff", "Bleu"),    (149, "#cc00ff", "Magenta"),
                         (170, "#ff99cc", "Rose"),    (192, "#ffee88", "CTO"),
                     ]
-                    _cw_source_lbl = "⚠ Positions génériques — importez la fixture OFL pour les vraies valeurs"
 
                 cw_presets_w = QWidget(); cw_ph = QVBoxLayout(cw_presets_w)
                 cw_ph.setContentsMargins(10, 0, 10, 4); cw_ph.setSpacing(2)
+
+                # Ligne boutons de couleur + bouton Éditer
+                cw_top_row = QWidget(); cw_tr = QHBoxLayout(cw_top_row)
+                cw_tr.setContentsMargins(0, 0, 0, 0); cw_tr.setSpacing(3)
+
                 cw_btns_row = QWidget(); cw_br = QHBoxLayout(cw_btns_row)
                 cw_br.setContentsMargins(0, 0, 0, 0); cw_br.setSpacing(3)
 
@@ -2877,6 +3042,21 @@ class PlanDeFeu(QFrame):
                         return True
                     r, g, b = int(c[0:2],16), int(c[2:4],16), int(c[4:6],16)
                     return (0.299*r + 0.587*g + 0.114*b) > 128
+
+                # Stocker (bouton, dmx_val, hex_color) pour pouvoir re-styler après clic
+                _cw_btn_refs = []
+
+                def _restyle_cw_btns(selected_dmx):
+                    for _b, _dv, _hc in _cw_btn_refs:
+                        _tc = "#000" if _luminance(_hc) else "#fff"
+                        _active = abs(_dv - selected_dmx) < 8
+                        _border = "#00d4ff" if _active else "#555"
+                        _bw = "3px" if _active else "2px"
+                        _b.setStyleSheet(
+                            f"QPushButton{{background:{_hc};border:{_bw} solid {_border};"
+                            f"border-radius:11px;color:{_tc};font-size:8px;}}"
+                            f"QPushButton:hover{{border-color:#00d4ff;}}"
+                        )
 
                 for dmx_v, hex_c, tip in _CW_PRESETS:
                     cb = QPushButton()
@@ -2891,15 +3071,51 @@ class PlanDeFeu(QFrame):
                         f"border-radius:11px;color:{tc};font-size:8px;}}"
                         f"QPushButton:hover{{border-color:#00d4ff;}}"
                     )
-                    cb.clicked.connect(lambda chk, v=dmx_v: _on_cw(v))
+                    _cw_btn_refs.append((cb, dmx_v, hex_c))
+                    def _on_cw_preset(chk, v=dmx_v, hc=hex_c, t=targets):
+                        qc = QColor(hc)
+                        for p, g, i in t:
+                            p.color_wheel = v
+                            if p.level == 0:
+                                p.level = 100
+                            brightness = p.level / 100.0
+                            p.base_color = qc
+                            p.color = QColor(
+                                int(qc.red() * brightness),
+                                int(qc.green() * brightness),
+                                int(qc.blue() * brightness)
+                            )
+                        _restyle_cw_btns(v)
+                        _flush()
+                    cb.clicked.connect(_on_cw_preset)
                     cw_br.addWidget(cb)
                 cw_br.addStretch()
-                cw_ph.addWidget(cw_btns_row)
-                if _cw_source_lbl:
-                    warn_lbl = QLabel(_cw_source_lbl)
-                    warn_lbl.setStyleSheet("color:#888;font-size:9px;font-style:italic;")
-                    warn_lbl.setWordWrap(True)
-                    cw_ph.addWidget(warn_lbl)
+                cw_tr.addWidget(cw_btns_row, 1)
+
+                # Bouton éditeur de roue
+                _edit_cw_btn = QPushButton("✏  Éditer")
+                _edit_cw_btn.setFixedHeight(22)
+                _edit_cw_btn.setToolTip("Éditer la roue de couleur de cette fixture")
+                _edit_cw_btn.setStyleSheet(
+                    "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
+                    "border-radius:4px;font-size:11px;padding:0 6px;}"
+                    "QPushButton:hover{border-color:#00d4ff;color:#00d4ff;background:#1a2a3a;}"
+                )
+
+                def _open_cw_editor(chk=False, _p=proj, _t=targets):
+                    from color_wheel_editor import ColorWheelEditorDialog
+                    menu.close()
+                    all_proj = self.projectors if hasattr(self, 'projectors') else []
+                    mw = self.main_window if hasattr(self, 'main_window') else None
+                    dlg = ColorWheelEditorDialog(_p, all_proj, mw, self)
+                    if dlg.exec():
+                        # Rafraîchir l'affichage du plan de feu
+                        self.refresh() if hasattr(self, 'refresh') else None
+
+                _edit_cw_btn.clicked.connect(_open_cw_editor)
+                cw_tr.addWidget(_edit_cw_btn)
+
+                cw_ph.addWidget(cw_top_row)
                 _wa(cw_presets_w)
 
             # ── Gobo ────────────────────────────────────────────────────
@@ -2945,6 +3161,29 @@ class PlanDeFeu(QFrame):
                     btn.clicked.connect(lambda chk, v=dmx_val: _set_gobo_btn(v))
                     gobo_h.addWidget(btn)
                 gobo_h.addStretch()
+
+                # Bouton éditeur de gobo
+                _edit_gobo_btn = QPushButton("✏  Éditer")
+                _edit_gobo_btn.setFixedHeight(22)
+                _edit_gobo_btn.setToolTip("Éditer la roue de gobos de cette fixture")
+                _edit_gobo_btn.setStyleSheet(
+                    "QPushButton{background:#1e1e1e;color:#888;border:1px solid #333;"
+                    "border-radius:4px;font-size:11px;padding:0 6px;}"
+                    "QPushButton:hover{border-color:#ff9900;color:#ff9900;background:#2a1e00;}"
+                )
+                def _open_gobo_editor(chk=False, _p=proj, _t=targets):
+                    from color_wheel_editor import GoboWheelEditorDialog
+                    menu.close()
+                    dlg = GoboWheelEditorDialog(
+                        _p, self.projectors,
+                        main_window=self.main_window, parent=self
+                    )
+                    if dlg.exec():
+                        # Rafraîchir les presets dans le menu (rouvrir)
+                        self.refresh() if hasattr(self, 'refresh') else None
+                _edit_gobo_btn.clicked.connect(_open_gobo_editor)
+                gobo_h.addWidget(_edit_gobo_btn)
+
                 _wa(gobo_w)
 
             # ── Prisme ──────────────────────────────────────────────────
@@ -2997,9 +3236,17 @@ class PlanDeFeu(QFrame):
                 _wa(prism_row_w)
 
         # ── Couleurs ─────────────────────────────────────────────────────
+        # Masquer pour : fumée/gradateurs, et Moving Head à roue de couleur
+        # (la section ColorWheel ci-dessus est déjà le sélecteur de couleur)
+        _has_cw_in_profile = 'ColorWheel' in (_proj_profile or [])
+        _is_cw_mh = (proj.fixture_type == "Moving Head" and _has_cw_in_profile)
         NO_COLOR_TYPES = {"Machine a fumee", "Gradateur"}
-        if proj.fixture_type not in NO_COLOR_TYPES:
+        if proj.fixture_type not in NO_COLOR_TYPES and not _is_cw_mh:
             menu.addSeparator()
+            _col_sec = QLabel("COULEUR")
+            _col_sec.setStyleSheet("color:#444;font-size:9px;font-weight:bold;"
+                                   "padding:2px 10px;border:none;background:transparent;")
+            _wa(_col_sec)
             colors_w = QWidget(); colors_g = QGridLayout(colors_w)
             colors_g.setContentsMargins(8, 4, 8, 4); colors_g.setSpacing(5)
             for ci, (label, color) in enumerate(PRESET_COLORS):

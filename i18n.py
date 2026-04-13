@@ -102,20 +102,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # ------------------------------------------------------------------ license_ui / ForgotPasswordDialog
     "forgot_pwd_title":      {"en": "🔑  Forgot password?",             "fr": "🔑  Mot de passe oublié ?"},
     "forgot_pwd_desc":       {
-        "en": "Enter your purchase email address.\n"
-              "An email will be sent only if an account exists at this address.\n\n"
+        "en": "Enter your account email address.\n"
+              "You will receive a link to reset your password.\n\n"
               "For any issue: nicolas@mystrow.fr",
-        "fr": "Entrez votre adresse email d'achat.\n"
-              "Un email vous sera envoyé uniquement si un compte existe à cette adresse.\n\n"
+        "fr": "Entrez votre adresse email de compte.\n"
+              "Vous recevrez un lien pour réinitialiser votre mot de passe.\n\n"
               "Pour tout problème : nicolas@mystrow.fr",
     },
     "email_placeholder":     {"en": "your@email.com",                   "fr": "votre@email.com"},
     "btn_cancel":            {"en": "Cancel",                           "fr": "Annuler"},
-    "btn_send_password":     {"en": "📧  Send password",                "fr": "📧  Envoyer le mot de passe"},
+    "btn_send_password":     {"en": "📧  Send reset link",              "fr": "📧  Envoyer le lien"},
     "err_invalid_email":     {"en": "⚠  Invalid email address.",        "fr": "⚠  Adresse email invalide."},
     "sending":               {"en": "Sending…",                         "fr": "Envoi en cours…"},
     "connecting":            {"en": "Connecting to server…",            "fr": "Connexion au serveur…"},
-    "email_sent":            {"en": "✅  Email sent to {email}",        "fr": "✅  Email envoyé à {email}"},
+    "email_sent":            {"en": "✅  Reset link sent to {email}",   "fr": "✅  Lien envoyé à {email}"},
     "btn_sent":              {"en": "✔  Sent!",                         "fr": "✔  Envoyé !"},
     "btn_send_short":        {"en": "📧  Send",                         "fr": "📧  Envoyer"},
 

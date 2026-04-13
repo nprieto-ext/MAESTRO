@@ -149,9 +149,14 @@ class ForgotPasswordDialog(QDialog):
             import firebase_client as fc
             fc.send_password_reset(email)
             self._status.setStyleSheet("color: #27ae60;")
-            self._status.setText(tr("email_sent", email=email))
+            self._status.setText(
+                tr("email_sent", email=email) + "\n" +
+                ("Cliquez sur le lien dans l'email pour choisir un nouveau mot de passe."
+                 if self._email.text().find("@") > 0 else "")
+            )
+            self._status.setFixedHeight(52)
             self._btn_send.setText(tr("btn_sent"))
-            QTimer.singleShot(2500, self.accept)
+            QTimer.singleShot(4000, self.accept)
         except Exception as e:
             self._status.setStyleSheet("color: #e74c3c;")
             self._status.setText(f"❌  {e}")

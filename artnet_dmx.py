@@ -512,13 +512,15 @@ class ArtNetDMX:
                 elif ch_type == "B":
                     ch_val = b
                 elif ch_type == "W":
-                    ch_val = min(r, g, b)
+                    ch_val = min(255, min(r, g, b) + getattr(proj, 'white_boost', 0))
                 elif ch_type == "Ambre":
-                    ch_val = int(min(r, g * 0.5) * 0.8) if r > 0 else 0
+                    ch_val = min(255, (int(min(r, g * 0.5) * 0.8) if r > 0 else 0)
+                                 + getattr(proj, 'amber_boost', 0))
                 elif ch_type == "Orange":
-                    ch_val = int(min(r, g * 0.6) * 0.9) if r > 0 else 0
+                    ch_val = min(255, (int(min(r, g * 0.6) * 0.9) if r > 0 else 0)
+                                 + getattr(proj, 'orange_boost', 0))
                 elif ch_type == "UV":
-                    ch_val = 0
+                    ch_val = getattr(proj, 'uv', 0)
                 elif ch_type == "Zoom":
                     ch_val = getattr(proj, 'zoom', 0)
                 elif ch_type == "Iris":

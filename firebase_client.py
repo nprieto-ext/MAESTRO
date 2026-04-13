@@ -254,24 +254,24 @@ def get_stripe_portal_url(id_token: str) -> str:
 
 def send_password_reset(email: str) -> bool:
     """
-    Envoie un email de réinitialisation stylisé via la Cloud Function MyStrow.
+    Envoie un email de réinitialisation via l'API Firebase Auth native (sendOobCode).
+    Firebase génère un lien sécurisé — aucun mot de passe n'est envoyé en clair.
     """
-    url  = "https://send-reset-email-2gdol7vjca-uc.a.run.app"
-    data = json.dumps({"email": email}).encode()
-    req  = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    url = f"{_AUTH_BASE}/accounts:sendOobCode?key={FIREBASE_API_KEY}"
+    payload = {"requestType": "PASSWORD_RESET", "email": email}
     try:
-        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
-            result = json.loads(resp.read().decode())
-            if not result.get("ok"):
-                raise Exception(result.get("error", "Erreur inconnue"))
+        _post_json(url, payload)
         return True
     except urllib.error.HTTPError as e:
         body = e.read().decode()
-        raise Exception(f"Erreur envoi email : {body}")
+        try:
+            err = json.loads(body).get("error", {}).get("message", body)
+        except Exception:
+            err = body
+        # EMAIL_NOT_FOUND : ne pas révéler l'existence du compte (sécurité)
+        if "EMAIL_NOT_FOUND" in err:
+            return True
+        raise Exception(f"Erreur réinitialisation : {err}")
 
 
 # ---------------------------------------------------------------
