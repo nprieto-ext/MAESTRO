@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QComboBox, QSpinBox, QDialogButtonBox,
     QMessageBox, QSizePolicy, QApplication, QStackedWidget
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QRect, QSize, Signal, QRectF
+from PySide6.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QSize, Signal, QRectF
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QBrush, QPainterPath, QPolygon,
-    QLinearGradient, QRadialGradient, QCursor,
+    QLinearGradient, QRadialGradient, QCursor, QMouseEvent,
 )
 
 
@@ -777,24 +777,37 @@ _DEFAULT_POSITIONS = {
 class _PersistentMenu(QMenu):
     """QMenu qui ne se ferme pas quand on clique sur un QWidgetAction (ex: boutons couleur)."""
 
-    def mouseReleaseEvent(self, event):
+    def _forward_to_widget(self, event):
+        """Retransmet l'event souris au widget de la QWidgetAction avec coordonnees locales."""
         action = self.actionAt(event.pos())
         if isinstance(action, QWidgetAction):
-            # Laisser le widget traiter l'event mais garder le menu ouvert
             w = action.defaultWidget()
             if w:
-                w.event(event)
-            return
-        super().mouseReleaseEvent(event)
+                # Traduire les coordonnees menu → widget local
+                local_pos = QPointF(w.mapFrom(self, event.pos()))
+                new_event = QMouseEvent(
+                    event.type(),
+                    local_pos,
+                    event.globalPosition(),
+                    event.button(),
+                    event.buttons(),
+                    event.modifiers(),
+                )
+                w.event(new_event)
+            return True
+        return False
+
+    def mouseReleaseEvent(self, event):
+        if not self._forward_to_widget(event):
+            super().mouseReleaseEvent(event)
 
     def mousePressEvent(self, event):
-        action = self.actionAt(event.pos())
-        if isinstance(action, QWidgetAction):
-            w = action.defaultWidget()
-            if w:
-                w.event(event)
-            return
-        super().mousePressEvent(event)
+        if not self._forward_to_widget(event):
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not self._forward_to_widget(event):
+            super().mouseMoveEvent(event)
 
 
 _MENU_STYLE = """

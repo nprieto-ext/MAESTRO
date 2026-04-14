@@ -1242,6 +1242,9 @@ class Sequencer(QFrame):
                                     self.player_ui.player.setSource(QUrl.fromLocalFile(path))
                                 self.current_row = next_row
                                 self.player_ui.trigger_pause_mode()
+                                # Masquer la 1re frame du media precharge — le preview doit rester noir
+                                if hasattr(self.player_ui, 'show_black_preview'):
+                                    self.player_ui.show_black_preview()
                     return
 
                 # Lecture normale (media)

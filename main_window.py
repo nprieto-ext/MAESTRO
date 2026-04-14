@@ -1161,6 +1161,13 @@ class MainWindow(QMainWindow):
         """Revient a l'affichage video dans le preview integre"""
         self.video_stack.setCurrentIndex(0)
 
+    def show_black_preview(self):
+        """Affiche le noir dans le preview (masque la 1re frame d'un media precharge)"""
+        self.image_label.clear()
+        self.video_stack.setCurrentIndex(1)
+        if self.video_output_window and self.video_output_window.isVisible():
+            self.video_output_window.show_black()
+
     def toggle_video_output(self):
         """Active/desactive la sortie video externe"""
         _SS_ON  = ("QPushButton { background: #1e1e1e; color: #00cc66; border: 1px solid #00cc66; "
@@ -1927,7 +1934,10 @@ class MainWindow(QMainWindow):
             current_mode = self.seq.get_dmx_mode(self.seq.current_row)
             if current_mode == "Manuel":
                 self.seq.stop_sequence_playback()
+            # Repasser sur le widget video (peut être masqué si pause après PAUSE + precharge)
+            self.hide_image()
             self.player.play()
+            self._update_video_output_state()
         elif self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
         else:
