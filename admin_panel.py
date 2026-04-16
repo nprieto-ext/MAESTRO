@@ -2702,6 +2702,8 @@ class AdminPanel(QMainWindow):
         kpi_row2.addWidget(card)
         card, self._stat_newsletter = _kpi("✉",  "Newsletter",           "#2ecc71")
         kpi_row2.addWidget(card)
+        card, self._stat_releases_month = _kpi("⬆", "Releases ce mois",    "#e67e22")
+        kpi_row2.addWidget(card)
         inner_lay.addLayout(kpi_row2)
 
         # ── Ligne 2 : Plans + Activité 30j ───────────────────────────────────
@@ -3051,6 +3053,7 @@ class AdminPanel(QMainWindow):
         def _on_releases(releases: list):
             if not releases:
                 self._stat_downloads.setText("—")
+                self._stat_releases_month.setText("—")
                 return
             total = sum(
                 asset.get("download_count", 0)
@@ -3059,6 +3062,16 @@ class AdminPanel(QMainWindow):
             )
             n_str = f"{total:,}".replace(",", "\u202f")
             self._stat_downloads.setText(n_str)
+
+            # Releases publiées ce mois-ci
+            now = datetime.now(timezone.utc)
+            this_month = (now.year, now.month)
+            count_this_month = sum(
+                1 for rel in releases
+                if rel.get("published_at", "")[:7] == f"{this_month[0]:04d}-{this_month[1]:02d}"
+            )
+            self._stat_releases_month.setText(str(count_this_month))
+
             self._populate_releases_table(releases)
 
         _run_async(self, _fetch, on_success=_on_releases,
