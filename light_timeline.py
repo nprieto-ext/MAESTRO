@@ -1241,6 +1241,8 @@ class LightTrack(QWidget):
         self._collapsed = False
         self._normal_min_height = 100 if name == "Audio" else 60
         self.setMinimumHeight(self._normal_min_height)
+        # Fixer la largeur minimale dès l'init pour que le scrollbar horizontal apparaisse
+        self.setMinimumWidth(145 + int(self.total_duration * self.pixels_per_ms) + 50)
         self.setAcceptDrops(True)
         self.setStyleSheet("""
             QWidget {

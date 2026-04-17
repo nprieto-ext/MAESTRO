@@ -8891,7 +8891,7 @@ class MainWindow(QMainWindow):
                 chip.setAlignment(Qt.AlignCenter)
                 chip.setStyleSheet(
                     f"background:{col}; color:{text_col}; border:none;"
-                    f" border-radius:5px; font-size:10px; font-weight:bold; cursor:pointer;"
+                    f" border-radius:5px; font-size:10px; font-weight:bold;"
                 )
                 chip.setToolTip(
                     f"Canal {ci + 1}: {ch}"
@@ -10242,8 +10242,16 @@ class MainWindow(QMainWindow):
             " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
             "QPushButton:hover { border-color:#44cc88; color:#66ee99; }"
         )
+        btn_refresh = QPushButton("🔄  Actualiser")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.setStyleSheet(
+            "QPushButton { background:#1a2a3a; color:#44aaee; border:1px solid #44aaee44;"
+            " border-radius:6px; padding:6px 16px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { border-color:#44aaee; color:#66ccff; }"
+        )
         search_row.addWidget(search_edit, 1)
         search_row.addWidget(btn_import)
+        search_row.addWidget(btn_refresh)
         tab1_layout.addLayout(search_row)
 
         # ── Splitter fabricant / fixture ──────────────────────────────────────
@@ -10471,7 +10479,138 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.information(dialog, "Import réussi", msg)
 
+        def _rebuild_library_ui(new_user_fixtures: list):
+            """Reconstruit ALL_FIXTURES / FIXTURE_LIBRARY et rafraîchit cat_list."""
+            new_custom = []
+            try:
+                from fixture_editor import _load_custom_bundle as _lcb2
+                _seen2 = {
+                    (f["name"], f.get("manufacturer", ""))
+                    for f in list(BUILTIN_FIXTURES) + new_user_fixtures
+                }
+                for _cf2 in _lcb2():
+                    if not isinstance(_cf2, dict) or not _cf2.get("name"):
+                        continue
+                    _k2 = (_cf2["name"], _cf2.get("manufacturer", ""))
+                    if _k2 in _seen2:
+                        continue
+                    if not _cf2.get("profile") and _cf2.get("modes"):
+                        _cf2 = dict(_cf2)
+                        _cf2["profile"] = _cf2["modes"][0].get("profile", [])
+                    new_custom.append(_cf2)
+                    _seen2.add(_k2)
+            except Exception:
+                pass
+            ALL_FIXTURES.clear()
+            ALL_FIXTURES.extend(list(BUILTIN_FIXTURES) + new_user_fixtures + new_custom)
+            FIXTURE_LIBRARY.clear()
+            for _fx in ALL_FIXTURES:
+                FIXTURE_LIBRARY.setdefault(_fx.get("manufacturer", "Générique"), []).append(_fx)
+            _sorted3 = {}
+            if "Générique" in FIXTURE_LIBRARY:
+                _sorted3["Générique"] = FIXTURE_LIBRARY.pop("Générique")
+            for _k3 in sorted(FIXTURE_LIBRARY):
+                _sorted3[_k3] = FIXTURE_LIBRARY[_k3]
+            FIXTURE_LIBRARY.clear()
+            FIXTURE_LIBRARY.update(_sorted3)
+            prev_cat = cat_list.currentItem().text() if cat_list.currentItem() else None
+            cat_list.clear()
+            for cat in FIXTURE_LIBRARY.keys():
+                cat_list.addItem(cat)
+            if prev_cat:
+                for i in range(cat_list.count()):
+                    if cat_list.item(i).text() == prev_cat:
+                        cat_list.setCurrentRow(i)
+                        break
+            elif cat_list.count():
+                cat_list.setCurrentRow(0)
+
+        def _do_refresh():
+            from PySide6.QtCore import QObject as _QObject, Signal as _Signal, QThread as _QThread
+
+            from license_manager import _get_fresh_token
+
+            id_token = _get_fresh_token()
+            if not id_token:
+                QMessageBox.warning(
+                    dialog, "Non connecté",
+                    "Impossible de récupérer les fixtures Firestore.\n"
+                    "Veuillez vous connecter à votre compte MyStrow."
+                )
+                return
+
+            btn_refresh.setEnabled(False)
+            btn_refresh.setText("⏳  Chargement...")
+            count_lbl.setText("Connexion à Firestore...")
+
+            class _FetchWorker(_QObject):
+                done  = _Signal(list)
+                error = _Signal(str)
+
+                def __init__(self, token):
+                    super().__init__()
+                    self._token = token
+
+                def run(self):
+                    try:
+                        import firebase_client as _fc
+                        fixtures = _fc.fetch_all_gdtf_fixtures(self._token)
+                        self.done.emit(fixtures)
+                    except Exception as e:
+                        self.error.emit(str(e))
+
+            thread = _QThread(dialog)
+            worker = _FetchWorker(id_token)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            # Garder des refs fortes pour éviter le GC Python avant la fin du thread
+            dialog._refresh_thread = thread
+            dialog._refresh_worker = worker
+
+            def _on_done(remote_fixtures: list):
+                thread.quit()
+                dialog._refresh_thread = None
+                dialog._refresh_worker = None
+                # Normaliser les modes
+                for _f in remote_fixtures:
+                    if not _f.get("profile") and _f.get("modes"):
+                        _f["profile"] = _f["modes"][0].get("profile", [])
+                    _f.setdefault("source", "firestore")
+                # Fusionner : conserver les fixtures user locales, remplacer les firestore
+                _fx_file2 = Path.home() / ".mystrow_fixtures.json"
+                try:
+                    existing = _json.loads(_fx_file2.read_text(encoding="utf-8")) if _fx_file2.exists() else []
+                    if not isinstance(existing, list):
+                        existing = []
+                except Exception:
+                    existing = []
+                local_only = [f for f in existing if f.get("source", "user") not in ("firestore", "ofl")]
+                merged = local_only + remote_fixtures
+                try:
+                    _fx_file2.write_text(_json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                _rebuild_library_ui(merged)
+                n = len(remote_fixtures)
+                count_lbl.setText(f"Firestore — {n} fixture{'s' if n > 1 else ''} chargée{'s' if n > 1 else ''}")
+                btn_refresh.setEnabled(True)
+                btn_refresh.setText("🔄  Actualiser")
+
+            def _on_error(msg: str):
+                thread.quit()
+                dialog._refresh_thread = None
+                dialog._refresh_worker = None
+                count_lbl.setText("Erreur Firestore")
+                QMessageBox.warning(dialog, "Erreur Firestore", f"Impossible de charger les fixtures :\n{msg}")
+                btn_refresh.setEnabled(True)
+                btn_refresh.setText("🔄  Actualiser")
+
+            worker.done.connect(_on_done)
+            worker.error.connect(_on_error)
+            thread.start()
+
         btn_import.clicked.connect(_do_import)
+        btn_refresh.clicked.connect(_do_refresh)
         cat_list.currentItemChanged.connect(on_cat_changed)
         search_edit.textChanged.connect(on_search)
 
